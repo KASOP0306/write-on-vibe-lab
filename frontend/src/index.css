@@ -1,3 +1,34 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+.prose h1 {
+  @apply text-xl font-bold mt-4 mb-2 text-slate-900;
+}
+.prose h2 {
+  @apply text-base font-bold mt-4 mb-1.5 text-slate-900;
+}
+.prose h3 {
+  @apply text-sm font-bold mt-3 mb-1 text-slate-800;
+}
+.prose p {
+  @apply my-1.5 leading-relaxed;
+}
+.prose ul {
+  @apply list-disc pl-5 my-1.5 space-y-1;
+}
+.prose ol {
+  @apply list-decimal pl-5 my-1.5 space-y-1;
+}
+.prose code {
+  @apply rounded bg-slate-200/70 px-1 py-0.5 text-[0.85em];
+}
+.prose a {
+  @apply text-blue-600 underline;
+}

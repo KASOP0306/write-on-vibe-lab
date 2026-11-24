@@ -19,14 +19,24 @@ from app.api.sse import (
     sse_node_start,
 )
 from app.core.bedrock import ainvoke_structured, get_fast_llm
-from app.core.database import CompanyProfile, VectorDocument, get_db_session
-from app.core.vector_store import DocType, upsert_document
+from app.core.database import (
+    ApplicationLog,
+    CompanyProfile,
+    Experience,
+    VectorDocument,
+    get_db_session,
+)
+from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
+from app.graphs.copilot_graph import build_copilot_chat_graph, build_retrospect_graph
 from app.graphs.cover_letter_graph import build_cover_letter_graph
 from app.graphs.interview_graph import stream_interview_graph
 from app.schemas.agents import (
+    ApplicationLogResponse,
+    ApplicationRetrospectRequest,
     CompanyProfileResponse,
     CompanyResearchRequest,
+    CopilotChatRequest,
     CoverLetterGenerateRequest,
     InterestClipResponse,
     InterestClipSaveRequest,
@@ -34,6 +44,7 @@ from app.schemas.agents import (
     InterviewReplyRequest,
     InterviewStartRequest,
 )
+from app.schemas.projects import ExperienceSummary
 from app.tools.web_search import search_and_extract
 
 logger = logging.getLogger(__name__)
@@ -486,5 +497,222 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
         except Exception as exc:
             logger.exception("Cover letter generation SSE failed: %s", exc)
             yield sse_error(f"자소서 공방 에이전트 실행 중 오류가 발생했습니다: {exc}")
+
+    return create_sse_response(event_stream())
+
+
+# ==============================================================================
+# 저장된 경험 아카이브 조회/삭제 (REST)
+# ==============================================================================
+@router.get("/experiences", response_model=list[ExperienceSummary])
+async def list_experiences(
+    project_id: int | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ExperienceSummary]:
+    stmt = select(Experience).order_by(Experience.created_at.desc(), Experience.id.desc())
+    if project_id is not None:
+        stmt = stmt.where(Experience.project_id == project_id)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [ExperienceSummary.model_validate(row) for row in rows]
+
+
+@router.delete("/experiences/{experience_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_experience(
+    experience_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    exp = await session.get(Experience, experience_id)
+    if exp is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experience {experience_id} not found.",
+        )
+    await session.delete(exp)
+    await session.commit()
+    await delete_document(session, doc_type=DocType.EXPERIENCE, ref_id=f"exp-{experience_id}")
+
+
+# ==============================================================================
+# 워크플로우 ④: 프로젝트 코파일럿 (Corrective RAG) & 취준 회고 (SSE + REST)
+# ==============================================================================
+@router.post("/agents/copilot/chat")
+async def copilot_chat(payload: CopilotChatRequest):
+    async def event_stream():
+        try:
+            graph = build_copilot_chat_graph()
+            initial_state = {
+                "message": payload.message.strip(),
+                "project_id": payload.project_id,
+                "chat_history": [m.model_dump() for m in payload.chat_history],
+            }
+            accumulated: dict[str, Any] = dict(initial_state)
+
+            yield sse_node_start(
+                "copilot_retriever",
+                "과거 프로젝트 경험과 저장된 관심 기술 클립을 검색하는 중...",
+            )
+
+            async for chunk in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, update in chunk.items():
+                    accumulated.update(update)
+
+                    if node_name == "copilot_retriever":
+                        yield sse_node_end(
+                            "copilot_retriever",
+                            {
+                                "experience_count": len(update.get("experience_docs") or []),
+                                "interest_count": len(update.get("interest_docs") or []),
+                            },
+                        )
+                        yield sse_node_start(
+                            "relevance_grader",
+                            "내부 자료만으로 답변이 충분한지 평가하는 중...",
+                        )
+                    elif node_name == "relevance_grader":
+                        is_suff = bool(update.get("is_sufficient"))
+                        yield sse_node_end(
+                            "relevance_grader",
+                            {
+                                "is_sufficient": is_suff,
+                                "reason": update.get("grade_reason", ""),
+                                "rewritten_query": update.get("rewritten_query", ""),
+                            },
+                        )
+                        if not is_suff:
+                            yield sse_node_start(
+                                "web_search_fallback",
+                                f"최신 외부 자료를 보강 검색하는 중: '{update.get('rewritten_query', '')}'",
+                            )
+                        else:
+                            yield sse_node_start(
+                                "copilot_answer",
+                                "과거 경험과 관심 지식을 바탕으로 조언을 정리하는 중...",
+                            )
+                    elif node_name == "web_search_fallback":
+                        yield sse_node_end(
+                            "web_search_fallback",
+                            {"web_source_count": len(update.get("web_sources") or [])},
+                        )
+                        yield sse_node_start(
+                            "copilot_answer",
+                            "내부 경험과 웹 검색 결과를 결합해 답변을 작성하는 중...",
+                        )
+                    elif node_name == "copilot_answer":
+                        yield sse_node_end(
+                            "copilot_answer",
+                            {"char_count": len(update.get("answer") or "")},
+                        )
+
+            yield sse_done(
+                {
+                    "answer": accumulated.get("answer", ""),
+                    "used_web_fallback": bool(accumulated.get("used_web_fallback")),
+                    "web_sources": [
+                        {"title": s.get("title", ""), "url": s.get("url", "")}
+                        for s in (accumulated.get("web_sources") or [])
+                    ],
+                }
+            )
+        except Exception as exc:
+            logger.exception("Copilot chat SSE failed: %s", exc)
+            yield sse_error(f"프로젝트 코파일럿 실행 중 오류가 발생했습니다: {exc}")
+
+    return create_sse_response(event_stream())
+
+
+@router.get("/applications", response_model=list[ApplicationLogResponse])
+async def list_applications(
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ApplicationLogResponse]:
+    stmt = select(ApplicationLog).order_by(
+        ApplicationLog.created_at.desc(), ApplicationLog.id.desc()
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [ApplicationLogResponse.model_validate(row) for row in rows]
+
+
+@router.delete("/applications/{application_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_application(
+    application_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    log = await session.get(ApplicationLog, application_id)
+    if log is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application log {application_id} not found.",
+        )
+    await session.delete(log)
+    await session.commit()
+
+
+@router.post("/agents/applications/retrospect")
+async def retrospect_application(payload: ApplicationRetrospectRequest):
+    async def event_stream():
+        try:
+            graph = build_retrospect_graph()
+            initial_state = {
+                "company_name": payload.company_name.strip(),
+                "role": payload.role.strip(),
+                "stage": payload.stage.strip(),
+                "status": payload.status.strip(),
+                "feedback_memo": payload.feedback_memo.strip(),
+            }
+            accumulated: dict[str, Any] = dict(initial_state)
+
+            yield sse_node_start(
+                "load_retro_context",
+                "보유 프로젝트·경험·과거 지원 이력을 불러오는 중...",
+            )
+
+            async for chunk in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, update in chunk.items():
+                    accumulated.update(update)
+
+                    if node_name == "load_retro_context":
+                        yield sse_node_end(
+                            "load_retro_context",
+                            {
+                                "existing_interests_count": len(
+                                    update.get("existing_interests") or []
+                                )
+                            },
+                        )
+                        yield sse_node_start(
+                            "analyze_gap_and_plan",
+                            "포트폴리오 대비 격차(Gap)를 진단하고 단기/중기 보완 플랜을 수립하는 중...",
+                        )
+                    elif node_name == "analyze_gap_and_plan":
+                        yield sse_node_end(
+                            "analyze_gap_and_plan",
+                            {
+                                "suggested_interests": update.get(
+                                    "suggested_interests", []
+                                ),
+                            },
+                        )
+                        yield sse_node_start(
+                            "save_application_log",
+                            "지원 결과 및 보완 액션 플랜을 DB에 저장하는 중...",
+                        )
+                    elif node_name == "save_application_log":
+                        yield sse_node_end(
+                            "save_application_log",
+                            {"application_log_id": update.get("application_log_id")},
+                        )
+
+            yield sse_done(
+                {
+                    "application_log_id": accumulated.get("application_log_id"),
+                    "gap_analysis": accumulated.get("gap_analysis", ""),
+                    "action_plan": accumulated.get("action_plan", ""),
+                    "short_term_plan": accumulated.get("short_term_plan", []),
+                    "mid_term_plan": accumulated.get("mid_term_plan", []),
+                    "suggested_interests": accumulated.get("suggested_interests", []),
+                }
+            )
+        except Exception as exc:
+            logger.exception("Application retrospect SSE failed: %s", exc)
+            yield sse_error(f"취준 회고 플래너 실행 중 오류가 발생했습니다: {exc}")
 
     return create_sse_response(event_stream())

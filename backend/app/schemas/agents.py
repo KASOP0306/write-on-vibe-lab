@@ -75,3 +75,37 @@ class CoverLetterGenerateRequest(BaseModel):
     question: str = Field(..., min_length=5, description="자기소개서 문항")
     char_limit: int = Field(default=800, ge=200, le=3000, description="목표 글자 수")
     extra_instructions: str = Field(default="", description="추가 강조 요청 (선택)")
+
+
+# --- 워크플로우 ④: 프로젝트 코파일럿 & 취준 회고 ---
+class CopilotChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str
+
+
+class CopilotChatRequest(BaseModel):
+    message: str = Field(..., min_length=2, description="코파일럿 질문")
+    project_id: int | None = Field(default=None, description="특정 프로젝트 컨텍스트 (선택)")
+    chat_history: list[CopilotChatMessage] = Field(default_factory=list)
+
+
+class ApplicationRetrospectRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    role: str = Field(default="", max_length=200)
+    stage: str = Field(default="서류", max_length=50, description="서류 / 코테 / 면접")
+    status: str = Field(default="불합격", max_length=50, description="합격 / 불합격 / 진행중")
+    feedback_memo: str = Field(..., min_length=5, description="지원 결과 및 복기 메모")
+
+
+class ApplicationLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_name: str
+    role: str
+    stage: str
+    status: str
+    feedback_memo: str
+    gap_analysis: str
+    action_plan: str
+    created_at: datetime
