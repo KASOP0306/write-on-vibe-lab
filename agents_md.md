@@ -1,6 +1,6 @@
 # AGENTS.md — 개발 에이전트 작업 지침서
 
-이 문서는 **개인화 커리어·포트폴리오 AI 에이전트** MVP를 4일 내에 일관된 아키텍처로 구현하기 위한 코딩 에이전트 전용 규칙서입니다. 모든 코드 생성·수정 시 아래 스펙과 제약을 엄격히 준수하세요.
+이 문서는 **개인화 커리어·포트폴리오 AI 에이전트** MVP를 일관된 아키텍처로 구현하기 위한 코딩 에이전트 전용 규칙서입니다. 모든 코드 생성·수정 시 아래 스펙과 제약을 엄격히 준수하세요.
 
 ---
 
@@ -154,32 +154,4 @@ data: {"event": "error", "message": "오류 설명"}
   proxy_read_timeout 300s;
   ```
 * `docker-compose.yml`의 `db` 서비스는 `healthcheck`(`pg_isready`)를 정의하고, `backend`는 `depends_on: db: condition: service_healthy`로 기동 순서를 보장한다.
-
----
-
-## 7. 4일 구현 체크리스트 (작업 순서)
-
-### Day 1: 인프라 스캐폴딩 & 코어 백엔드
-- [ ] 모노레포 디렉토리, `.env.example`, `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `nginx.conf` 생성
-- [ ] `pgvector` 컨테이너 기동 + 6개 정형 테이블 + `vector_documents` + LangGraph Checkpointer 초기화 확인
-- [ ] `bedrock.py` 단위 테스트 (Fast LLM, Smart LLM, Embeddings 정상 응답 검증)
-- [ ] `jasoseo_samples.json` 15건 작성 및 초기 시딩 스크립트 구현
-- [ ] `profile`, `interests`, `projects` CRUD API 완성
-
-### Day 2: LangGraph 에이전트 ①~③ & SSE API
-- [ ] `tools/web_search.py` (DuckDuckGo + BS4) 구현 및 타임아웃/예외 처리
-- [ ] `interview_graph.py` (STAR 추출 → 빈틈 평가 → 역질문 인터럽트 → 프로젝트 매핑 저장) 구현
-- [ ] `company_graph.py` (기업 이념·비전 검색 → 내 신념·프로젝트 3각 매칭 저장) 구현
-- [ ] `cover_letter_graph.py` (Multi-Source RAG → 초안 → 면접관 비평 → 최대 2회 퇴고 → De-AI Humanizer) 구현
-- [ ] SSE 엔드포인트 테스트 (`curl -N`으로 단계별 이벤트 수신 확인)
-
-### Day 3: 에이전트 ④ & React 프론트엔드 완성
-- [ ] `copilot_graph.py` (Corrective RAG 프로젝트 조언 + 취준 결과 Gap 분석·보완 계획·관심사 제안) 구현
-- [ ] `frontend/src/api/client.js` (REST + `ReadableStream` 기반 SSE 파서) 구현
-- [ ] React 5개 페이지(`IdentityPortfolio`, `ExperienceMiner`, `CompanyInterest`, `CoverLetterStudio`, `CopilotRetro`) 및 공용 `Sidebar`, `StepIndicator` 구현
-- [ ] 로컬 `docker compose up --build`로 프론트↔백엔드↔DB 전체 연동 확인
-
-### Day 4: 품질 튜닝 & EC2 배포
-- [ ] 실제 본인 프로젝트 경험 2~3건, 신념, 목표 기업 1곳을 입력해 자소서 생성·De-AI 결과물 프롬프트 튜닝
-- [ ] 컨테이너 재시작(`docker compose down && docker compose up -d`) 후 DB 데이터 영속성 검증
-- [ ] EC2 인스턴스에 프로젝트 배포 (IAM Role Bedrock 권한 확인, 보안 그룹 80 포트 오픈, 전체 E2E 시나리오 최종 점검)
+* 4대 에이전트 상세 노드 구조 및 조건부 분기 흐름은 [WORKFLOWS.md](./WORKFLOWS.md)를 참조한다.

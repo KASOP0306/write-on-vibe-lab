@@ -48,16 +48,25 @@ def get_smart_llm(temperature: float = 0.4) -> ChatBedrockConverse:
 def get_embeddings() -> BedrockEmbeddings:
     """1024차원 한국어/다국어 임베딩 모델."""
     client = _create_boto_session().client("bedrock-runtime")
+    extra_kwargs: dict[str, Any] = {}
+    if settings.bedrock_embed_model_id.startswith("cohere."):
+        extra_kwargs["model_kwargs"] = {"truncate": "END"}
     return BedrockEmbeddings(
         model_id=settings.bedrock_embed_model_id,
         client=client,
+        **extra_kwargs,
     )
 
 
 async def embed_text(text_content: str) -> list[float]:
     """동기 boto3 BedrockEmbeddings 호출을 워커 스레드에서 비동기 실행."""
     embeddings = get_embeddings()
-    vector = await asyncio.to_thread(embeddings.embed_query, text_content)
+    safe_input = (
+        text_content[:2000]
+        if settings.bedrock_embed_model_id.startswith("cohere.")
+        else text_content
+    )
+    vector = await asyncio.to_thread(embeddings.embed_query, safe_input)
     if len(vector) != settings.embedding_dim:
         raise ValueError(
             f"Expected embedding dim {settings.embedding_dim}, got {len(vector)}."

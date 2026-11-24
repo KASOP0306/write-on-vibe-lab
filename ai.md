@@ -18,7 +18,7 @@
 
 ## 2. 초경량 Docker + AWS 아키텍처
 
-4일 완성 속도와 환경 일관성을 최우선으로 하여 **EC2 1대에 Docker Compose 3개 컨테이너만 올리는 자기완결형 구조**로 설계합니다. 기존 RDS/S3 연동 복잡도를 제거하고, AWS는 **EC2(도커 호스팅) + IAM Role + AWS Bedrock**에만 집중합니다.
+빠른 개발 속도와 환경 일관성을 최우선으로 하여 **EC2 1대에 Docker Compose 3개 컨테이너만 올리는 자기완결형 구조**로 설계합니다. 기존 RDS/S3 연동 복잡도를 제거하고, AWS는 **EC2(도커 호스팅) + IAM Role + AWS Bedrock**에만 집중합니다.
 
 ```mermaid
 flowchart TB
@@ -41,7 +41,7 @@ flowchart TB
 ### 2.1 컨테이너 및 기술 스택 전략
 * **`frontend` (React + Vite + Tailwind + Nginx):**
   * 빌드된 정적 파일을 Nginx로 서빙하고 `/api/*` 요청을 `backend:8000`으로 리버스 프록시(SSE 스트리밍을 위해 `proxy_buffering off` 적용).
-  * 4일 속도 유지를 위해 **로그인/인증 생략(1인 개인용)**, 전역 상태 라이브러리(Redux/Zustand) 없이 `useState` + `fetch`(SSE)만 사용.
+  * 경량 1인용 구조 유지를 위해 **로그인/인증 생략(1인 개인용)**, 전역 상태 라이브러리(Redux/Zustand) 없이 `useState` + `fetch`(SSE)만 사용.
 * **`backend` (FastAPI + LangChain + LangGraph):**
   * **LLM & Embedding (AWS Bedrock 전용 / `langchain-aws`):**
     * **Fast Tier (라우팅·추출·채점):** `ChatBedrockConverse` (`amazon.nova-lite-v1:0` 또는 Claude Haiku 계열, `.env`로 교체 가능)
@@ -128,14 +128,3 @@ flowchart LR
 | **3. 기업 & 관심사** | (상단) 기업명/직무 입력 → 이념·신념 3각 매칭 카드 / (하단) 관심 키워드 뉴스 검색 & 선별 저장 | SSE(진행 상태) + REST 저장 |
 | **4. 자소서 공방** | 기업 선택 + 문항/글자 수 입력 → **실시간 LangGraph 단계 표시기**(검색→초안→비평→퇴고→De-AI) + 최종본·변경 리포트 | SSE 스트리밍 |
 | **5. 코파일럿 & 회고** | 과거 경험 기반 프로젝트 Q&A 채팅 + 지원 결과 입력 폼 & 보완 액션 플랜·관심사 추가 버튼 | SSE 스트리밍 + REST |
-
----
-
-## 6. 4일 집중 스프린트 로드맵
-
-| 일정 | 핵심 목표 | 세부 산출물 및 검증 기준 |
-| :--- | :--- | :--- |
-| **Day 1** | **Docker 기반 & Backend 코어** | `docker-compose.yml`(`frontend`/`backend`/`db`) 세팅, `pgvector` 스키마 및 영속 볼륨 확인, Bedrock LLM/Embedding 호출 검증, `jasoseo_sample` 시드(15건), 프로필·프로젝트·관심사 CRUD API 완성 |
-| **Day 2** | **핵심 LangGraph 에이전트 ①~③** | **① 경험 역질문 루프**(Checkpointer + Human-in-the-loop), **② 기업 리서치 & 신념 3각 매칭**, **③ 자소서 비평·퇴고·De-AI 루프** 구현 및 FastAPI SSE 엔드포인트 테스트 |
-| **Day 3** | **에이전트 ④ & React UI 연동** | **④ 프로젝트 코파일럿(Corrective RAG) + 취준 회고 플래너** 완성, React(Vite+Tailwind) 5개 뷰 및 실시간 SSE 단계 표시기 연동 |
-| **Day 4** | **통합 튜닝 & EC2 도커 배포** | 프롬프트/De-AI 품질 튜닝, 전체 순환 시나리오 E2E 테스트, EC2에서 `docker compose up -d --build` 실행 및 IAM Role·볼륨 영속성 최종 검증 |

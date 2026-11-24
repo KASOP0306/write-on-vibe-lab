@@ -1,4 +1,4 @@
-# DEPLOY_EC2.md — AWS EC2 Docker 배포 & Day 4 최종 E2E 검증 가이드
+# DEPLOY_EC2.md — AWS EC2 Docker 배포 & E2E 검증 가이드
 
 이 문서는 **EC2 1대 + Docker Compose(3개 컨테이너) + IAM Role + AWS Bedrock** 조합으로 `write-on-vibe-lab`을 안전하게 배포하고 검증하는 실행 매뉴얼입니다.
 
@@ -74,7 +74,7 @@ docker compose up -d --build
 
 ---
 
-## 3. Day 4 최종 검증 체크리스트
+## 3. 배포 후 최종 E2E 검증 체크리스트
 
 ### 3.1 컨테이너 헬스 & AWS Bedrock 호출 검증
 ```bash

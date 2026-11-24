@@ -146,6 +146,8 @@ erDiagram
 
 ## 4. AI 모델 티어링 & LangGraph 4대 에이전트 아키텍처
 
+> 각 에이전트별 상세 노드 다이어그램, 상태 전이 및 조건부 분기 규약은 [WORKFLOWS.md](./WORKFLOWS.md)에 별도로 정리되어 있습니다.
+
 ### 4.1 AWS Bedrock 모델 티어 분리 (`backend/app/core/bedrock.py`)
 
 | 티어 | 환경변수 | 기본 모델 예시 | 담당 작업 |

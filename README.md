@@ -17,11 +17,12 @@ LangChain + LangGraph + AWS Bedrock + pgvector 기반의 **1인용 순환형(Clo
 
 ## 문서 안내
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — 시스템 아키텍처 설계서 (인프라·DB ERD·LangGraph·SSE·보안 경계)
-- [DEPLOY_EC2.md](./DEPLOY_EC2.md) — AWS EC2 Docker 배포 & Day 4 E2E/영속성 검증 매뉴얼
+- [WORKFLOWS.md](./WORKFLOWS.md) — LangGraph 4대 AI 에이전트 워크플로우 상세 명세서
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — 시스템 아키텍처 설계서 (인프라·DB ERD·API/SSE·보안 경계)
+- [DEPLOY_EC2.md](./DEPLOY_EC2.md) — AWS EC2 Docker 배포 & E2E/영속성 검증 매뉴얼
+- [SECRETS.md](./SECRETS.md) — 비밀번호·패스워드·AWS 키 보안 관리 가이드 (필독)
 - [ai.md](./ai.md) — 마스터 기획서 & Docker 아키텍처
 - [agents_md.md](./agents_md.md) — 개발 에이전트 작업 지침서
-- [SECRETS.md](./SECRETS.md) — 비밀번호·패스워드·AWS 키 보안 관리 가이드 (필독)
 
 ## 빠른 시작 (로컬 환경)
 
