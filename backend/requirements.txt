@@ -10,6 +10,7 @@ langgraph
 langgraph-checkpoint-postgres
 langchain-aws
 boto3
-duckduckgo-search
+ddgs
+trafilatura
 beautifulsoup4
 httpx

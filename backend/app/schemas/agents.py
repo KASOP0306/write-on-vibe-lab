@@ -1,7 +1,7 @@
 """에이전트 ①~③ API 입출력 및 기업 리서치/관심사 클립 Pydantic 스키마."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +27,13 @@ class InterviewReplyRequest(BaseModel):
 class CompanyResearchRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)
     target_role: str = Field(default="", max_length=200)
+    jd_text: str = Field(
+        default="", description="선택: 채용공고(JD) 본문 붙여넣기 (최우선 근거로 반영)"
+    )
+    reference_urls: list[str] = Field(
+        default_factory=list,
+        description="선택: 공식 기술 블로그·채용 페이지 등 직접 분석할 URL 목록",
+    )
 
 
 class CompanyProfileResponse(BaseModel):
@@ -45,7 +52,13 @@ class CompanyProfileResponse(BaseModel):
 # --- 관심사 검색 & 선별 클립 저장 ---
 class InterestSearchRequest(BaseModel):
     keyword: str = Field(..., min_length=1, max_length=200)
-    max_results: int = Field(default=5, ge=1, le=8)
+    scope: Literal["ko", "global", "all"] = Field(
+        default="ko", description="검색 범위: ko(한국어 뉴스/블로그), global(영문/HN/GitHub), all(통합)"
+    )
+    recency: Literal["recent", "all"] = Field(
+        default="recent", description="기간 필터: recent(최신 우선), all(전체)"
+    )
+    max_results: int = Field(default=6, ge=1, le=8)
 
 
 class InterestClipSaveRequest(BaseModel):

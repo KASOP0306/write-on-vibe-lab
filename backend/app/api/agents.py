@@ -45,7 +45,7 @@ from app.schemas.agents import (
     InterviewStartRequest,
 )
 from app.schemas.projects import ExperienceSummary
-from app.tools.web_search import search_and_extract
+from app.tools.web_search import search_interest_sources
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,9 @@ router = APIRouter(prefix="/api", tags=["agents"])
 class InterestClipCandidate(BaseModel):
     title: str
     url: str
+    domain: str = ""
+    source_type: str = "web"
+    published_at: str = ""
     summary: str = Field(description="한국어 2~3문장 핵심 요약")
     key_takeaways: list[str] = Field(
         default_factory=list, description="실무/포트폴리오에 참고할 핵심 포인트 2~3개"
@@ -172,6 +175,24 @@ async def list_companies(
     return [CompanyProfileResponse.model_validate(row) for row in rows]
 
 
+@router.delete("/companies/{company_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_company(
+    company_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    company = await session.get(CompanyProfile, company_id)
+    if company is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Company profile {company_id} not found.",
+        )
+    await session.delete(company)
+    await session.commit()
+    await delete_document(
+        session, doc_type=DocType.COMPANY_RESEARCH, ref_id=f"company-{company_id}"
+    )
+
+
 @router.post("/agents/company/research")
 async def research_company(payload: CompanyResearchRequest):
     async def event_stream():
@@ -180,18 +201,30 @@ async def research_company(payload: CompanyResearchRequest):
             initial_state = {
                 "company_name": payload.company_name.strip(),
                 "target_role": payload.target_role.strip(),
+                "jd_text": payload.jd_text.strip(),
+                "reference_urls": [u.strip() for u in payload.reference_urls if u.strip()],
             }
             accumulated: dict[str, Any] = dict(initial_state)
 
             yield sse_node_start(
-                "company_searcher",
-                f"'{payload.company_name}'의 이념·비전·최근 이슈를 웹에서 수집하는 중...",
+                "query_planner",
+                f"'{payload.company_name}' 맞춤 4관점 리서치 쿼리를 설계하는 중...",
             )
 
             async for chunk in graph.astream(initial_state, stream_mode="updates"):
                 for node_name, update in chunk.items():
                     accumulated.update(update)
-                    if node_name == "company_searcher":
+                    if node_name == "query_planner":
+                        queries = update.get("planned_queries") or []
+                        yield sse_node_end(
+                            "query_planner",
+                            {"query_count": len(queries), "queries": queries},
+                        )
+                        yield sse_node_start(
+                            "company_searcher",
+                            "웹 검색·Google News RSS·참고 URL에서 본문을 수집하고 정제하는 중...",
+                        )
+                    elif node_name == "company_searcher":
                         yield sse_node_end(
                             "company_searcher",
                             {"source_count": len(update.get("web_sources") or [])},
@@ -207,7 +240,7 @@ async def research_company(payload: CompanyResearchRequest):
                         )
                         yield sse_node_start(
                             "alignment_synthesizer",
-                            "기업 비전 × 나의 신념 × 증명 프로젝트 3각 매칭을 생성하는 중...",
+                            "출처 근거 기반으로 기업 비전 × 나의 신념 × 프로젝트 3각 매칭을 생성하는 중...",
                         )
                     elif node_name == "alignment_synthesizer":
                         yield sse_node_end(
@@ -234,6 +267,7 @@ async def research_company(payload: CompanyResearchRequest):
 
             yield sse_done(
                 {
+                    "id": accumulated.get("company_profile_id"),
                     "company_profile_id": accumulated.get("company_profile_id"),
                     "company_name": accumulated.get("company_name"),
                     "target_role": accumulated.get("target_role"),
@@ -259,13 +293,21 @@ async def search_interests(payload: InterestSearchRequest):
     async def event_stream():
         try:
             keyword = payload.keyword.strip()
+            scope_label = {
+                "ko": "한국어 뉴스·기술 블로그",
+                "global": "글로벌 기술(HN·GitHub·영문 뉴스)",
+                "all": "한국어 + 글로벌 통합",
+            }.get(payload.scope, payload.scope)
+
             yield sse_node_start(
-                "web_search", f"'{keyword}' 관련 최신 기술·트렌드 자료를 검색하는 중..."
+                "web_search",
+                f"'{keyword}' ({scope_label}) 최신 자료를 멀티소스로 수집하는 중...",
             )
-            raw_docs = await search_and_extract(
-                f"{keyword} 최신 기술 트렌드 아키텍처 사례",
+            raw_docs = await search_interest_sources(
+                keyword,
+                scope=payload.scope,
+                recency=payload.recency,
                 max_results=payload.max_results,
-                fetch_top_n=min(3, payload.max_results),
             )
             yield sse_node_end("web_search", {"found_count": len(raw_docs)})
 
@@ -274,10 +316,12 @@ async def search_interests(payload: InterestSearchRequest):
                 return
 
             yield sse_node_start(
-                "summarizer", "검색 결과를 선별 저장할 수 있도록 핵심 요약 카드로 정리하는 중..."
+                "summarizer", "수집된 원문을 선별 저장할 수 있도록 핵심 요약 카드로 정리하는 중..."
             )
             docs_text = "\n\n".join(
-                f"[{idx}] 제목: {d['title']}\nURL: {d['url']}\n내용: {d['content'][:1000]}"
+                f"[{idx}] ({d.get('source_type', 'web')} · {d.get('domain', '')}"
+                f"{' · ' + d['published_at'] if d.get('published_at') else ''})\n"
+                f"제목: {d['title']}\nURL: {d['url']}\n내용: {d['content'][:1100]}"
                 for idx, d in enumerate(raw_docs, start=1)
             )
             llm = get_fast_llm(temperature=0.2)
@@ -288,15 +332,27 @@ async def search_interests(payload: InterestSearchRequest):
                     SystemMessage(
                         content=(
                             "당신은 개발자의 기술 리서치 어시스턴트입니다. "
-                            "제공된 검색 결과만 바탕으로 각 항목의 제목, URL, 한국어 2~3문장 핵심 요약, "
-                            "실무/포트폴리오 적용 포인트 2~3개를 정리하세요."
+                            "제공된 검색 결과만 바탕으로 각 항목의 title, url, domain, source_type, published_at을 유지하고 "
+                            "한국어 2~3문장 핵심 요약(summary)과 실무/포트폴리오 적용 포인트 2~3개(key_takeaways)를 정리하세요."
                         )
                     ),
                     HumanMessage(content=f"[관심 키워드] {keyword}\n\n[검색 자료]\n{docs_text}"),
                 ],
                 max_retries=1,
             )
-            clips = [c.model_dump() for c in summary_batch.clips]
+            raw_by_url = {d.get("url"): d for d in raw_docs if d.get("url")}
+            clips = []
+            for c in summary_batch.clips:
+                item = c.model_dump()
+                src = raw_by_url.get(item.get("url")) or {}
+                if not item.get("domain"):
+                    item["domain"] = src.get("domain", "")
+                if not item.get("source_type") or item["source_type"] == "web":
+                    item["source_type"] = src.get("source_type", "web")
+                if not item.get("published_at"):
+                    item["published_at"] = src.get("published_at", "")
+                clips.append(item)
+
             yield sse_node_end("summarizer", {"clip_count": len(clips)})
             yield sse_done({"keyword": keyword, "clips": clips})
         except Exception as exc:

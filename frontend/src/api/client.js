@@ -126,6 +126,8 @@ export const api = {
 
   // Companies & Clips & Samples & Applications
   listCompanies: () => apiRequest("/api/companies"),
+  deleteCompany: (id) =>
+    apiRequest(`/api/companies/${id}`, { method: "DELETE" }),
   listInterestClips: () => apiRequest("/api/interests/clips"),
   saveInterestClip: (data) =>
     apiRequest("/api/agents/interests/clip", {

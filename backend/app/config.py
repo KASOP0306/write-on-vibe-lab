@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bedrock_embed_model_id: str = "amazon.titan-embed-text-v2:0"
     embedding_dim: int = 1024
     github_token: str | None = None
+    enable_jina_reader_fallback: bool = True
 
 
 settings = Settings()
