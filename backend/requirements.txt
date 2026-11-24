@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+sqlalchemy[asyncio]
+psycopg[binary]
+pgvector
+langchain
+langgraph
+langgraph-checkpoint-postgres
+langchain-aws
+boto3
+duckduckgo-search
+beautifulsoup4
+httpx
