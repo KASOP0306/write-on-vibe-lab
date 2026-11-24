@@ -30,7 +30,7 @@ credentials.yml
 *accessKeys*.csv
 rootkey.csv
 
-# Local secret files (explicitly keep SECRETS.md documentation tracked)
+# Local secret files & private seed data (explicitly keep SECRETS.md documentation tracked)
 .secrets/
 *.secret
 secrets.json
@@ -38,6 +38,7 @@ secrets.yaml
 secrets.yml
 secrets.toml
 secrets.local.*
+*.local.json
 !SECRETS.md
 
 # ==============================================================================

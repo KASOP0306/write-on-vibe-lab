@@ -1,1 +1,24 @@
-[]
+[
+  {
+    "id": "template-01",
+    "role_category": "백엔드 개발",
+    "question_type": "문제 해결 / 트러블슈팅",
+    "structure_pattern": "두괄식 결론 -> 계측 기반 원인 분석 -> 대안 비교 -> 정량 성과 -> 재발 방지",
+    "key_persuasion_points": [
+      "추측 대신 로그/메트릭으로 원인 특정",
+      "선택한 해결책의 트레이드오프 명시"
+    ],
+    "sample_text": "[형식 예시] 실제 합격 자소서 레퍼런스는 이 파일 대신 gitignore 대상인 backend/app/seeds/jasoseo_samples.local.json에 넣거나, 웹 UI(POST /api/samples)로 직접 등록해 사용하세요."
+  },
+  {
+    "id": "template-02",
+    "role_category": "직무 공통",
+    "question_type": "지원동기 및 직무 적합성",
+    "structure_pattern": "본인 신념 -> 기업 과제 연결 -> 프로젝트 증명 -> 입사 후 기여",
+    "key_persuasion_points": [
+      "기업 칭찬 대신 실제 기술/비즈니스 병목 짚기",
+      "과거 프로젝트 경험으로 역량 증명"
+    ],
+    "sample_text": "[형식 예시] 지원동기 문항 구조 참고용 템플릿입니다. 실제 합격 자소서 원문은 로컬 전용 파일 또는 웹 UI를 통해 DB에만 저장하세요."
+  }
+]

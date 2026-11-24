@@ -17,6 +17,7 @@ LangChain + LangGraph + AWS Bedrock + pgvector 기반의 **1인용 순환형(Clo
 
 ## 문서 안내
 
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — 시스템 아키텍처 설계서 (인프라·DB ERD·LangGraph·SSE·보안 경계)
 - [ai.md](./ai.md) — 마스터 기획서 & Docker 아키텍처
 - [agents_md.md](./agents_md.md) — 개발 에이전트 작업 지침서 및 4일 구현 체크리스트
 - [SECRETS.md](./SECRETS.md) — 비밀번호·패스워드·AWS 키 보안 관리 가이드 (필독)

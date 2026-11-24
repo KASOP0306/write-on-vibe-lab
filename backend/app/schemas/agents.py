@@ -1,0 +1,77 @@
+"""에이전트 ①~③ API 입출력 및 기업 리서치/관심사 클립 Pydantic 스키마."""
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+# --- 워크플로우 ①: 경험 채굴 (Active Interviewer) ---
+class InterviewStartRequest(BaseModel):
+    raw_notes: str = Field(..., min_length=5, description="경험 메모 원문")
+    project_id: int | None = Field(default=None, description="연결할 프로젝트 ID (선택)")
+    thread_id: str | None = Field(default=None, description="세션 식별자 (미지정 시 자동 생성)")
+    force_save: bool = Field(default=False, description="즉시 저장 여부")
+
+
+class InterviewReplyRequest(BaseModel):
+    thread_id: str = Field(..., min_length=1, description="진행 중인 인터뷰 thread_id")
+    user_reply: str = Field(default="", description="역질문에 대한 사용자 답변")
+    project_id: int | None = Field(default=None, description="프로젝트 매핑 변경/지정 (선택)")
+    force_save: bool = Field(
+        default=False, description="true이면 완성도와 무관하게 즉시 저장 노드로 라우팅"
+    )
+
+
+# --- 워크플로우 ②: 목표 기업 리서치 & 신념 3각 매칭 ---
+class CompanyResearchRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    target_role: str = Field(default="", max_length=200)
+
+
+class CompanyProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_name: str
+    target_role: str
+    mission_vision: str
+    core_values: str
+    recent_trends: str
+    value_alignment_map: dict[str, Any]
+    created_at: datetime
+
+
+# --- 관심사 검색 & 선별 클립 저장 ---
+class InterestSearchRequest(BaseModel):
+    keyword: str = Field(..., min_length=1, max_length=200)
+    max_results: int = Field(default=5, ge=1, le=8)
+
+
+class InterestClipSaveRequest(BaseModel):
+    keyword: str = Field(..., min_length=1, max_length=200)
+    title: str = Field(..., min_length=1, max_length=300)
+    url: str = Field(default="", max_length=1000)
+    summary: str = Field(..., min_length=10)
+    key_takeaways: list[str] = Field(default_factory=list)
+
+
+class InterestClipResponse(BaseModel):
+    id: int
+    ref_id: str
+    keyword: str
+    title: str
+    url: str
+    summary: str
+    key_takeaways: list[str]
+    created_at: datetime
+
+
+# --- 워크플로우 ③: 자소서 생성 · 비평 · 퇴고 · De-AI ---
+class CoverLetterGenerateRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    company_profile_id: int | None = Field(default=None)
+    target_role: str = Field(default="", max_length=200)
+    question: str = Field(..., min_length=5, description="자기소개서 문항")
+    char_limit: int = Field(default=800, ge=200, le=3000, description="목표 글자 수")
+    extra_instructions: str = Field(default="", description="추가 강조 요청 (선택)")
