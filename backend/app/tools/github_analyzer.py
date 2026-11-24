@@ -23,11 +23,12 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.bedrock import ainvoke_structured, get_smart_llm
-from app.tools.portfolio_manager import (
-    STANDARD_SECTION_MAP,
-    STANDARD_SECTIONS,
-    render_portfolio_markdown,
+from app.core.project_templates import (
+    compose_sections_for_types,
+    get_combined_ai_guidance,
+    normalize_project_types,
 )
+from app.tools.portfolio_manager import render_portfolio_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -463,31 +464,35 @@ def format_repo_context_as_document(repo_ctx: dict[str, Any]) -> str:
 async def synthesize_portfolio_from_context(
     repo_ctx: dict[str, Any],
     *,
+    project_types: list[str] | None = None,
     role_hint: str = "",
     extra_context: str = "",
     profile_context: str = "",
 ) -> dict[str, Any]:
-    """수집된 GitHub 저장소 컨텍스트에서 6개 모듈 섹션 + 프로젝트 메타 + STAR 경험 초안을 생성한다."""
+    """수집된 GitHub 저장소 컨텍스트에서 선택한 복수 유형(트랙) 섹션 + 프로젝트 메타 + STAR 경험 초안을 생성한다."""
+    normalized_types = normalize_project_types(project_types)
+    target_sections = compose_sections_for_types(normalized_types)
+    guidance = get_combined_ai_guidance(normalized_types)
     repo_doc = format_repo_context_as_document(repo_ctx)
 
+    section_spec_lines = "\n".join(
+        f"- `{s['section_type']}` ({s['title']}): {s['placeholder']}"
+        for s in target_sections
+    )
+
     system_prompt = (
-        "당신은 시니어 소프트웨어 엔지니어 포트폴리오 아키텍트입니다.\n"
-        "제공된 GitHub 저장소의 실제 코드 트리, README, 핵심 소스코드, 의존성, 커밋 이력만을 근거로 "
-        "포트폴리오 프로젝트 정보, 6개 표준 엔지니어링 섹션, STAR 경험 초안 1~3건을 한국어로 구조화하세요.\n\n"
-        "6개 표준 섹션(`sections`) 키:\n"
-        "- `overview`: 1. 개요 & 문제 정의 (배경, 해결 과제, 제약조건)\n"
-        "- `architecture`: 2. 시스템 아키텍처 & 기술 스택 (핵심 컴포넌트, 데이터 흐름)\n"
-        "- `decisions`: 3. 핵심 기술 의사결정 (Mini-ADR: 기술 선택 이유 및 트레이드오프)\n"
-        "- `implementation`: 4. 담당 역할 & 핵심 구현 (코드에서 확인된 주요 모듈·기능)\n"
-        "- `troubleshooting`: 5. 트러블슈팅 & 성능 개선 (커밋/문서에서 확인된 오류 해결·안정화 내용, 없으면 보완 가이드 1줄)\n"
-        "- `outcomes`: 6. 성과, 정량 지표 & 회고 (확인된 결과 및 향후 보완 포인트)\n\n"
+        f"당신은 {guidance['persona']}입니다.\n"
+        f"제공된 GitHub 저장소의 실제 코드 트리, README, 핵심 소스코드, 의존성, 커밋 이력만을 근거로 "
+        f"[{guidance['labels']}] 포트폴리오 프로젝트 정보, 아래 목표 섹션, STAR 경험 초안 1~3건을 한국어로 구조화하세요.\n\n"
+        f"[작성할 목표 섹션(`sections`) 키]\n{section_spec_lines}\n\n"
         "엄격한 규칙:\n"
         "1. 저장소에 없는 수치(예: 속도 50% 향상, MAU 등)는 절대 지어내지 마세요. 정량 수치가 없으면 `quantified_metrics`는 빈 문자열로 두세요.\n"
         "2. 각 섹션 `content`는 불릿 포인트 위주의 간결한 한국어 Markdown으로 작성하세요.\n"
-        "3. `tech_stack`은 실제 코드/의존성에서 확인된 핵심 기술만 최대 12개로 추리세요."
+        "3. `tech_stack`은 실제 코드/의존성에서 확인된 핵심 기술·도구만 최대 12개로 추리세요."
     )
 
     user_prompt = (
+        f"[선택된 프로젝트 유형] {guidance['labels']}\n"
         f"[사용자 역할 힌트] {role_hint or '(미입력 — 레포 구성으로 추정)'}\n"
         f"[사용자 추가 메모] {extra_context or '(없음)'}\n"
         f"[지원자 커리어 신념/비전]\n{profile_context or '(미설정)'}\n\n"
@@ -502,18 +507,18 @@ async def synthesize_portfolio_from_context(
         max_retries=1,
     )
 
-    # 6개 표준 섹션 순서대로 정규화
     gen_by_type = {s.section_type.strip(): s for s in synthesized.sections if s.content.strip()}
     normalized_sections: list[dict[str, Any]] = []
-    for std in STANDARD_SECTIONS:
-        st = std["section_type"]
+    for tpl in target_sections:
+        st = tpl["section_type"]
         gen = gen_by_type.get(st)
         normalized_sections.append(
             {
                 "section_type": st,
-                "title": (gen.title.strip() if gen and gen.title.strip() else std["title"]),
+                "track": tpl["track"],
+                "title": (gen.title.strip() if gen and gen.title.strip() else tpl["title"]),
                 "content": gen.content.strip() if gen else "",
-                "display_order": std["display_order"],
+                "display_order": tpl["display_order"],
             }
         )
 
@@ -526,6 +531,8 @@ async def synthesize_portfolio_from_context(
         or repo_ctx.get("languages", []),
         "portfolio_goal_link": synthesized.portfolio_goal_link.strip(),
         "repo_url": repo_ctx["html_url"],
+        "project_types": normalized_types,
+        "artifact_links": [],
     }
 
     portfolio_markdown = render_portfolio_markdown(project_dict, normalized_sections)
@@ -556,6 +563,7 @@ async def synthesize_portfolio_from_context(
 async def analyze_github_to_portfolio(
     repo_url: str,
     *,
+    project_types: list[str] | None = None,
     github_token: str | None = None,
     role_hint: str = "",
     extra_context: str = "",
@@ -564,6 +572,7 @@ async def analyze_github_to_portfolio(
     repo_ctx = await fetch_github_repo_context(repo_url, github_token=github_token)
     return await synthesize_portfolio_from_context(
         repo_ctx,
+        project_types=project_types,
         role_hint=role_hint,
         extra_context=extra_context,
         profile_context=profile_context,

@@ -1,7 +1,8 @@
-"""Projects CRUD, 모듈형 섹션 워크스페이스, GitHub 딥 분석, 문서 기반 자동 업데이트, AI 노이즈 정리 라우터."""
+"""Projects CRUD, 조합형 멀티트랙 포트폴리오 워크스페이스, 문서/GitHub 기반 생성·업데이트, AI 노이즈 정리 라우터."""
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -27,15 +28,25 @@ from app.core.database import (
     UserProfile,
     get_db_session,
 )
+from app.core.project_templates import (
+    ALL_KNOWN_SECTIONS,
+    compose_sections_for_types,
+    get_combined_ai_guidance,
+    get_templates_payload,
+    infer_track_for_section_type,
+    normalize_project_types,
+)
 from app.core.vector_store import DocType, delete_document, try_upsert_document
 from app.schemas.projects import (
+    AddTracksRequest,
+    AddTracksResponse,
     ApplyProjectUpdatesRequest,
     ApplyProjectUpdatesResponse,
     DocumentIngestProposalResponse,
+    DocumentToProjectResponse,
     ExperienceSummary,
     GitHubAnalyzeRequest,
     GitHubAnalyzeResponse,
-    GitHubImportRequest,
     GitHubImportResponse,
     GitHubSyncRequest,
     ProjectCreateRequest,
@@ -50,6 +61,7 @@ from app.schemas.projects import (
     PruneApplyRequest,
     PruneApplyResponse,
     PruneProposalResponse,
+    StructuredProjectImportRequest,
 )
 from app.tools.document_parser import DocumentParseError, parse_uploaded_file
 from app.tools.github_analyzer import (
@@ -60,8 +72,7 @@ from app.tools.github_analyzer import (
     synthesize_portfolio_from_context,
 )
 from app.tools.portfolio_manager import (
-    STANDARD_SECTION_MAP,
-    STANDARD_SECTIONS,
+    analyze_document_to_portfolio,
     propose_document_updates,
     propose_noise_pruning,
     render_portfolio_markdown,
@@ -82,6 +93,8 @@ def _project_to_dict(project: Project) -> dict[str, Any]:
         "tech_stack": list(project.tech_stack or []),
         "portfolio_goal_link": project.portfolio_goal_link,
         "repo_url": project.repo_url,
+        "project_types": normalize_project_types(project.project_types),
+        "artifact_links": list(project.artifact_links or []),
     }
 
 
@@ -90,10 +103,39 @@ def _section_to_dict(sec: ProjectSection) -> dict[str, Any]:
         "id": sec.id,
         "project_id": sec.project_id,
         "section_type": sec.section_type,
+        "track": sec.track or infer_track_for_section_type(sec.section_type),
         "title": sec.title,
         "content": sec.content,
         "display_order": sec.display_order,
     }
+
+
+def _clean_artifact_links(links: list[Any] | None) -> list[dict[str, str]]:
+    cleaned: list[dict[str, str]] = []
+    for item in links or []:
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if url:
+            cleaned.append({"label": label or url, "url": url})
+    return cleaned
+
+
+def _parse_types_form_field(raw: str) -> list[str]:
+    text = (raw or "").strip()
+    if not text:
+        return ["engineering"]
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return normalize_project_types([str(x) for x in parsed])
+        except json.JSONDecodeError:
+            pass
+    return normalize_project_types([x.strip() for x in text.split(",") if x.strip()])
 
 
 async def _sync_section_vector(
@@ -105,10 +147,13 @@ async def _sync_section_vector(
         await delete_document(session, doc_type=DocType.EXPERIENCE, ref_id=ref_id)
         return False
 
+    project_types = normalize_project_types(project.project_types)
+    track = section.track or infer_track_for_section_type(section.section_type)
     vector_text = (
         f"[프로젝트] {project.name} ({project.role})\n"
-        f"[포트폴리오 섹션] {section.title} ({section.section_type})\n"
-        f"[기술 스택] {', '.join(project.tech_stack or [])}\n"
+        f"[프로젝트 유형] {', '.join(project_types)}\n"
+        f"[포트폴리오 섹션 | {track}] {section.title} ({section.section_type})\n"
+        f"[기술/역량/도구] {', '.join(project.tech_stack or [])}\n"
         f"{content}"
     )
     return await try_upsert_document(
@@ -119,8 +164,10 @@ async def _sync_section_vector(
         metadata={
             "project_id": project.id,
             "project_name": project.name,
+            "project_types": project_types,
             "section_id": section.id,
             "section_type": section.section_type,
+            "section_track": track,
             "source": "project_section",
         },
     )
@@ -145,39 +192,50 @@ async def _load_project_full(session: AsyncSession, project_id: int) -> Project:
     return project
 
 
-async def _ensure_default_sections(
+async def _ensure_sections_for_project_types(
     session: AsyncSession, project: Project
-) -> list[ProjectSection]:
+) -> list[str]:
     existing_types = {s.section_type for s in project.sections}
-    created_any = False
-    for std in STANDARD_SECTIONS:
-        if std["section_type"] not in existing_types:
+    composed = compose_sections_for_types(project.project_types)
+    added: list[str] = []
+
+    for tpl in composed:
+        st = tpl["section_type"]
+        if st not in existing_types:
             initial_content = (
                 project.summary
-                if std["section_type"] == "overview" and project.summary.strip()
+                if st == "overview" and project.summary.strip()
                 else ""
             )
-            sec = ProjectSection(
-                project_id=project.id,
-                section_type=std["section_type"],
-                title=std["title"],
-                content=initial_content,
-                display_order=std["display_order"],
+            session.add(
+                ProjectSection(
+                    project_id=project.id,
+                    section_type=st,
+                    track=tpl["track"],
+                    title=tpl["title"],
+                    content=initial_content,
+                    display_order=tpl["display_order"],
+                )
             )
-            session.add(sec)
-            created_any = True
+            added.append(st)
 
-    if created_any:
+    if added:
         await session.commit()
-        project = await _load_project_full(session, project.id)
-    return list(project.sections)
+    return added
 
 
 # ==============================================================================
-# 1. Projects 목록 및 GitHub 자동 분석/임포트
+# 1. 템플릿 레지스트리, 프로젝트 목록, 문서/GitHub 기반 멀티트랙 자동 생성
 # ==============================================================================
+@router.get("/templates")
+async def get_project_templates() -> dict[str, Any]:
+    """공통 코어 + 5종 조합형 프로젝트 유형 트랙 팩 메타데이터를 반환한다."""
+    return get_templates_payload()
+
+
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
+    project_type: str | None = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ProjectResponse]:
     exp_subq = (
@@ -225,7 +283,12 @@ async def list_projects(
 
     results: list[ProjectResponse] = []
     for project, exp_count, filled_sec, total_sec, doc_count in rows:
+        norm_types = normalize_project_types(project.project_types)
+        if project_type and project_type not in norm_types:
+            continue
         item = ProjectResponse.model_validate(project)
+        item.project_types = norm_types
+        item.artifact_links = list(project.artifact_links or [])
         item.experience_count = int(exp_count)
         item.filled_section_count = int(filled_sec)
         item.total_section_count = int(total_sec)
@@ -234,12 +297,89 @@ async def list_projects(
     return results
 
 
+@router.post("/analyze-document", response_model=DocumentToProjectResponse)
+async def analyze_document_new_project(
+    file: UploadFile | None = File(default=None),
+    pasted_text: str = Form(default=""),
+    doc_title: str = Form(default=""),
+    project_types: str = Form(default='["product_planning"]'),
+    role_hint: str = Form(default=""),
+    extra_context: str = Form(default=""),
+    session: AsyncSession = Depends(get_db_session),
+) -> DocumentToProjectResponse:
+    """기획서·발표자료(.pptx/.pdf/.docx/.md/.ipynb) 또는 텍스트에서 선택한 복수 유형의 프로젝트 초안을 자동 생성한다."""
+    parsed_types = _parse_types_form_field(project_types)
+
+    if file is not None and file.filename:
+        raw_bytes = await file.read()
+        try:
+            parsed = parse_uploaded_file(file.filename, raw_bytes)
+        except DocumentParseError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        filename = parsed["filename"]
+        file_format = parsed["file_format"]
+        doc_text = parsed["text"]
+        parse_info = parsed["info"]
+        source_type = "file_upload"
+    elif pasted_text.strip():
+        clean = pasted_text.strip()
+        filename = doc_title.strip() or "프로젝트_문서.md"
+        file_format = "md"
+        doc_text = clean[:28000]
+        parse_info = f"{len(clean.splitlines())} lines"
+        source_type = "pasted_doc"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="업로드할 파일 또는 문서 텍스트를 입력해 주세요.",
+        )
+
+    profile = await session.get(UserProfile, 1)
+    profile_context = ""
+    if profile:
+        profile_context = (
+            f"희망 직무: {profile.target_roles}\n"
+            f"커리어 비전: {profile.career_vision}\n"
+            f"핵심 신념: {profile.core_beliefs}"
+        ).strip()
+
+    try:
+        result = await analyze_document_to_portfolio(
+            doc_text=doc_text,
+            filename=filename,
+            project_types=parsed_types,
+            role_hint=role_hint.strip(),
+            extra_context=extra_context.strip(),
+            profile_context=profile_context,
+        )
+    except Exception as exc:
+        logger.exception("Document-to-portfolio analysis failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"문서 기반 포트폴리오 생성 중 오류가 발생했습니다: {exc}",
+        )
+
+    return DocumentToProjectResponse(
+        project=result["project"],
+        sections=result["sections"],
+        portfolio_markdown=result["portfolio_markdown"],
+        suggested_experiences=result["suggested_experiences"],
+        source_meta={
+            "filename": filename,
+            "source_type": source_type,
+            "file_format": file_format,
+            "parse_info": parse_info,
+            "project_types": parsed_types,
+        },
+    )
+
+
 @router.post("/analyze-github", response_model=GitHubAnalyzeResponse)
 async def analyze_github_repo(
     payload: GitHubAnalyzeRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> GitHubAnalyzeResponse:
-    """GitHub 저장소 URL을 분석해 프로젝트 메타, 6개 모듈 섹션, 포트폴리오 Markdown, STAR 초안을 생성한다."""
+    """GitHub 저장소 URL을 분석해 선택한 복수 유형의 모듈 섹션과 STAR 초안을 생성한다."""
     profile = await session.get(UserProfile, 1)
     profile_context = ""
     if profile:
@@ -252,6 +392,7 @@ async def analyze_github_repo(
     try:
         result = await analyze_github_to_portfolio(
             payload.repo_url,
+            project_types=payload.project_types,
             github_token=payload.github_token.strip() or None,
             role_hint=payload.role_hint.strip(),
             extra_context=payload.extra_context.strip(),
@@ -274,7 +415,7 @@ async def analyze_github_repo_stream(
     payload: GitHubAnalyzeRequest,
     session: AsyncSession = Depends(get_db_session),
 ):
-    """SSE 스트리밍으로 GitHub 저장소 트리 스캔 → 핵심 파일 읽기 → 6개 섹션 구조화 단계를 실시간 전송한다."""
+    """SSE 스트리밍으로 GitHub 저장소 트리 스캔 → 멀티트랙 섹션 구조화 단계를 실시간 전송한다."""
     profile = await session.get(UserProfile, 1)
     profile_context = ""
     if profile:
@@ -283,6 +424,8 @@ async def analyze_github_repo_stream(
             f"커리어 비전: {profile.career_vision}\n"
             f"핵심 신념: {profile.core_beliefs}"
         ).strip()
+
+    normalized_types = normalize_project_types(payload.project_types)
 
     async def event_stream():
         try:
@@ -309,10 +452,11 @@ async def analyze_github_repo_stream(
 
             yield sse_node_start(
                 "synthesize_sections",
-                f"수집한 파일 {len(analyzed_files)}개를 분석해 6개 엔지니어링 포트폴리오 섹션과 STAR 초안을 작성하는 중...",
+                f"수집한 파일 {len(analyzed_files)}개를 분석해 멀티트랙 포트폴리오 섹션과 STAR 초안을 작성하는 중...",
             )
             result = await synthesize_portfolio_from_context(
                 repo_ctx,
+                project_types=normalized_types,
                 role_hint=payload.role_hint.strip(),
                 extra_context=payload.extra_context.strip(),
                 profile_context=profile_context,
@@ -334,17 +478,14 @@ async def analyze_github_repo_stream(
     return create_sse_response(event_stream())
 
 
-@router.post(
-    "/import-github",
-    response_model=GitHubImportResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def import_github_project(
-    payload: GitHubImportRequest,
-    session: AsyncSession = Depends(get_db_session),
+async def _import_structured_project_impl(
+    payload: StructuredProjectImportRequest,
+    session: AsyncSession,
 ) -> GitHubImportResponse:
-    """분석·편집된 GitHub 프로젝트 + 6개 모듈 섹션 + 선택한 STAR 경험을 DB 및 벡터에 일괄 저장한다."""
     p = payload.project
+    normalized_types = normalize_project_types(p.project_types)
+    cleaned_links = _clean_artifact_links(p.artifact_links)
+
     project = Project(
         name=p.name.strip(),
         period=p.period.strip(),
@@ -353,6 +494,8 @@ async def import_github_project(
         tech_stack=[t.strip() for t in p.tech_stack if t.strip()],
         portfolio_goal_link=p.portfolio_goal_link.strip(),
         repo_url=p.repo_url.strip(),
+        project_types=normalized_types,
+        artifact_links=cleaned_links,
     )
     session.add(project)
     await session.commit()
@@ -363,17 +506,21 @@ async def import_github_project(
     applied_section_types: list[str] = []
 
     incoming_by_type = {s.section_type: s for s in payload.sections}
-    for std in STANDARD_SECTIONS:
-        st = std["section_type"]
+    composed_templates = compose_sections_for_types(normalized_types)
+    composed_keys = {t["section_type"] for t in composed_templates}
+
+    for tpl in composed_templates:
+        st = tpl["section_type"]
         src = incoming_by_type.get(st)
         content = src.content.strip() if src else ""
-        title = src.title.strip() if src and src.title.strip() else std["title"]
+        title = src.title.strip() if src and src.title.strip() else tpl["title"]
         sec = ProjectSection(
             project_id=project.id,
             section_type=st,
+            track=tpl["track"],
             title=title,
             content=content,
-            display_order=std["display_order"],
+            display_order=tpl["display_order"],
         )
         session.add(sec)
         saved_sections.append(sec)
@@ -381,32 +528,37 @@ async def import_github_project(
             applied_section_types.append(st)
 
     for s in payload.sections:
-        if s.section_type not in STANDARD_SECTION_MAP:
+        if s.section_type not in composed_keys:
+            st = s.section_type.strip()
             sec = ProjectSection(
                 project_id=project.id,
-                section_type=s.section_type.strip(),
+                section_type=st,
+                track=s.track or infer_track_for_section_type(st),
                 title=s.title.strip(),
                 content=s.content.strip(),
-                display_order=s.display_order or 99,
+                display_order=s.display_order or 700,
             )
             session.add(sec)
             saved_sections.append(sec)
             if s.content.strip():
-                applied_section_types.append(s.section_type.strip())
+                applied_section_types.append(st)
 
-    # GitHub 소스 이력 기록
-    if project.repo_url:
+    source_filename = payload.source_filename.strip() or project.repo_url
+    doc_recorded = False
+    if source_filename:
         session.add(
             ProjectDocument(
                 project_id=project.id,
-                filename=project.repo_url,
-                source_type="github_repo",
-                file_format="github",
-                extracted_summary=f"GitHub 저장소 초기 분석 ({len(applied_section_types)}개 섹션 생성)",
+                filename=source_filename[:300],
+                source_type=payload.source_type[:50],
+                file_format=payload.source_format[:30],
+                extracted_summary=payload.source_summary
+                or f"초기 자동 생성 ({len(applied_section_types)}개 섹션 반영)",
                 raw_char_count=sum(len(s.content) for s in saved_sections),
                 applied_sections=applied_section_types,
             )
         )
+        doc_recorded = True
 
     await session.commit()
     for sec in saved_sections:
@@ -420,7 +572,7 @@ async def import_github_project(
         title = item.title.strip()
         if not title:
             continue
-        score = 75 if item.quantified_metrics.strip() else 60
+        score = 75 if item.quantified_metrics.strip() else 65
         exp = Experience(
             project_id=project.id,
             title=title[:300],
@@ -430,7 +582,7 @@ async def import_github_project(
             result=item.result.strip(),
             quantified_metrics=item.quantified_metrics.strip(),
             completeness_score=score,
-            raw_notes=f"[GitHub 자동 추출] {project.repo_url}",
+            raw_notes=f"[{payload.source_type} 자동 추출] {source_filename}",
         )
         session.add(exp)
         await session.commit()
@@ -438,7 +590,7 @@ async def import_github_project(
         saved_exp_ids.append(exp.id)
 
         vector_content = (
-            f"[프로젝트] {project.name}\n"
+            f"[프로젝트] {project.name} ({', '.join(normalized_types)})\n"
             f"[경험 제목] {exp.title}\n"
             f"[Situation] {exp.situation}\n"
             f"[Task] {exp.task}\n"
@@ -454,18 +606,20 @@ async def import_github_project(
             metadata={
                 "experience_id": exp.id,
                 "project_id": project.id,
+                "project_types": normalized_types,
                 "title": exp.title,
-                "source": "github_import",
-                "repo_url": project.repo_url,
+                "source": payload.source_type,
             },
         ):
             vector_synced_count += 1
 
     proj_resp = ProjectResponse.model_validate(project)
+    proj_resp.project_types = normalized_types
+    proj_resp.artifact_links = cleaned_links
     proj_resp.experience_count = len(saved_exp_ids)
     proj_resp.filled_section_count = len(applied_section_types)
     proj_resp.total_section_count = len(saved_sections)
-    proj_resp.document_count = 1 if project.repo_url else 0
+    proj_resp.document_count = 1 if doc_recorded else 0
 
     return GitHubImportResponse(
         project=proj_resp,
@@ -475,8 +629,36 @@ async def import_github_project(
     )
 
 
+@router.post(
+    "/import-structured",
+    response_model=GitHubImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_structured_project(
+    payload: StructuredProjectImportRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubImportResponse:
+    """GitHub 분석 또는 문서 분석으로 생성된 멀티트랙 프로젝트·섹션·STAR를 일괄 저장한다."""
+    return await _import_structured_project_impl(payload, session)
+
+
+@router.post(
+    "/import-github",
+    response_model=GitHubImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_github_project(
+    payload: StructuredProjectImportRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubImportResponse:
+    """GitHub 임포트 하위 호환 엔드포인트."""
+    payload.source_type = "github_repo"
+    payload.source_format = "github"
+    return await _import_structured_project_impl(payload, session)
+
+
 # ==============================================================================
-# 2. 단일 프로젝트 CRUD & 상세 워크스페이스 조회
+# 2. 단일 프로젝트 CRUD, 동적 트랙 추가 & 상세 워크스페이스 조회
 # ==============================================================================
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(
@@ -485,9 +667,10 @@ async def get_project(
 ) -> ProjectDetailResponse:
     project = await _load_project_full(session, project_id)
     if not project.sections:
-        await _ensure_default_sections(session, project)
+        await _ensure_sections_for_project_types(session, project)
         project = await _load_project_full(session, project_id)
 
+    norm_types = normalize_project_types(project.project_types)
     experiences = sorted(project.experiences, key=lambda e: e.created_at, reverse=True)
     sections = list(project.sections)
     documents = list(project.documents)
@@ -506,6 +689,8 @@ async def get_project(
         tech_stack=list(project.tech_stack or []),
         portfolio_goal_link=project.portfolio_goal_link,
         repo_url=project.repo_url,
+        project_types=norm_types,
+        artifact_links=list(project.artifact_links or []),
         created_at=project.created_at,
         experience_count=len(experiences),
         filled_section_count=filled_count,
@@ -523,6 +708,9 @@ async def create_project(
     payload: ProjectCreateRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> ProjectResponse:
+    norm_types = normalize_project_types(payload.project_types)
+    cleaned_links = _clean_artifact_links(payload.artifact_links)
+
     project = Project(
         name=payload.name.strip(),
         period=payload.period.strip(),
@@ -531,31 +719,36 @@ async def create_project(
         tech_stack=[t.strip() for t in payload.tech_stack if t.strip()],
         portfolio_goal_link=payload.portfolio_goal_link.strip(),
         repo_url=payload.repo_url.strip(),
+        project_types=norm_types,
+        artifact_links=cleaned_links,
     )
     session.add(project)
     await session.commit()
     await session.refresh(project)
 
-    # 6개 표준 모듈 섹션 자동 초기화
-    for std in STANDARD_SECTIONS:
+    composed = compose_sections_for_types(norm_types)
+    for tpl in composed:
         content = (
             project.summary
-            if std["section_type"] == "overview" and project.summary
+            if tpl["section_type"] == "overview" and project.summary
             else ""
         )
         session.add(
             ProjectSection(
                 project_id=project.id,
-                section_type=std["section_type"],
-                title=std["title"],
+                section_type=tpl["section_type"],
+                track=tpl["track"],
+                title=tpl["title"],
                 content=content,
-                display_order=std["display_order"],
+                display_order=tpl["display_order"],
             )
         )
     await session.commit()
 
     resp = ProjectResponse.model_validate(project)
-    resp.total_section_count = len(STANDARD_SECTIONS)
+    resp.project_types = norm_types
+    resp.artifact_links = cleaned_links
+    resp.total_section_count = len(composed)
     resp.filled_section_count = 1 if project.summary else 0
     return resp
 
@@ -571,6 +764,10 @@ async def update_project(
     for field, value in update_data.items():
         if field == "tech_stack" and value is not None:
             setattr(project, field, [t.strip() for t in value if t.strip()])
+        elif field == "project_types" and value is not None:
+            setattr(project, field, normalize_project_types(value))
+        elif field == "artifact_links" and value is not None:
+            setattr(project, field, _clean_artifact_links(value))
         elif isinstance(value, str):
             setattr(project, field, value.strip())
         elif value is not None:
@@ -580,11 +777,35 @@ async def update_project(
     await session.refresh(project)
 
     resp = ProjectResponse.model_validate(project)
+    resp.project_types = normalize_project_types(project.project_types)
+    resp.artifact_links = list(project.artifact_links or [])
     resp.experience_count = len(project.experiences)
     resp.total_section_count = len(project.sections)
     resp.filled_section_count = sum(1 for s in project.sections if (s.content or "").strip())
     resp.document_count = len(project.documents)
     return resp
+
+
+@router.post("/{project_id}/tracks", response_model=AddTracksResponse)
+async def add_project_tracks(
+    project_id: int,
+    payload: AddTracksRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> AddTracksResponse:
+    """진행 중인 프로젝트에 새 유형 트랙 팩을 동적으로 추가한다 (기존 섹션 내용 보존)."""
+    project = await _load_project_full(session, project_id)
+    merged_types = normalize_project_types(
+        list(project.project_types or []) + list(payload.add_types)
+    )
+    project.project_types = merged_types
+    await session.commit()
+
+    project = await _load_project_full(session, project_id)
+    added_sections = await _ensure_sections_for_project_types(session, project)
+    return AddTracksResponse(
+        project_types=merged_types,
+        added_section_types=added_sections,
+    )
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -618,11 +839,14 @@ async def create_project_section(
 ) -> ProjectSectionResponse:
     project = await _load_project_full(session, project_id)
     next_order = payload.display_order or (
-        max((s.display_order for s in project.sections), default=0) + 1
+        max((s.display_order for s in project.sections if s.display_order < 850), default=600)
+        + 10
     )
+    track = payload.track.strip() or infer_track_for_section_type(payload.section_type)
     sec = ProjectSection(
         project_id=project.id,
         section_type=payload.section_type.strip(),
+        track=track,
         title=payload.title.strip(),
         content=payload.content.strip(),
         display_order=next_order,
@@ -631,8 +855,8 @@ async def create_project_section(
     await session.commit()
     await session.refresh(sec)
 
-    synced = await _sync_section_vector(session, project, sec)
     resp = ProjectSectionResponse.model_validate(sec)
+    synced = await _sync_section_vector(session, project, sec)
     resp.vector_synced = synced
     return resp
 
@@ -658,12 +882,14 @@ async def update_project_section(
         sec.content = payload.content.strip()
     if payload.display_order is not None:
         sec.display_order = payload.display_order
+    if payload.track is not None:
+        sec.track = payload.track.strip()
 
     await session.commit()
     await session.refresh(sec)
 
-    synced = await _sync_section_vector(session, project, sec)
     resp = ProjectSectionResponse.model_validate(sec)
+    synced = await _sync_section_vector(session, project, sec)
     resp.vector_synced = synced
     return resp
 
@@ -690,7 +916,7 @@ async def delete_project_section(
 
 
 # ==============================================================================
-# 4. 파일/문서 업로드 & GitHub 재동기화 → 섹션별 자동 업데이트 제안/적용
+# 4. 파일/문서 업로드 & GitHub 재동기화 → 트랙별 자동 분배 Diff 제안/적용
 # ==============================================================================
 @router.post(
     "/{project_id}/ingest-document",
@@ -704,10 +930,9 @@ async def ingest_project_document(
     instruction: str = Form(default=""),
     session: AsyncSession = Depends(get_db_session),
 ) -> DocumentIngestProposalResponse:
-    """업로드된 파일(.pdf/.docx/.pptx/.md/.txt/.ipynb/코드) 또는 붙여넣은 문서를 분석해 섹션별 업데이트 Diff를 제안한다."""
     project = await _load_project_full(session, project_id)
     if not project.sections:
-        await _ensure_default_sections(session, project)
+        await _ensure_sections_for_project_types(session, project)
         project = await _load_project_full(session, project_id)
 
     if file is not None and file.filename:
@@ -770,10 +995,9 @@ async def sync_project_github(
     payload: GitHubSyncRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> DocumentIngestProposalResponse:
-    """프로젝트에 연결된 GitHub 저장소를 다시 분석해 기존 섹션과의 업데이트 Diff를 제안한다."""
     project = await _load_project_full(session, project_id)
     if not project.sections:
-        await _ensure_default_sections(session, project)
+        await _ensure_sections_for_project_types(session, project)
         project = await _load_project_full(session, project_id)
 
     repo_url = payload.repo_url.strip() or project.repo_url.strip()
@@ -794,7 +1018,7 @@ async def sync_project_github(
             doc_text=repo_doc,
             filename=repo_ctx["full_name"],
             user_instruction=payload.instruction.strip()
-            or "최신 GitHub 코드·커밋 변경 사항을 포트폴리오 섹션에 보강해 주세요.",
+            or "최신 GitHub 코드·커밋 변경 사항을 알맞은 섹션에 보강해 주세요.",
         )
     except GitHubAnalyzerError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -824,7 +1048,6 @@ async def apply_project_updates(
     payload: ApplyProjectUpdatesRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> ApplyProjectUpdatesResponse:
-    """사용자가 승인한 섹션 업데이트, 기술 스택 추가, STAR 경험을 DB 및 벡터에 일괄 반영한다."""
     project = await _load_project_full(session, project_id)
     sec_by_id = {s.id: s for s in project.sections}
     sec_by_type = {s.section_type: s for s in project.sections}
@@ -856,13 +1079,17 @@ async def apply_project_updates(
             target.content = item.content.strip()
             updated_sections.append(target)
         else:
-            std = STANDARD_SECTION_MAP.get(item.section_type)
-            order = std["display_order"] if std else (
-                max((s.display_order for s in project.sections), default=6) + 1
+            known = ALL_KNOWN_SECTIONS.get(item.section_type)
+            order = (
+                known["display_order"]
+                if known
+                else max((s.display_order for s in project.sections if s.display_order < 850), default=600) + 10
             )
+            track = item.track or infer_track_for_section_type(item.section_type)
             new_sec = ProjectSection(
                 project_id=project.id,
                 section_type=item.section_type.strip(),
+                track=track,
                 title=item.title.strip(),
                 content=item.content.strip(),
                 display_order=order,
@@ -890,6 +1117,7 @@ async def apply_project_updates(
         if await _sync_section_vector(session, project, sec):
             vector_synced_count += 1
 
+    norm_types = normalize_project_types(project.project_types)
     saved_exp_ids: list[int] = []
     for item in payload.experiences:
         title = item.title.strip()
@@ -913,7 +1141,7 @@ async def apply_project_updates(
         saved_exp_ids.append(exp.id)
 
         vector_content = (
-            f"[프로젝트] {project.name}\n"
+            f"[프로젝트] {project.name} ({', '.join(norm_types)})\n"
             f"[경험 제목] {exp.title}\n"
             f"[Situation] {exp.situation}\n"
             f"[Task] {exp.task}\n"
@@ -929,6 +1157,7 @@ async def apply_project_updates(
             metadata={
                 "experience_id": exp.id,
                 "project_id": project.id,
+                "project_types": norm_types,
                 "title": exp.title,
                 "source": "document_ingest",
             },
@@ -969,7 +1198,6 @@ async def prune_project_sections(
     project_id: int,
     session: AsyncSession = Depends(get_db_session),
 ) -> PruneProposalResponse:
-    """프로젝트 전체 섹션에서 중복·미사여구·불필요한 사소한 내용을 탐지해 압축안을 제안한다."""
     project = await _load_project_full(session, project_id)
     try:
         proposal = await propose_noise_pruning(
@@ -991,7 +1219,6 @@ async def apply_project_prune(
     payload: PruneApplyRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> PruneApplyResponse:
-    """사용자가 승인한 섹션별 노이즈 제거 결과를 저장하고 벡터 DB를 동기화한다."""
     project = await _load_project_full(session, project_id)
     sec_by_id = {s.id: s for s in project.sections}
 
@@ -1015,14 +1242,13 @@ async def apply_project_prune(
 
 
 # ==============================================================================
-# 6. 포트폴리오 Markdown 내보내기 & AI 리캡
+# 6. 포트폴리오 Markdown 내보내기 & 유형 인지형 AI 리캡
 # ==============================================================================
 @router.get("/{project_id}/export-markdown", response_model=ProjectRecapResponse)
 async def export_project_markdown(
     project_id: int,
     session: AsyncSession = Depends(get_db_session),
 ) -> ProjectRecapResponse:
-    """저장된 모듈형 섹션으로 포트폴리오 Markdown을 즉시 조립해 반환한다 (LLM 호출 없음)."""
     project = await _load_project_full(session, project_id)
     md = render_portfolio_markdown(
         _project_to_dict(project), [_section_to_dict(s) for s in project.sections]
@@ -1040,13 +1266,13 @@ async def generate_project_recap(
     project_id: int,
     session: AsyncSession = Depends(get_db_session),
 ) -> ProjectRecapResponse:
-    """프로젝트 섹션 + 소속 STAR 경험 + 커리어 신념을 종합해 포트폴리오 Markdown 리캡을 생성한다."""
     project = await _load_project_full(session, project_id)
     profile = await session.get(UserProfile, 1)
     experiences = sorted(project.experiences, key=lambda e: e.created_at)
+    guidance = get_combined_ai_guidance(project.project_types)
 
     sections_blocks = [
-        f"### {s.title}\n{s.content}"
+        f"### [{s.track}] {s.title}\n{s.content}"
         for s in project.sections
         if (s.content or "").strip()
     ]
@@ -1060,8 +1286,7 @@ async def generate_project_recap(
             f"- Task: {exp.task}\n"
             f"- Action: {exp.action}\n"
             f"- Result: {exp.result}\n"
-            f"- 정량 성과: {exp.quantified_metrics}\n"
-            f"- 완성도 점수: {exp.completeness_score}/100"
+            f"- 정량 성과: {exp.quantified_metrics}"
         )
     experiences_text = "\n\n".join(exp_blocks) or "(연결된 STAR 경험 없음)"
 
@@ -1075,25 +1300,26 @@ async def generate_project_recap(
         )
 
     system_prompt = (
-        "당신은 시니어 테크 리크루터이자 포트폴리오 에디터입니다. "
-        "제공된 사실(프로젝트 섹션, STAR 경험, 커리어 신념)만을 근거로 "
-        "이력서/노션 포트폴리오에 바로 붙여넣을 수 있는 깔끔한 한국어 Markdown 리캡 문서를 작성하세요.\n"
+        f"당신은 {guidance['persona']} 관점의 포트폴리오 에디터입니다.\n"
+        f"제공된 사실(멀티트랙 섹션, STAR 경험, 커리어 신념)만을 근거로 [{guidance['labels']}] 프로젝트에 "
+        "최적화된 한국어 Markdown 포트폴리오 리캡 문서를 작성하세요.\n"
         "규칙:\n"
-        "1. 제공되지 않은 수치, 기술명, 성과를 임의로 지어내지 마세요(환각 엄금).\n"
-        "2. 섹션 구성: `# 프로젝트명`, `## 개요 및 문제 정의`, `## 시스템 아키텍처 & 기술 의사결정`, "
-        "`## 핵심 구현 및 트러블슈팅(STAR 기반)`, `## 성과 및 커리어 비전 연결`, `## 보완 추천 항목`.\n"
-        "3. 상투적인 AI 수식어를 배제하고 실제 기술명·행동 동사·측정 근거 위주로 간결하게 작성하세요."
+        "1. 제공되지 않은 수치, 도구명, 성과를 임의로 지어내지 마세요(환각 엄금).\n"
+        "2. 프로젝트의 복수 유형이 자연스럽게 드러나도록 핵심 문제 정의 → 유형별 핵심 기여·의사결정·해결 → 정량/정성 성과 → 커리어 비전 연결 순으로 구성하세요.\n"
+        "3. 상투적인 AI 수식어를 배제하고 구체적 행동 동사와 근거 중심으로 간결하게 작성하세요."
     )
 
     user_prompt = (
         f"[프로젝트 정보]\n"
         f"- 이름: {project.name}\n"
+        f"- 유형: {guidance['labels']}\n"
         f"- 기간: {project.period}\n"
         f"- 역할: {project.role}\n"
         f"- 요약: {project.summary}\n"
-        f"- 기술 스택: {', '.join(project.tech_stack or [])}\n"
+        f"- 기술/역량/도구: {', '.join(project.tech_stack or [])}\n"
         f"- 포트폴리오 목표 연결점: {project.portfolio_goal_link}\n"
-        f"- 저장소 URL: {project.repo_url}\n\n"
+        f"- 저장소 URL: {project.repo_url}\n"
+        f"- 참고 링크: {project.artifact_links}\n\n"
         f"[지원자 커리어 신념/문체]\n{profile_text or '(미설정)'}\n\n"
         f"[정리된 모듈형 섹션]\n{sections_text}\n\n"
         f"[연결된 STAR 경험 목록 ({len(experiences)}건)]\n{experiences_text}"

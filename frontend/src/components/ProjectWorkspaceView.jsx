@@ -6,6 +6,7 @@ import {
   Copy,
   Download,
   Eraser,
+  ExternalLink,
   Eye,
   FileCode2,
   FileText,
@@ -13,6 +14,7 @@ import {
   FolderOpen,
   Github,
   Layers,
+  Link2,
   Loader2,
   Pencil,
   Plus,
@@ -23,6 +25,12 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import {
+  DEFAULT_TRACKS,
+  TRACK_SHORT_LABELS,
+  getTrackBadgeClass,
+  groupSectionsByTrack,
+} from "../utils/projectTracks.js";
 
 export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefresh }) {
   const [project, setProject] = useState(null);
@@ -37,13 +45,18 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [savingSection, setSavingSection] = useState(false);
   const [sectionStatus, setSectionStatus] = useState("");
 
-  // Add custom section inline form
+  // Add custom section & Add Track Pack & Add Artifact Link
   const [showAddSection, setShowAddSection] = useState(false);
   const [newSecTitle, setNewSecTitle] = useState("");
+  const [showAddTrack, setShowAddTrack] = useState(false);
+  const [addingTrack, setAddingTrack] = useState(false);
+  const [showAddLink, setShowAddLink] = useState(false);
+  const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [newLinkUrl, setNewLinkUrl] = useState("");
 
   // Document / GitHub Sync Update Modal
   const [showIngestModal, setShowIngestModal] = useState(false);
-  const [ingestMode, setIngestMode] = useState("file"); // "file" | "paste"
+  const [ingestMode, setIngestMode] = useState("file");
   const [uploadFile, setUploadFile] = useState(null);
   const [pastedText, setPastedText] = useState("");
   const [pastedTitle, setPastedTitle] = useState("");
@@ -51,7 +64,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [ingesting, setIngesting] = useState(false);
   const [ingestError, setIngestError] = useState("");
 
-  // Diff Review State (shared by Document Ingest & GitHub Sync)
+  // Diff Review State
   const [updateProposal, setUpdateProposal] = useState(null);
   const [selectedUpdateIndices, setSelectedUpdateIndices] = useState(new Set());
   const [selectedExpIndices, setSelectedExpIndices] = useState(new Set());
@@ -131,9 +144,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
         content: editContent,
       });
       setSectionStatus(
-        updated.vector_synced
-          ? "저장 및 벡터 동기화 완료"
-          : "DB 저장 완료"
+        updated.vector_synced ? "저장 및 벡터 동기화 완료" : "DB 저장 완료"
       );
       await loadProject(true);
       await onGlobalRefresh();
@@ -165,9 +176,10 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     try {
       const created = await api.createSection(project.id, {
         section_type: slug,
+        track: "custom",
         title,
         content: "",
-        display_order: (project.sections?.length || 0) + 1,
+        display_order: 700,
       });
       setNewSecTitle("");
       setShowAddSection(false);
@@ -176,6 +188,55 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
       await onGlobalRefresh();
     } catch (err) {
       alert(`섹션 추가 실패: ${err.message}`);
+    }
+  };
+
+  const handleAddTrack = async (trackId) => {
+    if (addingTrack) return;
+    setAddingTrack(true);
+    try {
+      const res = await api.addProjectTracks(project.id, [trackId]);
+      setShowAddTrack(false);
+      await loadProject(true);
+      await onGlobalRefresh();
+      alert(
+        `'${TRACK_SHORT_LABELS[trackId] || trackId}' 트랙이 추가되었습니다! (신규 섹션 ${res.added_section_types.length}개 생성)`
+      );
+    } catch (err) {
+      alert(`트랙 추가 실패: ${err.message}`);
+    } finally {
+      setAddingTrack(false);
+    }
+  };
+
+  const handleAddArtifactLink = async (e) => {
+    e.preventDefault();
+    const url = newLinkUrl.trim();
+    if (!url) return;
+    const nextLinks = [
+      ...(project.artifact_links || []),
+      { label: newLinkLabel.trim() || url, url },
+    ];
+    try {
+      await api.updateProject(project.id, { artifact_links: nextLinks });
+      setNewLinkLabel("");
+      setNewLinkUrl("");
+      setShowAddLink(false);
+      await loadProject(true);
+      await onGlobalRefresh();
+    } catch (err) {
+      alert(`참고 링크 추가 실패: ${err.message}`);
+    }
+  };
+
+  const handleDeleteArtifactLink = async (idx) => {
+    const nextLinks = (project.artifact_links || []).filter((_, i) => i !== idx);
+    try {
+      await api.updateProject(project.id, { artifact_links: nextLinks });
+      await loadProject(true);
+      await onGlobalRefresh();
+    } catch (err) {
+      alert(`참고 링크 삭제 실패: ${err.message}`);
     }
   };
 
@@ -255,6 +316,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
         .map((s) => ({
           section_id: s.section_id,
           section_type: s.section_type,
+          track: s.track || "core",
           title: s.title,
           content: s.proposed_content,
         }));
@@ -363,7 +425,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     setCopiedMd(false);
     setMarkdownModal({
       title: `${project.name} — 전체 포트폴리오 Markdown`,
-      subtitle: "6개 모듈 섹션에서 즉시 조립된 최신 포트폴리오",
+      subtitle: "멀티트랙 모듈 섹션에서 즉시 조립된 최신 포트폴리오",
       markdown: project.assembled_markdown || "",
     });
   };
@@ -376,7 +438,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
       setCopiedMd(false);
       setMarkdownModal({
         title: `${res.project_name} — AI 포트폴리오 리캡`,
-        subtitle: `모듈 섹션 + STAR 경험 ${res.experience_count}건 종합`,
+        subtitle: `멀티트랙 섹션 + STAR 경험 ${res.experience_count}건 종합`,
         markdown: res.markdown,
       });
     } catch (err) {
@@ -433,6 +495,12 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     );
   }
 
+  const projectTypes = project.project_types || ["engineering"];
+  const availableTracksToAdd = DEFAULT_TRACKS.filter(
+    (t) => !projectTypes.includes(t.id)
+  );
+  const groupedSections = groupSectionsByTrack(project.sections || []);
+
   return (
     <div className="space-y-6">
       {/* Header & Global Action Bar */}
@@ -447,12 +515,55 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>포트폴리오 목록으로 돌아가기</span>
             </button>
+
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold text-slate-900">{project.name}</h2>
-              <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                섹션 {project.filled_section_count}/{project.total_section_count} 작성됨
+              {projectTypes.map((tId) => (
+                <span
+                  key={tId}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${getTrackBadgeClass(tId)}`}
+                >
+                  {TRACK_SHORT_LABELS[tId] || tId}
+                </span>
+              ))}
+              {availableTracksToAdd.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddTrack((v) => !v)}
+                    className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 hover:border-indigo-400 hover:text-indigo-700"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>트랙 추가</span>
+                  </button>
+                  {showAddTrack && (
+                    <div className="absolute left-0 mt-1.5 z-30 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg space-y-1">
+                      <div className="px-2 py-1 text-[10px] font-bold uppercase text-slate-400">
+                        이 프로젝트에 역할/트랙 추가
+                      </div>
+                      {availableTracksToAdd.map((tr) => (
+                        <button
+                          key={tr.id}
+                          type="button"
+                          disabled={addingTrack}
+                          onClick={() => handleAddTrack(tr.id)}
+                          className="w-full text-left rounded-lg px-2.5 py-1.5 text-xs hover:bg-slate-50 flex items-center justify-between"
+                        >
+                          <span className="font-medium text-slate-800">
+                            {tr.label}
+                          </span>
+                          <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+                섹션 {project.filled_section_count}/{project.total_section_count}
               </span>
             </div>
+
             <p className="text-xs text-slate-500">
               {[project.period, project.role].filter(Boolean).join(" · ")}
               {project.repo_url && (
@@ -536,9 +647,10 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
           </div>
         </div>
 
-        {(project.tech_stack || []).length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
-            {project.tech_stack.map((tech, idx) => (
+        {/* Skills/Tools & Artifact Links Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+          <div className="flex flex-wrap gap-1.5">
+            {(project.tech_stack || []).map((tech, idx) => (
               <span
                 key={idx}
                 className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700"
@@ -547,82 +659,153 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
               </span>
             ))}
           </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(project.artifact_links || []).map((link, idx) => (
+              <span
+                key={idx}
+                className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-medium text-indigo-800"
+              >
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 hover:underline"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>{link.label || link.url}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteArtifactLink(idx)}
+                  className="hover:text-rose-600"
+                  title="링크 삭제"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setShowAddLink((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <Link2 className="w-3 h-3" />
+              <span>+ 참고 링크 (Figma·Notion 등)</span>
+            </button>
+          </div>
+        </div>
+
+        {showAddLink && (
+          <form
+            onSubmit={handleAddArtifactLink}
+            className="flex flex-wrap gap-2 pt-2 border-t border-slate-100"
+          >
+            <input
+              type="text"
+              value={newLinkLabel}
+              onChange={(e) => setNewLinkLabel(e.target.value)}
+              placeholder="링크 이름 (예: Figma 프로토타입, 발표자료)"
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs w-52"
+            />
+            <input
+              required
+              type="url"
+              value={newLinkUrl}
+              onChange={(e) => setNewLinkUrl(e.target.value)}
+              placeholder="https://..."
+              className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-1.5 text-xs"
+            />
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+            >
+              추가
+            </button>
+          </form>
         )}
       </div>
 
-      {/* Main 2-Column Modular Architecture Workspace */}
+      {/* Main 2-Column Multi-Track Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Outline Navigation */}
+        {/* Left Outline Navigation Grouped by Track */}
         <aside className="lg:col-span-4 rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                <Layers className="w-3.5 h-3.5" />
-                <span>포트폴리오 모듈 섹션</span>
-              </span>
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+              <Layers className="w-3.5 h-3.5" />
+              <span>트랙별 포트폴리오 섹션</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAddSection((v) => !v)}
+              className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+            >
+              <Plus className="w-3 h-3" />
+              <span>섹션 추가</span>
+            </button>
+          </div>
+
+          {showAddSection && (
+            <form onSubmit={handleCreateCustomSection} className="flex gap-1.5 pb-1">
+              <input
+                type="text"
+                value={newSecTitle}
+                onChange={(e) => setNewSecTitle(e.target.value)}
+                placeholder="예: 사용자 인터뷰 요약"
+                className="flex-1 min-w-0 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+              />
               <button
-                type="button"
-                onClick={() => setShowAddSection((v) => !v)}
-                className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                type="submit"
+                className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white"
               >
-                <Plus className="w-3 h-3" />
-                <span>섹션 추가</span>
+                추가
               </button>
-            </div>
+            </form>
+          )}
 
-            {showAddSection && (
-              <form
-                onSubmit={handleCreateCustomSection}
-                className="flex gap-1.5 pt-1 pb-2"
-              >
-                <input
-                  type="text"
-                  value={newSecTitle}
-                  onChange={(e) => setNewSecTitle(e.target.value)}
-                  placeholder="예: 7. 보안 및 배포 설계"
-                  className="flex-1 min-w-0 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
-                />
-                <button
-                  type="submit"
-                  className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white"
-                >
-                  추가
-                </button>
-              </form>
-            )}
-
-            <div className="space-y-1">
-              {(project.sections || []).map((sec) => {
-                const isSelected = activeKey === `section:${sec.id}`;
-                const hasContent = Boolean((sec.content || "").trim());
-                return (
-                  <button
-                    key={sec.id}
-                    type="button"
-                    onClick={() => selectSection(sec)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-left text-xs font-medium transition-colors ${
-                      isSelected
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-100"
-                    }`}
+          <div className="space-y-3">
+            {groupedSections.map((grp) => (
+              <div key={grp.track} className="space-y-1">
+                <div className="px-1.5 flex items-center gap-1.5">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-bold border ${getTrackBadgeClass(grp.track)}`}
                   >
-                    <span className="truncate">{sec.title}</span>
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
-                        hasContent
-                          ? isSelected
-                            ? "bg-emerald-400"
-                            : "bg-emerald-500"
-                          : isSelected
-                            ? "bg-slate-600"
-                            : "bg-slate-300"
+                    {grp.label}
+                  </span>
+                </div>
+                {grp.sections.map((sec) => {
+                  const isSelected = activeKey === `section:${sec.id}`;
+                  const hasContent = Boolean((sec.content || "").trim());
+                  return (
+                    <button
+                      key={sec.id}
+                      type="button"
+                      onClick={() => selectSection(sec)}
+                      className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-left text-xs font-medium transition-colors ${
+                        isSelected
+                          ? "bg-slate-900 text-white"
+                          : "text-slate-700 hover:bg-slate-100"
                       }`}
-                      title={hasContent ? "작성됨" : "비어 있음"}
-                    />
-                  </button>
-                );
-              })}
-            </div>
+                    >
+                      <span className="truncate">{sec.title}</span>
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          hasContent
+                            ? isSelected
+                              ? "bg-emerald-400"
+                              : "bg-emerald-500"
+                            : isSelected
+                              ? "bg-slate-600"
+                              : "bg-slate-300"
+                        }`}
+                        title={hasContent ? "작성됨" : "비어 있음"}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
 
           <div className="pt-3 border-t border-slate-100 space-y-1">
@@ -665,12 +848,19 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
           {activeSection ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="text-base font-bold text-slate-900 border border-transparent hover:border-slate-200 focus:border-slate-300 rounded-lg px-2 py-1 flex-1 min-w-[200px] focus:outline-none"
-                />
+                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                  <span
+                    className={`rounded-md border px-2 py-0.5 text-[10px] font-bold shrink-0 ${getTrackBadgeClass(activeSection.track)}`}
+                  >
+                    {TRACK_SHORT_LABELS[activeSection.track] || activeSection.track}
+                  </span>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="text-base font-bold text-slate-900 border border-transparent hover:border-slate-200 focus:border-slate-300 rounded-lg px-2 py-1 flex-1 min-w-0 focus:outline-none"
+                  />
+                </div>
 
                 <div className="flex items-center gap-2">
                   <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
@@ -716,7 +906,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   rows={14}
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  placeholder="Markdown 형식으로 이 섹션 내용을 작성하거나, 상단의 '파일·문서로 자동 업데이트'로 문서를 올려 채워 보세요."
+                  placeholder="Markdown 형식으로 이 섹션 내용을 작성하거나, 상단의 '파일·문서로 자동 업데이트'로 기획서·발표자료·코드를 올려 채워 보세요."
                   className="w-full rounded-xl border border-slate-200 p-4 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-slate-900/15"
                 />
               ) : (
@@ -751,7 +941,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   연결된 STAR 경험 ({project.experiences?.length || 0})
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  자소서 공방과 코파일럿에서 사실 근거(experience)로 활용됩니다. 불필요한 경험은 개별 삭제할 수 있습니다.
+                  자소서 공방과 코파일럿에서 사실 근거(experience)로 활용됩니다.
                 </p>
               </div>
 
@@ -877,7 +1067,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   파일·문서로 포트폴리오 자동 업데이트
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  문서를 분석해 알맞은 섹션별 변경 Diff를 먼저 보여드립니다. (기존 내용을 바로 덮어쓰지 않습니다)
+                  기획서·발표자료·보고서·코드를 분석해 프로젝트의 멀티트랙 섹션 중 알맞은 곳에 자동 분배합니다.
                 </p>
               </div>
               <button
@@ -931,10 +1121,10 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 ) : (
                   <div className="space-y-1">
                     <div className="text-sm font-semibold text-slate-700">
-                      클릭하여 문서·발표자료·코드 파일 선택
+                      클릭하여 기획서·발표자료·보고서·코드 파일 선택
                     </div>
                     <div className="text-xs text-slate-500">
-                      PDF, Word(DOCX), 발표자료(PPTX), Markdown, Jupyter Notebook(.ipynb), 소스코드 (최대 15MB)
+                      PDF, Word(DOCX), 발표자료(PPTX), Markdown, Jupyter(.ipynb), 소스코드 (최대 15MB)
                     </div>
                   </div>
                 )}
@@ -945,14 +1135,14 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   type="text"
                   value={pastedTitle}
                   onChange={(e) => setPastedTitle(e.target.value)}
-                  placeholder="문서 이름 (예: 성능 튜닝 회고 메모.md)"
+                  placeholder="문서 이름 (예: 유저 인터뷰 인사이트 정리.md)"
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
                 />
                 <textarea
                   rows={6}
                   value={pastedText}
                   onChange={(e) => setPastedText(e.target.value)}
-                  placeholder="트러블슈팅 노트, 발표 스크립트, 노션 문서, 아키텍처 메모 등을 그대로 붙여넣으세요..."
+                  placeholder="기획서, 발표 스크립트, 노션 문서, 트러블슈팅 메모 등을 그대로 붙여넣으세요..."
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
                 />
               </div>
@@ -962,7 +1152,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
               type="text"
               value={ingestInstruction}
               onChange={(e) => setIngestInstruction(e.target.value)}
-              placeholder="선택 지시사항 (예: 트러블슈팅과 정량 성과 위주로만 반영해 주세요)"
+              placeholder="선택 지시사항 (예: 기획 트랙의 리서치·KPI 성과 중심으로 반영해 주세요)"
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
             />
 
@@ -988,7 +1178,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 {ingesting ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>문서 분석 &amp; Diff 생성 중...</span>
+                    <span>문서 분석 &amp; 트랙별 Diff 생성 중...</span>
                   </>
                 ) : (
                   <>
@@ -1039,7 +1229,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                     onChange={(e) => setApplyTechStack(e.target.checked)}
                   />
                   <span className="font-semibold text-slate-800">
-                    신규 기술 스택 추가:
+                    신규 기술·도구·역량 키워드 추가:
                   </span>
                   <div className="flex flex-wrap gap-1">
                     {updateProposal.suggested_tech_stack_additions.map((t, i) => (
@@ -1054,7 +1244,6 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 </label>
               )}
 
-              {/* Section Diffs */}
               <div className="space-y-3">
                 <div className="font-bold text-slate-800">
                   섹션별 변경 제안 ({updateProposal.section_updates?.length || 0}건)
@@ -1089,6 +1278,11 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                                 })
                               }
                             />
+                            <span
+                              className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${getTrackBadgeClass(u.track)}`}
+                            >
+                              {TRACK_SHORT_LABELS[u.track] || u.track}
+                            </span>
                             <span className="font-bold text-sm text-slate-900">
                               {u.title}
                             </span>
@@ -1126,7 +1320,6 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 )}
               </div>
 
-              {/* Newly Extracted STAR Experiences */}
               {(updateProposal.suggested_experiences || []).length > 0 && (
                 <div className="space-y-2">
                   <div className="font-bold text-slate-800">
@@ -1196,7 +1389,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Eraser className="w-4 h-4 text-amber-600" />
-                  <span>쓸데없는 내용 AI 정리 (Prune &amp; Tighten)</span>
+                  <span>쓸데없는 내용 AI 정리 (유형 맞춤 Prune)</span>
                 </h3>
                 <p className="text-xs text-slate-600 mt-0.5">
                   {pruneProposal.overall_assessment}

@@ -104,7 +104,13 @@ export const api = {
     apiRequest(`/api/interests/${id}`, { method: "DELETE" }),
 
   // Projects, Modular Sections, Documents & Prune
-  listProjects: () => apiRequest("/api/projects"),
+  getProjectTemplates: () => apiRequest("/api/projects/templates"),
+  listProjects: (projectType = null) =>
+    apiRequest(
+      projectType
+        ? `/api/projects?project_type=${encodeURIComponent(projectType)}`
+        : "/api/projects"
+    ),
   getProject: (id) => apiRequest(`/api/projects/${id}`),
   createProject: (data) =>
     apiRequest("/api/projects", { method: "POST", body: JSON.stringify(data) }),
@@ -112,6 +118,11 @@ export const api = {
     apiRequest(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProject: (id) =>
     apiRequest(`/api/projects/${id}`, { method: "DELETE" }),
+  addProjectTracks: (projectId, addTypes) =>
+    apiRequest(`/api/projects/${projectId}/tracks`, {
+      method: "POST",
+      body: JSON.stringify({ add_types: addTypes }),
+    }),
   recapProject: (id) =>
     apiRequest(`/api/projects/${id}/recap`, { method: "POST" }),
   exportProjectMarkdown: (id) =>
@@ -132,6 +143,11 @@ export const api = {
       method: "DELETE",
     }),
 
+  analyzeDocumentToProject: (formData) =>
+    apiRequest("/api/projects/analyze-document", {
+      method: "POST",
+      body: formData,
+    }),
   analyzeGithubRepo: (data) =>
     apiRequest("/api/projects/analyze-github", {
       method: "POST",
@@ -139,6 +155,11 @@ export const api = {
     }),
   analyzeGithubStream: (data, onEvent) =>
     streamSSE("/api/projects/analyze-github/stream", data, onEvent),
+  importStructuredProject: (data) =>
+    apiRequest("/api/projects/import-structured", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   importGithubProject: (data) =>
     apiRequest("/api/projects/import-github", {
       method: "POST",

@@ -70,13 +70,27 @@ erDiagram
     projects {
         int id PK
         varchar name
+        jsonb project_types
         varchar period
         varchar role
         text summary
         jsonb tech_stack
         text portfolio_goal_link
         varchar repo_url
+        jsonb artifact_links
         timestamp created_at
+    }
+
+    project_sections {
+        int id PK
+        int project_id FK
+        varchar section_type
+        varchar track
+        varchar title
+        text content
+        int display_order
+        varchar source_type
+        timestamp updated_at
     }
 
     experiences {
@@ -127,7 +141,7 @@ erDiagram
     }
 
     projects ||--o{ experiences : "has"
-    projects ||--o{ project_sections : "has modular 6 sections"
+    projects ||--o{ project_sections : "has composable multi-track sections"
     projects ||--o{ project_documents : "ingested files & github"
     user_profile ||--o{ vector_documents : "upserts as career_identity"
     experiences ||--o{ vector_documents : "upserts as experience"
@@ -156,8 +170,8 @@ erDiagram
 | 티어 | 환경변수 | 기본 모델 예시 | 담당 작업 |
 | :--- | :--- | :--- | :--- |
 | **Fast Tier** | `BEDROCK_FAST_MODEL_ID` | `amazon.nova-lite-v1:0` | 의도 라우팅, STAR 추출, 완성도·관련성 채점 |
-| **Smart Tier** | `BEDROCK_SMART_MODEL_ID` | `us.anthropic.claude-3-7-sonnet-20250219-v1:0` | 기업 3각 매칭, 자소서 초안·비평·퇴고, De-AI 교정, 취준 회고 분석 |
-| **Embedding** | `BEDROCK_EMBED_MODEL_ID` | `cohere.embed-multilingual-v3` (1024차원) | 한국어 문서 벡터화 및 pgvector 코사인 유사도 검색 |
+| **Smart Tier** | `BEDROCK_SMART_MODEL_ID` | `amazon.nova-pro-v1:0` | 기업 3각 매칭, 자소서 초안·비평·퇴고, De-AI 교정, 취준 회고 분석 |
+| **Embedding** | `BEDROCK_EMBED_MODEL_ID` | `amazon.titan-embed-text-v2:0` (1024차원) | 한국어 문서 벡터화 및 pgvector 코사인 유사도 검색 |
 
 - 모든 구조화 출력은 `llm.with_structured_output(PydanticModel)`을 사용하며 JSON 파싱 실패 대비 최대 1회 재시도 가드레일을 포함합니다.
 
@@ -226,11 +240,14 @@ sequenceDiagram
 | **Health** | `GET /api/health` | REST | 백엔드 기동 상태 확인 |
 | **Profile** | `GET / PUT /api/profile` | REST | 신념·비전·선호 문체 조회/수정 (`career_identity` Upsert 포함) |
 | **Interests** | `GET / POST / DELETE /api/interests` | REST | 관심 분야 키워드 CRUD |
-| **Projects** | `GET / POST / PUT / DELETE /api/projects` | REST | 포트폴리오 프로젝트 CRUD (생성 시 6개 표준 모듈 섹션 자동 초기화) |
-| **Sections** | `POST / PUT / DELETE /api/projects/{id}/sections` | REST | 6개 표준/커스텀 포트폴리오 섹션 개별 편집·삭제 (`experience` 벡터 자동 동기화) |
-| **GitHub Auto** | `POST /api/projects/analyze-github/stream`, `/import-github`, `/{id}/sync-github` | SSE / REST | GitHub 트리·핵심 코드 딥 분석 → 6개 섹션 & STAR 자동 생성 / 재동기화 |
+| **Templates** | `GET /api/projects/templates` | REST | 조합형 멀티트랙 레지스트리(공통 코어 2개 + 5대 유형 트랙 팩) 메타 조회 |
+| **Projects** | `GET / POST / PUT / DELETE /api/projects` | REST | 멀티트랙 포트폴리오 프로젝트 CRUD (`?project_type=` 필터, 복수 트랙 조합 섹션 자동 초기화, `artifact_links` 지원) |
+| **Multi-Track** | `POST /api/projects/{id}/tracks` | REST | 기존 프로젝트에 신규 역할 트랙(`engineering`, `product_planning`, `data_research`, `operations_leadership`, `general`)을 중복 없이 동적 추가 |
+| **Sections** | `POST / PUT / DELETE /api/projects/{id}/sections` | REST | 공통 코어·트랙별·커스텀 포트폴리오 섹션 개별 편집·삭제 (`experience` 벡터 자동 동기화) |
+| **Doc-to-Project** | `POST /api/projects/analyze-document`, `/import-structured` | Multipart / REST | 기획서·발표자료·보고서(`.pdf`/`.pptx`/`.docx`/`.md` 등) 업로드 → 선택 트랙 맞춤 프로젝트·섹션·STAR 자동 생성 |
+| **GitHub Auto** | `POST /api/projects/analyze-github/stream`, `/import-github`, `/{id}/sync-github` | SSE / REST | GitHub 트리·핵심 코드 딥 분석 → 선택 트랙 맞춤 섹션 & STAR 자동 생성 / 재동기화 |
 | **Doc Update** | `POST /api/projects/{id}/ingest-document`, `/apply-updates` | Multipart / REST | `.pdf`/`.docx`/`.pptx`/`.md`/`.ipynb`/코드 업로드 → 섹션별 Before/After Diff 제안 및 반영 |
-| **AI Prune** | `POST /api/projects/{id}/prune`, `/prune/apply` | REST | 중복·미사여구·불필요 내용 탐지 및 섹션별 압축/삭제 |
+| **AI Prune** | `POST /api/projects/{id}/prune`, `/prune/apply` | REST | 프로젝트 트랙별 심사 기준 기반 중복·미사여구·불필요 내용 탐지 및 압축/삭제 |
 | **Recap / Export** | `GET /api/projects/{id}/export-markdown`, `POST /api/projects/{id}/recap` | REST | 모듈 섹션 기반 즉시 Markdown 내보내기 및 AI 리캡 생성 |
 | **Agent ①** | `POST /api/agents/interview/start`, `/reply` | SSE | 경험 채굴 역질문 시작·답변·강제저장(`force_save`) |
 | **Agent ②** | `POST /api/agents/company/research` | SSE | 목표 기업 리서치 & 신념 3각 매칭 저장 |
@@ -275,9 +292,9 @@ write-on-vibe-lab/
 │   └── app/
 │       ├── main.py                 # FastAPI 앱, CORS, 라우터, lifespan
 │       ├── config.py               # pydantic-settings 환경변수 로더
-│       ├── core/                   # bedrock.py, database.py, vector_store.py
+│       ├── core/                   # bedrock.py, database.py, vector_store.py, project_templates.py
 │       ├── schemas/                # Pydantic 입출력 & Structured Output 스키마
-│       ├── tools/                  # web_search.py (DuckDuckGo + BS4)
+│       ├── tools/                  # web_search.py, document_parser.py, github_analyzer.py, portfolio_manager.py
 │       ├── graphs/                 # interview / company / cover_letter / copilot
 │       ├── api/                    # FastAPI REST & SSE 라우터
 │       └── seeds/                  # jasoseo_samples.json

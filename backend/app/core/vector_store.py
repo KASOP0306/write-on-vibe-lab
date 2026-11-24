@@ -91,22 +91,37 @@ async def try_upsert_document(
     content: str,
     metadata: dict[str, Any] | None = None,
 ) -> bool:
-    """정형 DB 저장 후 벡터 동기화를 시도하고 성공 여부를 반환한다."""
-    if not content.strip():
+    """정형 DB 저장 후 벡터 동기화를 시도하고 성공 여부를 반환한다.
+
+    임베딩 호출을 DB 트랜잭션보다 먼저 수행해 Bedrock 장애 시
+    호출자의 SQLAlchemy 세션(ORM 인스턴스)이 rollback으로 만료되지 않게 보호한다.
+    """
+    clean_content = content.strip()
+    if not clean_content:
         return False
+
+    try:
+        vector = await embed_text(clean_content)
+    except Exception as exc:
+        logger.warning(
+            "Vector embedding skipped/failed for (%s, %s): %s", doc_type, ref_id, exc
+        )
+        return False
+
     try:
         await upsert_document(
             session,
             doc_type=doc_type,
             ref_id=ref_id,
-            content=content,
+            content=clean_content,
             metadata=metadata,
+            embedding=vector,
         )
         return True
     except Exception as exc:
         await session.rollback()
         logger.warning(
-            "Vector upsert skipped/failed for (%s, %s): %s", doc_type, ref_id, exc
+            "Vector upsert DB write failed for (%s, %s): %s", doc_type, ref_id, exc
         )
         return False
 

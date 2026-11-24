@@ -73,6 +73,10 @@ class Project(Base):
     tech_stack: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     portfolio_goal_link: Mapped[str] = mapped_column(Text, default="", nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    project_types: Mapped[list] = mapped_column(
+        JSONB, default=lambda: ["engineering"], nullable=False
+    )
+    artifact_links: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -102,6 +106,7 @@ class ProjectSection(Base):
         Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     section_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    track: Mapped[str] = mapped_column(String(40), default="core", nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -261,11 +266,36 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """pgvector 확장, 6개 정형 테이블 + vector_documents, LangGraph Checkpointer 초기화."""
+    """pgvector 확장, 정형 테이블 + vector_documents, 멱등 컬럼 마이그레이션, LangGraph Checkpointer 초기화."""
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # 기존 pgdata 볼륨 무중단 호환을 위한 멱등 스키마 확장
+        await conn.execute(
+            text(
+                "ALTER TABLE projects "
+                "ADD COLUMN IF NOT EXISTS project_types JSONB NOT NULL DEFAULT '[\"engineering\"]'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE projects "
+                "ADD COLUMN IF NOT EXISTS artifact_links JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE project_sections "
+                "ADD COLUMN IF NOT EXISTS track VARCHAR(40) NOT NULL DEFAULT 'core'"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE project_sections SET track = 'engineering' "
+                "WHERE track = 'core' AND section_type IN ('architecture', 'decisions', 'implementation', 'troubleshooting')"
+            )
+        )
     logger.info("PostgreSQL tables and pgvector extension initialized.")
 
     conninfo = get_psycopg_conninfo()

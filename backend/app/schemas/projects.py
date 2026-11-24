@@ -1,6 +1,12 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ArtifactLink(BaseModel):
+    label: str = Field(default="", max_length=100)
+    url: str = Field(..., min_length=1, max_length=1000)
 
 
 class ExperienceSummary(BaseModel):
@@ -20,6 +26,7 @@ class ExperienceSummary(BaseModel):
 
 class ProjectSectionDraft(BaseModel):
     section_type: str = Field(..., min_length=1, max_length=60)
+    track: str = Field(default="custom", max_length=40)
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field(default="")
     display_order: int = Field(default=0)
@@ -29,6 +36,7 @@ class ProjectSectionUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     content: str | None = None
     display_order: int | None = None
+    track: str | None = Field(default=None, max_length=40)
 
 
 class ProjectSectionResponse(BaseModel):
@@ -37,6 +45,7 @@ class ProjectSectionResponse(BaseModel):
     id: int
     project_id: int
     section_type: str
+    track: str = "core"
     title: str
     content: str
     display_order: int
@@ -66,6 +75,14 @@ class ProjectCreateRequest(BaseModel):
     tech_stack: list[str] = Field(default_factory=list)
     portfolio_goal_link: str = Field(default="")
     repo_url: str = Field(default="", max_length=500)
+    project_types: list[str] = Field(
+        default_factory=lambda: ["engineering"],
+        description="복수 선택 가능한 프로젝트 유형 트랙 배열",
+    )
+    artifact_links: list[ArtifactLink] = Field(
+        default_factory=list,
+        description="참고 결과물 링크 (Figma, Notion, 발표자료, 블로그 등)",
+    )
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -76,6 +93,8 @@ class ProjectUpdateRequest(BaseModel):
     tech_stack: list[str] | None = None
     portfolio_goal_link: str | None = None
     repo_url: str | None = Field(default=None, max_length=500)
+    project_types: list[str] | None = None
+    artifact_links: list[ArtifactLink] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -89,6 +108,8 @@ class ProjectResponse(BaseModel):
     tech_stack: list[str]
     portfolio_goal_link: str
     repo_url: str
+    project_types: list[str] = Field(default_factory=lambda: ["engineering"])
+    artifact_links: list[dict[str, str]] = Field(default_factory=list)
     created_at: datetime
     experience_count: int = 0
     filled_section_count: int = 0
@@ -110,8 +131,21 @@ class ProjectRecapResponse(BaseModel):
     markdown: str
 
 
+class AddTracksRequest(BaseModel):
+    add_types: list[str] = Field(..., min_length=1, description="추가할 프로젝트 유형 트랙 ID 목록")
+
+
+class AddTracksResponse(BaseModel):
+    project_types: list[str]
+    added_section_types: list[str]
+
+
 class GitHubAnalyzeRequest(BaseModel):
     repo_url: str = Field(..., min_length=3, description="GitHub 저장소 URL 또는 owner/repo")
+    project_types: list[str] = Field(
+        default_factory=lambda: ["engineering"],
+        description="조합할 프로젝트 유형 트랙 목록",
+    )
     github_token: str = Field(
         default="",
         description="선택: Private 저장소 또는 Rate Limit 우회용 1회용 PAT (DB 미저장)",
@@ -140,13 +174,29 @@ class GitHubAnalyzeResponse(BaseModel):
     sections: list[ProjectSectionDraft] = Field(default_factory=list)
     portfolio_markdown: str
     suggested_experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
-    repo_meta: dict = Field(default_factory=dict)
+    repo_meta: dict[str, Any] = Field(default_factory=dict)
 
 
-class GitHubImportRequest(BaseModel):
+class DocumentToProjectResponse(BaseModel):
+    project: ProjectCreateRequest
+    sections: list[ProjectSectionDraft] = Field(default_factory=list)
+    portfolio_markdown: str
+    suggested_experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
+    source_meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class StructuredProjectImportRequest(BaseModel):
     project: ProjectCreateRequest
     sections: list[ProjectSectionDraft] = Field(default_factory=list)
     experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
+    source_filename: str = Field(default="")
+    source_type: str = Field(default="github_repo")
+    source_format: str = Field(default="github")
+    source_summary: str = Field(default="")
+
+
+# 하위 호환 alias
+GitHubImportRequest = StructuredProjectImportRequest
 
 
 class GitHubImportResponse(BaseModel):
@@ -159,6 +209,7 @@ class GitHubImportResponse(BaseModel):
 class SectionDiffItem(BaseModel):
     section_id: int | None = None
     section_type: str
+    track: str = "core"
     title: str
     action: str = "update"
     change_summary: str = ""
@@ -182,6 +233,7 @@ class DocumentIngestProposalResponse(BaseModel):
 class SectionUpdateApplyItem(BaseModel):
     section_id: int | None = None
     section_type: str
+    track: str = "core"
     title: str
     content: str
 
