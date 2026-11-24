@@ -615,7 +615,7 @@ async def search_interest_sources(
             search_web_results(
                 f"{clean} engineering architecture best practices",
                 max_results=4,
-                region="wt-wt",
+                region="us-en",
                 timelimit=timelimit,
             )
         )
