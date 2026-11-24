@@ -1,4 +1,4 @@
-"""Day 4 E2E 스모크 테스트 & 데이터 영속성 검증 스크립트.
+"""E2E 스모크 테스트 & 데이터 영속성 검증 스크립트.
 
 사용 예시:
     # 1) 기본 CRUD + 헬스체크 검증 (AWS Bedrock 없이도 실행 가능)
@@ -7,6 +7,8 @@
     # 2) 컨테이너 재시작 후 영속성 확인 모드
     python scripts/e2e_verify.py --base-url http://localhost --verify-persistence
 """
+
+from __future__ import annotations
 
 import argparse
 import json
