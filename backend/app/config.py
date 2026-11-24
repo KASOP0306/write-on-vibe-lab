@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     bedrock_smart_model_id: str = "amazon.nova-pro-v1:0"
     bedrock_embed_model_id: str = "amazon.titan-embed-text-v2:0"
     embedding_dim: int = 1024
+    github_token: str | None = None
 
 
 settings = Settings()

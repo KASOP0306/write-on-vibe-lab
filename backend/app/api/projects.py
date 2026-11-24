@@ -10,13 +10,22 @@ from sqlalchemy.orm import selectinload
 
 from app.core.bedrock import get_smart_llm
 from app.core.database import Experience, Project, UserProfile, get_db_session
+from app.core.vector_store import DocType, try_upsert_document
 from app.schemas.projects import (
     ExperienceSummary,
+    GitHubAnalyzeRequest,
+    GitHubAnalyzeResponse,
+    GitHubImportRequest,
+    GitHubImportResponse,
     ProjectCreateRequest,
     ProjectDetailResponse,
     ProjectRecapResponse,
     ProjectResponse,
     ProjectUpdateRequest,
+)
+from app.tools.github_analyzer import (
+    GitHubAnalyzerError,
+    analyze_github_to_portfolio,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +59,122 @@ async def list_projects(
         item.experience_count = int(exp_count)
         results.append(item)
     return results
+
+
+@router.post("/analyze-github", response_model=GitHubAnalyzeResponse)
+async def analyze_github_repo(
+    payload: GitHubAnalyzeRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubAnalyzeResponse:
+    """GitHub 저장소 URL을 분석해 프로젝트 정보, 포트폴리오 Markdown, STAR 경험 초안을 자동 생성한다."""
+    profile = await session.get(UserProfile, 1)
+    profile_context = ""
+    if profile:
+        profile_context = (
+            f"희망 직무: {profile.target_roles}\n"
+            f"커리어 비전: {profile.career_vision}\n"
+            f"핵심 신념: {profile.core_beliefs}"
+        ).strip()
+
+    try:
+        result = await analyze_github_to_portfolio(
+            payload.repo_url,
+            role_hint=payload.role_hint.strip(),
+            extra_context=payload.extra_context.strip(),
+            profile_context=profile_context,
+        )
+    except GitHubAnalyzerError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except Exception as exc:
+        logger.exception("GitHub portfolio analysis failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"GitHub 저장소 분석 중 오류가 발생했습니다: {exc}",
+        )
+
+    return GitHubAnalyzeResponse.model_validate(result)
+
+
+@router.post(
+    "/import-github",
+    response_model=GitHubImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_github_project(
+    payload: GitHubImportRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubImportResponse:
+    """분석·편집된 GitHub 프로젝트와 선택한 STAR 경험 초안을 DB 및 벡터 저장소에 일괄 저장한다."""
+    p = payload.project
+    project = Project(
+        name=p.name.strip(),
+        period=p.period.strip(),
+        role=p.role.strip(),
+        summary=p.summary.strip(),
+        tech_stack=[t.strip() for t in p.tech_stack if t.strip()],
+        portfolio_goal_link=p.portfolio_goal_link.strip(),
+        repo_url=p.repo_url.strip(),
+    )
+    session.add(project)
+    await session.commit()
+    await session.refresh(project)
+
+    saved_exp_ids: list[int] = []
+    vector_synced_count = 0
+
+    for item in payload.experiences:
+        title = item.title.strip()
+        if not title:
+            continue
+        score = 75 if item.quantified_metrics.strip() else 60
+        exp = Experience(
+            project_id=project.id,
+            title=title[:300],
+            situation=item.situation.strip(),
+            task=item.task.strip(),
+            action=item.action.strip(),
+            result=item.result.strip(),
+            quantified_metrics=item.quantified_metrics.strip(),
+            completeness_score=score,
+            raw_notes=f"[GitHub 자동 추출] {project.repo_url}",
+        )
+        session.add(exp)
+        await session.commit()
+        await session.refresh(exp)
+        saved_exp_ids.append(exp.id)
+
+        vector_content = (
+            f"[프로젝트] {project.name}\n"
+            f"[경험 제목] {exp.title}\n"
+            f"[Situation] {exp.situation}\n"
+            f"[Task] {exp.task}\n"
+            f"[Action] {exp.action}\n"
+            f"[Result] {exp.result}\n"
+            f"[정량 지표] {exp.quantified_metrics}"
+        )
+        synced = await try_upsert_document(
+            session,
+            doc_type=DocType.EXPERIENCE,
+            ref_id=f"exp-{exp.id}",
+            content=vector_content,
+            metadata={
+                "experience_id": exp.id,
+                "project_id": project.id,
+                "title": exp.title,
+                "source": "github_import",
+                "repo_url": project.repo_url,
+            },
+        )
+        if synced:
+            vector_synced_count += 1
+
+    proj_resp = ProjectResponse.model_validate(project)
+    proj_resp.experience_count = len(saved_exp_ids)
+    return GitHubImportResponse(
+        project=proj_resp,
+        saved_experience_ids=saved_exp_ids,
+        vector_synced_count=vector_synced_count,
+    )
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)

@@ -24,23 +24,30 @@ logger = logging.getLogger(__name__)
 
 
 class TriangularMatchItem(BaseModel):
-    company_vision_or_issue: str = Field(description="기업의 비전·핵심가치·기술/사업 병목")
-    my_belief: str = Field(description="연결되는 지원자의 커리어 신념/철학")
-    proof_project: str = Field(description="이를 증명하는 지원자의 실제 프로젝트·경험")
-    pitch_angle: str = Field(description="자소서/면접에서 설득력 있게 풀어낼 핵심 논리 1~2문장")
+    company_vision_or_issue: str = Field(
+        default="", description="기업의 비전·핵심가치·기술/사업 병목"
+    )
+    my_belief: str = Field(default="", description="연결되는 지원자의 커리어 신념/철학")
+    proof_project: str = Field(
+        default="", description="이를 증명하는 지원자의 실제 프로젝트·경험 (미등록 시 보완 방향 기재)"
+    )
+    pitch_angle: str = Field(
+        default="", description="자소서/면접에서 설득력 있게 풀어낼 핵심 논리 1~2문장"
+    )
 
 
 class CompanyAlignmentSchema(BaseModel):
-    mission_vision: str = Field(description="기업의 미션·비전 요약")
-    core_values: str = Field(description="기업의 핵심가치·인재상 요약")
-    recent_trends: str = Field(description="최근 사업 동향·기술 이슈·도전 과제 요약")
+    mission_vision: str = Field(default="", description="기업의 미션·비전 요약")
+    core_values: str = Field(default="", description="기업의 핵심가치·인재상 요약")
+    recent_trends: str = Field(
+        default="", description="최근 사업 동향·기술 이슈·도전 과제 요약"
+    )
     company_bottlenecks: list[str] = Field(
         default_factory=list, description="지원 직무 관점에서 추정되는 기업의 핵심 과제"
     )
     triangular_matches: list[TriangularMatchItem] = Field(
-        min_length=1,
-        max_length=4,
-        description="[기업 비전/과제 <-> 나의 신념 <-> 증명 프로젝트] 3각 매칭표",
+        default_factory=list,
+        description="[기업 비전/과제 <-> 나의 신념 <-> 증명 프로젝트] 3각 매칭표 (2~3개 권장)",
     )
 
 
@@ -157,9 +164,12 @@ async def alignment_synthesizer(state: CompanyResearchState) -> dict[str, Any]:
                 "당신은 지원자의 커리어 신념·프로젝트 경험과 목표 기업의 비전·과제를 논리적으로 연결하는 "
                 "전략 커리어 컨설턴트입니다.\n"
                 "규칙:\n"
-                "1. 제공된 지원자 프로젝트/경험에 없는 사실을 지어내지 마세요.\n"
-                "2. 기업에 대한 칭찬 나열 대신 실제 비전·사업 과제와 지원자 신념·경험의 구체적 접점을 도출하세요.\n"
-                "3. 모든 출력은 한국어로 작성하세요."
+                "1. 제공된 지원자 프로젝트/경험에 없는 사실을 절대 지어내지 마세요.\n"
+                "2. 지원자의 프로젝트나 신념이 아직 등록되지 않은 경우에도 `triangular_matches`에 2~3건의 매칭 항목을 작성하되, "
+                "`proof_project`에는 '(미등록 — 포트폴리오에 관련 프로젝트/경험 등록 추천)'처럼 솔직히 표기하고 "
+                "해당 기업·직무에 어필할 수 있는 연결 전략을 `pitch_angle`에 제시하세요.\n"
+                "3. 기업에 대한 막연한 칭찬 대신 실제 비전·사업 과제와 지원 직무의 접점을 도출하세요.\n"
+                "4. 모든 출력은 한국어로 작성하고, 스키마의 모든 필드(`mission_vision`, `core_values`, `recent_trends`, `company_bottlenecks`, `triangular_matches`)를 빠짐없이 채우세요."
             )
         ),
         HumanMessage(

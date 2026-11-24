@@ -4,9 +4,12 @@ import {
   Check,
   Copy,
   FileText,
+  Github,
+  Loader2,
   Pencil,
   Plus,
   Save,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -31,6 +34,19 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
   });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
+
+  // GitHub Auto Portfolio Analyzer
+  const [ghUrl, setGhUrl] = useState("");
+  const [ghRoleHint, setGhRoleHint] = useState("");
+  const [ghExtraContext, setGhExtraContext] = useState("");
+  const [ghAnalyzing, setGhAnalyzing] = useState(false);
+  const [ghError, setGhError] = useState("");
+  const [ghDraft, setGhDraft] = useState(null);
+  const [ghProjectEdit, setGhProjectEdit] = useState(EMPTY_PROJECT_FORM);
+  const [ghSelectedExpIndices, setGhSelectedExpIndices] = useState(new Set());
+  const [ghPreviewTab, setGhPreviewTab] = useState("star");
+  const [ghImporting, setGhImporting] = useState(false);
+  const [ghCopiedMd, setGhCopiedMd] = useState(false);
 
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
@@ -69,6 +85,94 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
     } finally {
       setSavingProfile(false);
     }
+  };
+
+  const handleAnalyzeGithub = async (e) => {
+    e.preventDefault();
+    if (!ghUrl.trim() || ghAnalyzing) return;
+    setGhAnalyzing(true);
+    setGhError("");
+    setGhDraft(null);
+    setGhCopiedMd(false);
+
+    try {
+      const res = await api.analyzeGithubRepo({
+        repo_url: ghUrl.trim(),
+        role_hint: ghRoleHint.trim(),
+        extra_context: ghExtraContext.trim(),
+      });
+      setGhDraft(res);
+      setGhProjectEdit({
+        name: res.project.name || "",
+        period: res.project.period || "",
+        role: res.project.role || "",
+        summary: res.project.summary || "",
+        tech_stack_text: (res.project.tech_stack || []).join(", "),
+        portfolio_goal_link: res.project.portfolio_goal_link || "",
+        repo_url: res.project.repo_url || ghUrl.trim(),
+      });
+      setGhSelectedExpIndices(
+        new Set((res.suggested_experiences || []).map((_, idx) => idx))
+      );
+      setGhPreviewTab("star");
+    } catch (err) {
+      setGhError(err.message);
+    } finally {
+      setGhAnalyzing(false);
+    }
+  };
+
+  const toggleGhExperience = (idx) => {
+    setGhSelectedExpIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const handleImportGithub = async () => {
+    if (!ghDraft || ghImporting) return;
+    setGhImporting(true);
+    try {
+      const selectedExps = (ghDraft.suggested_experiences || []).filter((_, idx) =>
+        ghSelectedExpIndices.has(idx)
+      );
+      const res = await api.importGithubProject({
+        project: {
+          name: ghProjectEdit.name,
+          period: ghProjectEdit.period,
+          role: ghProjectEdit.role,
+          summary: ghProjectEdit.summary,
+          tech_stack: ghProjectEdit.tech_stack_text
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          portfolio_goal_link: ghProjectEdit.portfolio_goal_link,
+          repo_url: ghProjectEdit.repo_url,
+        },
+        experiences: selectedExps,
+      });
+      setGhDraft(null);
+      setGhUrl("");
+      setGhRoleHint("");
+      setGhExtraContext("");
+      await onRefresh();
+      alert(
+        `'${res.project.name}' 프로젝트와 STAR 경험 ${res.saved_experience_ids.length}건이 저장되었습니다! (벡터 동기화 ${res.vector_synced_count}건)`
+      );
+    } catch (err) {
+      alert(`GitHub 포트폴리오 저장 실패: ${err.message}`);
+    } finally {
+      setGhImporting(false);
+    }
+  };
+
+  const handleCopyGhMarkdown = async () => {
+    if (!ghDraft?.portfolio_markdown) return;
+    await navigator.clipboard.writeText(ghDraft.portfolio_markdown);
+    setGhCopiedMd(true);
+    setTimeout(() => setGhCopiedMd(false), 2000);
   };
 
   const openCreateProject = () => {
@@ -159,7 +263,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
       <div>
         <h2 className="text-2xl font-bold text-slate-900">1. 신념 &amp; 포트폴리오</h2>
         <p className="text-sm text-slate-600 mt-1">
-          나의 커리어 비전·신념·문체를 정의하고 프로젝트 단위 포트폴리오를 관리합니다.
+          나의 커리어 비전·신념·문체를 정의하고, GitHub 링크 자동 분석 또는 직접 입력으로 프로젝트 포트폴리오를 관리합니다.
         </p>
       </div>
 
@@ -188,7 +292,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
               onChange={(e) =>
                 setProfileForm({ ...profileForm, target_roles: e.target.value })
               }
-              placeholder="예: AI 에이전트 엔지니어 / 백엔드 개발자"
+              placeholder="예: AI 에이전트 엔지니어 / 데이터 엔지니어"
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/15"
             />
           </label>
@@ -251,6 +355,315 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
         </div>
       </form>
 
+      {/* GitHub Repo Auto Portfolio Generator */}
+      <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50/40 p-6 space-y-4 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Github className="w-5 h-5 text-indigo-700" />
+              <span>GitHub 링크로 포트폴리오 &amp; STAR 경험 자동 생성</span>
+            </h3>
+            <p className="text-xs text-slate-600 mt-1">
+              Public GitHub 저장소 링크를 넣으면 README·디렉토리·의존성·최근 커밋을 읽어 프로젝트 요약, 기술 스택, 포트폴리오 Markdown, STAR 경험 초안까지 자동으로 구성합니다.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleAnalyzeGithub} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              required
+              type="text"
+              value={ghUrl}
+              onChange={(e) => setGhUrl(e.target.value)}
+              placeholder="https://github.com/owner/repo *"
+              className="md:col-span-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/25"
+            />
+            <input
+              type="text"
+              value={ghRoleHint}
+              onChange={(e) => setGhRoleHint(e.target.value)}
+              placeholder="본인 역할 힌트 (선택: 예: 백엔드 & AI 설계)"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="text"
+              value={ghExtraContext}
+              onChange={(e) => setGhExtraContext(e.target.value)}
+              placeholder="강조하고 싶은 성과/트러블슈팅 메모가 있다면 추가 (선택)"
+              className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={ghAnalyzing || !ghUrl.trim()}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 shrink-0"
+            >
+              {ghAnalyzing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>저장소 코드·README 분석 중...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>GitHub 자동 분석</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+
+        {ghError && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+            {ghError}
+          </div>
+        )}
+
+        {/* GitHub Analysis Editable Preview */}
+        {ghDraft && (
+          <div className="rounded-xl border border-indigo-200 bg-white p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <span className="font-bold text-slate-900">
+                  {ghDraft.repo_meta?.full_name}
+                </span>
+                <span>·</span>
+                <span>커밋 {ghDraft.repo_meta?.commits_sampled || 0}건 분석</span>
+                {(ghDraft.repo_meta?.files_analyzed || []).length > 0 && (
+                  <>
+                    <span>·</span>
+                    <span>
+                      확인 파일: {ghDraft.repo_meta.files_analyzed.join(", ")}
+                    </span>
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setGhDraft(null)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Editable Project Summary */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label className="block space-y-1">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  프로젝트명
+                </span>
+                <input
+                  type="text"
+                  value={ghProjectEdit.name}
+                  onChange={(e) =>
+                    setGhProjectEdit({ ...ghProjectEdit, name: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  개발 기간
+                </span>
+                <input
+                  type="text"
+                  value={ghProjectEdit.period}
+                  onChange={(e) =>
+                    setGhProjectEdit({ ...ghProjectEdit, period: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  담당 역할
+                </span>
+                <input
+                  type="text"
+                  value={ghProjectEdit.role}
+                  onChange={(e) =>
+                    setGhProjectEdit({ ...ghProjectEdit, role: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                />
+              </label>
+            </div>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-semibold text-slate-600">
+                프로젝트 핵심 요약
+              </span>
+              <textarea
+                rows={2}
+                value={ghProjectEdit.summary}
+                onChange={(e) =>
+                  setGhProjectEdit({ ...ghProjectEdit, summary: e.target.value })
+                }
+                className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  기술 스택 (쉼표 구분)
+                </span>
+                <input
+                  type="text"
+                  value={ghProjectEdit.tech_stack_text}
+                  onChange={(e) =>
+                    setGhProjectEdit({
+                      ...ghProjectEdit,
+                      tech_stack_text: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  나의 커리어 비전 연결점
+                </span>
+                <input
+                  type="text"
+                  value={ghProjectEdit.portfolio_goal_link}
+                  onChange={(e) =>
+                    setGhProjectEdit({
+                      ...ghProjectEdit,
+                      portfolio_goal_link: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                />
+              </label>
+            </div>
+
+            {/* Tabs: STAR Drafts vs Portfolio Markdown */}
+            <div className="pt-2 border-t border-slate-100 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setGhPreviewTab("star")}
+                    className={`rounded-md px-3 py-1 ${
+                      ghPreviewTab === "star"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-600"
+                    }`}
+                  >
+                    추출된 STAR 경험 ({ghDraft.suggested_experiences?.length || 0}건)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGhPreviewTab("markdown")}
+                    className={`rounded-md px-3 py-1 ${
+                      ghPreviewTab === "markdown"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-600"
+                    }`}
+                  >
+                    포트폴리오 Markdown 미리보기
+                  </button>
+                </div>
+
+                {ghPreviewTab === "markdown" && (
+                  <button
+                    type="button"
+                    onClick={handleCopyGhMarkdown}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    {ghCopiedMd ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>복사됨</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Markdown 복사</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {ghPreviewTab === "star" ? (
+                <div className="space-y-2.5">
+                  {(ghDraft.suggested_experiences || []).map((exp, idx) => (
+                    <label
+                      key={idx}
+                      className={`block rounded-xl border p-3.5 text-xs space-y-1 cursor-pointer transition-colors ${
+                        ghSelectedExpIndices.has(idx)
+                          ? "border-indigo-300 bg-indigo-50/40"
+                          : "border-slate-200 bg-slate-50/50 opacity-65"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-bold text-slate-900">
+                        <input
+                          type="checkbox"
+                          checked={ghSelectedExpIndices.has(idx)}
+                          onChange={() => toggleGhExperience(idx)}
+                          className="rounded border-slate-300"
+                        />
+                        <span>{exp.title}</span>
+                      </div>
+                      <p className="text-slate-700 pl-5">
+                        <strong>S:</strong> {exp.situation}
+                      </p>
+                      <p className="text-slate-700 pl-5">
+                        <strong>T:</strong> {exp.task}
+                      </p>
+                      <p className="text-slate-700 pl-5">
+                        <strong>A:</strong> {exp.action}
+                      </p>
+                      <p className="text-slate-700 pl-5">
+                        <strong>R:</strong> {exp.result}
+                      </p>
+                      {exp.quantified_metrics && (
+                        <p className="text-emerald-800 pl-5">
+                          <strong>지표:</strong> {exp.quantified_metrics}
+                        </p>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 max-h-80 overflow-y-auto prose prose-sm prose-slate max-w-none">
+                  <ReactMarkdown>{ghDraft.portfolio_markdown || ""}</ReactMarkdown>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setGhDraft(null)}
+                className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={ghImporting || !ghProjectEdit.name.trim()}
+                onClick={handleImportGithub}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>
+                  {ghImporting
+                    ? "DB & 벡터 저장 중..."
+                    : `프로젝트 + 선택한 STAR ${ghSelectedExpIndices.size}건 저장`}
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* Projects Portfolio */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -263,7 +676,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
             className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-medium text-white hover:bg-slate-800"
           >
             <Plus className="w-4 h-4" />
-            <span>프로젝트 추가</span>
+            <span>직접 프로젝트 추가</span>
           </button>
         </div>
 
@@ -384,7 +797,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
 
         {projects.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
-            등록된 프로젝트가 없습니다. 상단의 &apos;프로젝트 추가&apos; 버튼으로 첫 포트폴리오를 만들어 보세요.
+            등록된 프로젝트가 없습니다. 위의 <strong>GitHub 링크 자동 분석</strong> 또는 <strong>직접 프로젝트 추가</strong>로 첫 포트폴리오를 만들어 보세요.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -419,6 +832,18 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
                     <p className="text-xs text-blue-700 bg-blue-50 rounded-lg px-2.5 py-1.5">
                       비전 연결: {proj.portfolio_goal_link}
                     </p>
+                  )}
+
+                  {proj.repo_url && (
+                    <a
+                      href={proj.repo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline"
+                    >
+                      <Github className="w-3.5 h-3.5" />
+                      <span>{proj.repo_url}</span>
+                    </a>
                   )}
 
                   {(proj.tech_stack || []).length > 0 && (

@@ -43,8 +43,7 @@ class GapGradeSchema(BaseModel):
 
 class FollowupQuestionsSchema(BaseModel):
     questions: list[str] = Field(
-        min_length=1,
-        max_length=2,
+        default_factory=list,
         description="빈틈을 채우기 위해 사용자에게 던질 날카롭고 구체적인 역질문 1~2개",
     )
 
@@ -189,7 +188,10 @@ async def generate_questions(state: InterviewState) -> dict[str, Any]:
         ),
     ]
     followup = await ainvoke_structured(llm, FollowupQuestionsSchema, messages, max_retries=1)
-    return {"questions": followup.questions}
+    questions = [q.strip() for q in followup.questions if q.strip()][:2] or [
+        "이 경험에서 본인이 직접 해결한 핵심 기술적 과제와 정량적 성과(전후 비교 등)를 조금 더 구체적으로 알려주시겠어요?"
+    ]
+    return {"questions": questions}
 
 
 async def save_experience(state: InterviewState) -> dict[str, Any]:

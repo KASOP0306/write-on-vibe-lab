@@ -222,21 +222,19 @@ def build_copilot_chat_graph():
 # ==============================================================================
 class RetrospectivePlanSchema(BaseModel):
     gap_analysis: str = Field(
-        description="보유 포트폴리오·경험 대비 이번 지원 결과에서 드러난 핵심 격차(Gap) 진단 (한국어 Markdown)"
+        default="",
+        description="보유 포트폴리오·경험 대비 이번 지원 결과에서 드러난 핵심 격차(Gap) 진단 (한국어 Markdown)",
     )
     short_term_plan: list[str] = Field(
-        min_length=1,
-        max_length=5,
+        default_factory=list,
         description="단기(1~2주) 자소서·포트폴리오·면접 보강 액션 아이템",
     )
     mid_term_plan: list[str] = Field(
-        min_length=1,
-        max_length=5,
+        default_factory=list,
         description="중기(1~2개월) 신규 프로젝트·기술 심화·학습 액션 아이템",
     )
     suggested_interests: list[str] = Field(
         default_factory=list,
-        max_length=6,
         description="보완이 필요한 신규 기술/도메인 관심 키워드 (user_interests 원클릭 추가용)",
     )
 

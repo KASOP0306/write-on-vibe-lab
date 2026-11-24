@@ -62,3 +62,36 @@ class ProjectRecapResponse(BaseModel):
     project_name: str
     experience_count: int
     markdown: str
+
+
+class GitHubAnalyzeRequest(BaseModel):
+    repo_url: str = Field(..., min_length=10, description="GitHub 저장소 URL")
+    role_hint: str = Field(default="", max_length=200, description="본인 담당 역할 힌트 (선택)")
+    extra_context: str = Field(default="", description="강조하고 싶은 추가 맥락 (선택)")
+
+
+class SuggestedExperienceDraft(BaseModel):
+    title: str
+    situation: str = ""
+    task: str = ""
+    action: str = ""
+    result: str = ""
+    quantified_metrics: str = ""
+
+
+class GitHubAnalyzeResponse(BaseModel):
+    project: ProjectCreateRequest
+    portfolio_markdown: str
+    suggested_experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
+    repo_meta: dict = Field(default_factory=dict)
+
+
+class GitHubImportRequest(BaseModel):
+    project: ProjectCreateRequest
+    experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
+
+
+class GitHubImportResponse(BaseModel):
+    project: ProjectResponse
+    saved_experience_ids: list[int] = Field(default_factory=list)
+    vector_synced_count: int = 0

@@ -109,6 +109,16 @@ export const api = {
     apiRequest(`/api/projects/${id}`, { method: "DELETE" }),
   recapProject: (id) =>
     apiRequest(`/api/projects/${id}/recap`, { method: "POST" }),
+  analyzeGithubRepo: (data) =>
+    apiRequest("/api/projects/analyze-github", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  importGithubProject: (data) =>
+    apiRequest("/api/projects/import-github", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   listExperiences: (projectId = null) =>
     apiRequest(projectId ? `/api/experiences?project_id=${projectId}` : "/api/experiences"),
   deleteExperience: (id) =>
