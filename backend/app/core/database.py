@@ -82,6 +82,59 @@ class Project(Base):
         cascade="save-update, merge",
         passive_deletes=True,
     )
+    sections: Mapped[list["ProjectSection"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectSection.display_order.asc(), ProjectSection.id.asc()",
+    )
+    documents: Mapped[list["ProjectDocument"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectDocument.created_at.desc(), ProjectDocument.id.desc()",
+    )
+
+
+class ProjectSection(Base):
+    __tablename__ = "project_sections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    section_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    project: Mapped[Project] = relationship(back_populates="sections")
+
+
+class ProjectDocument(Base):
+    __tablename__ = "project_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    source_type: Mapped[str] = mapped_column(
+        String(50), default="file_upload", nullable=False
+    )
+    file_format: Mapped[str] = mapped_column(String(30), default="txt", nullable=False)
+    extracted_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    raw_char_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    applied_sections: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    project: Mapped[Project] = relationship(back_populates="documents")
 
 
 class Experience(Base):

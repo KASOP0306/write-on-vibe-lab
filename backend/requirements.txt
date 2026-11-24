@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+python-multipart
 pydantic-settings
 sqlalchemy[asyncio]
 psycopg[binary]
@@ -14,3 +15,6 @@ ddgs
 trafilatura
 beautifulsoup4
 httpx
+pypdf
+python-docx
+python-pptx

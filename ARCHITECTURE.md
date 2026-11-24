@@ -127,8 +127,11 @@ erDiagram
     }
 
     projects ||--o{ experiences : "has"
+    projects ||--o{ project_sections : "has modular 6 sections"
+    projects ||--o{ project_documents : "ingested files & github"
     user_profile ||--o{ vector_documents : "upserts as career_identity"
     experiences ||--o{ vector_documents : "upserts as experience"
+    project_sections ||--o{ vector_documents : "upserts as experience"
     company_profiles ||--o{ vector_documents : "upserts as company_research"
 ```
 
@@ -223,8 +226,12 @@ sequenceDiagram
 | **Health** | `GET /api/health` | REST | 백엔드 기동 상태 확인 |
 | **Profile** | `GET / PUT /api/profile` | REST | 신념·비전·선호 문체 조회/수정 (`career_identity` Upsert 포함) |
 | **Interests** | `GET / POST / DELETE /api/interests` | REST | 관심 분야 키워드 CRUD |
-| **Projects** | `GET / POST / PUT / DELETE /api/projects` | REST | 포트폴리오 프로젝트 CRUD |
-| **Recap** | `POST /api/projects/{id}/recap` | REST | 프로젝트 소속 경험 기반 포트폴리오 Markdown 리캡 생성 |
+| **Projects** | `GET / POST / PUT / DELETE /api/projects` | REST | 포트폴리오 프로젝트 CRUD (생성 시 6개 표준 모듈 섹션 자동 초기화) |
+| **Sections** | `POST / PUT / DELETE /api/projects/{id}/sections` | REST | 6개 표준/커스텀 포트폴리오 섹션 개별 편집·삭제 (`experience` 벡터 자동 동기화) |
+| **GitHub Auto** | `POST /api/projects/analyze-github/stream`, `/import-github`, `/{id}/sync-github` | SSE / REST | GitHub 트리·핵심 코드 딥 분석 → 6개 섹션 & STAR 자동 생성 / 재동기화 |
+| **Doc Update** | `POST /api/projects/{id}/ingest-document`, `/apply-updates` | Multipart / REST | `.pdf`/`.docx`/`.pptx`/`.md`/`.ipynb`/코드 업로드 → 섹션별 Before/After Diff 제안 및 반영 |
+| **AI Prune** | `POST /api/projects/{id}/prune`, `/prune/apply` | REST | 중복·미사여구·불필요 내용 탐지 및 섹션별 압축/삭제 |
+| **Recap / Export** | `GET /api/projects/{id}/export-markdown`, `POST /api/projects/{id}/recap` | REST | 모듈 섹션 기반 즉시 Markdown 내보내기 및 AI 리캡 생성 |
 | **Agent ①** | `POST /api/agents/interview/start`, `/reply` | SSE | 경험 채굴 역질문 시작·답변·강제저장(`force_save`) |
 | **Agent ②** | `POST /api/agents/company/research` | SSE | 목표 기업 리서치 & 신념 3각 매칭 저장 |
 | **Interest Search** | `POST /api/agents/interests/search`, `/clip` | SSE / REST | 관심사 뉴스·기술 검색 및 선택 클립 벡터 저장 |

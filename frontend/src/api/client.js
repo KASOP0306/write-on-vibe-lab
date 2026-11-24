@@ -1,14 +1,19 @@
 /**
- * REST fetch 및 ReadableStream 기반 SSE 스트림 파서 클라이언트
+ * REST fetch, Multipart 파일 업로드, ReadableStream 기반 SSE 스트림 파서 클라이언트
  */
 
 export async function apiRequest(path, options = {}) {
+  const isFormData = options.body instanceof FormData;
+  const headers = isFormData
+    ? { ...(options.headers || {}) }
+    : {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
+
   const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
     ...options,
+    headers,
   });
 
   if (!response.ok) {
@@ -98,7 +103,7 @@ export const api = {
   deleteInterest: (id) =>
     apiRequest(`/api/interests/${id}`, { method: "DELETE" }),
 
-  // Projects & Experiences
+  // Projects, Modular Sections, Documents & Prune
   listProjects: () => apiRequest("/api/projects"),
   getProject: (id) => apiRequest(`/api/projects/${id}`),
   createProject: (data) =>
@@ -109,16 +114,65 @@ export const api = {
     apiRequest(`/api/projects/${id}`, { method: "DELETE" }),
   recapProject: (id) =>
     apiRequest(`/api/projects/${id}/recap`, { method: "POST" }),
+  exportProjectMarkdown: (id) =>
+    apiRequest(`/api/projects/${id}/export-markdown`),
+
+  createSection: (projectId, data) =>
+    apiRequest(`/api/projects/${projectId}/sections`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateSection: (projectId, sectionId, data) =>
+    apiRequest(`/api/projects/${projectId}/sections/${sectionId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteSection: (projectId, sectionId) =>
+    apiRequest(`/api/projects/${projectId}/sections/${sectionId}`, {
+      method: "DELETE",
+    }),
+
   analyzeGithubRepo: (data) =>
     apiRequest("/api/projects/analyze-github", {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  analyzeGithubStream: (data, onEvent) =>
+    streamSSE("/api/projects/analyze-github/stream", data, onEvent),
   importGithubProject: (data) =>
     apiRequest("/api/projects/import-github", {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  syncProjectGithub: (projectId, data = {}) =>
+    apiRequest(`/api/projects/${projectId}/sync-github`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  ingestProjectDocument: (projectId, formData) =>
+    apiRequest(`/api/projects/${projectId}/ingest-document`, {
+      method: "POST",
+      body: formData,
+    }),
+  applyProjectUpdates: (projectId, data) =>
+    apiRequest(`/api/projects/${projectId}/apply-updates`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteProjectDocument: (projectId, docId) =>
+    apiRequest(`/api/projects/${projectId}/documents/${docId}`, {
+      method: "DELETE",
+    }),
+
+  pruneProject: (projectId) =>
+    apiRequest(`/api/projects/${projectId}/prune`, { method: "POST" }),
+  applyProjectPrune: (projectId, updates) =>
+    apiRequest(`/api/projects/${projectId}/prune/apply`, {
+      method: "POST",
+      body: JSON.stringify({ updates }),
+    }),
+
   listExperiences: (projectId = null) =>
     apiRequest(projectId ? `/api/experiences?project_id=${projectId}` : "/api/experiences"),
   deleteExperience: (id) =>

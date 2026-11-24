@@ -25,6 +25,8 @@ const NODE_LABELS = {
   load_retro_context: "포트폴리오·이력 로드",
   analyze_gap_and_plan: "Gap 분석 & 보완 플랜",
   save_application_log: "회고 기록 저장",
+  fetch_repo: "GitHub 트리 & 핵심 파일 수집",
+  synthesize_sections: "6개 포트폴리오 섹션 구조화",
 };
 
 export default function StepIndicator({ steps }) {
