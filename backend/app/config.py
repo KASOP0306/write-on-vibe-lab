@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     aws_profile: str | None = None
 
     bedrock_fast_model_id: str = "amazon.nova-lite-v1:0"
-    bedrock_smart_model_id: str = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-    bedrock_embed_model_id: str = "cohere.embed-multilingual-v3"
+    bedrock_smart_model_id: str = "amazon.nova-pro-v1:0"
+    bedrock_embed_model_id: str = "amazon.titan-embed-text-v2:0"
     embedding_dim: int = 1024
 
 
