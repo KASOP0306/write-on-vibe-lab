@@ -1,32 +1,35 @@
 import { useEffect, useState } from "react";
 import { api } from "./api/client.js";
 import Sidebar from "./components/Sidebar.jsx";
+import IdentityBeliefsPage from "./pages/IdentityBeliefsPage.jsx";
 import IdentityPortfolioPage from "./pages/IdentityPortfolioPage.jsx";
 import ExperienceMinerPage from "./pages/ExperienceMinerPage.jsx";
 import CompanyInterestPage from "./pages/CompanyInterestPage.jsx";
 import CoverLetterStudioPage from "./pages/CoverLetterStudioPage.jsx";
-import CopilotRetroPage from "./pages/CopilotRetroPage.jsx";
+import ProjectCopilotPage from "./pages/ProjectCopilotPage.jsx";
+import ApplicationRetroPage from "./pages/ApplicationRetroPage.jsx";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("identity");
+  const [activeTab, setActiveTab] = useState("beliefs");
   const [profile, setProfile] = useState(null);
   const [projects, setProjects] = useState([]);
   const [experiences, setExperiences] = useState([]);
-  const [interests, setInterests] = useState([]);
+  const [beliefNotes, setBeliefNotes] = useState([]);
+  const [copilotPrefill, setCopilotPrefill] = useState("");
   const [globalError, setGlobalError] = useState("");
 
   const refreshSharedData = async () => {
     try {
-      const [prof, projs, exps, ints] = await Promise.all([
+      const [prof, projs, exps, notes] = await Promise.all([
         api.getProfile(),
         api.listProjects(),
         api.listExperiences(),
-        api.listInterests(),
+        api.listBeliefNotes().catch(() => []),
       ]);
       setProfile(prof);
       setProjects(projs || []);
       setExperiences(exps || []);
-      setInterests(ints || []);
+      setBeliefNotes(notes || []);
       setGlobalError("");
     } catch (err) {
       setGlobalError(`백엔드 연결 확인 필요: ${err.message}`);
@@ -37,23 +40,14 @@ export default function App() {
     refreshSharedData();
   }, []);
 
-  const handleAddInterest = async (keyword, source = "manual") => {
-    try {
-      await api.createInterest(keyword, source);
-      const ints = await api.listInterests();
-      setInterests(ints || []);
-    } catch (err) {
-      alert(err.message);
-    }
+  const handleJumpToCopilot = (topic) => {
+    setCopilotPrefill(topic || "");
+    setActiveTab("copilot");
   };
 
-  const handleDeleteInterest = async (id) => {
-    try {
-      await api.deleteInterest(id);
-      setInterests((prev) => prev.filter((item) => item.id !== id));
-    } catch (err) {
-      alert(err.message);
-    }
+  const handleBlueprintCreated = async () => {
+    await refreshSharedData();
+    setActiveTab("portfolio");
   };
 
   return (
@@ -64,9 +58,7 @@ export default function App() {
         profile={profile}
         projectCount={projects.length}
         experienceCount={experiences.length}
-        interests={interests}
-        onAddInterest={handleAddInterest}
-        onDeleteInterest={handleDeleteInterest}
+        beliefNoteCount={beliefNotes.length}
       />
 
       <main className="flex-1 min-w-0 p-6 lg:p-8 max-w-6xl mx-auto w-full">
@@ -83,7 +75,14 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === "identity" && (
+        {activeTab === "beliefs" && (
+          <IdentityBeliefsPage
+            profile={profile}
+            notes={beliefNotes}
+            onRefresh={refreshSharedData}
+          />
+        )}
+        {activeTab === "portfolio" && (
           <IdentityPortfolioPage
             profile={profile}
             projects={projects}
@@ -98,17 +97,19 @@ export default function App() {
           />
         )}
         {activeTab === "company" && (
-          <CompanyInterestPage
-            interests={interests}
-            onRefresh={refreshSharedData}
-          />
+          <CompanyInterestPage onRefresh={refreshSharedData} />
         )}
         {activeTab === "cover-letter" && <CoverLetterStudioPage />}
         {activeTab === "copilot" && (
-          <CopilotRetroPage
+          <ProjectCopilotPage
             projects={projects}
-            onAddInterest={handleAddInterest}
+            initialTopic={copilotPrefill}
+            onConsumeInitialTopic={() => setCopilotPrefill("")}
+            onProjectCreated={handleBlueprintCreated}
           />
+        )}
+        {activeTab === "retro" && (
+          <ApplicationRetroPage onJumpToCopilot={handleJumpToCopilot} />
         )}
       </main>
     </div>

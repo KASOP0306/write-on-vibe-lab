@@ -64,6 +64,31 @@ class UserInterest(Base):
     )
 
 
+class BeliefNote(Base):
+    """책·강의 구절, 아티클, 일상 생각·회고를 축적하는 신념 저널 테이블."""
+
+    __tablename__ = "belief_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_type: Mapped[str] = mapped_column(
+        String(40), default="thought", nullable=False, index=True
+    )  # book | lecture | article | thought
+    source_title: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    quote_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    my_reflection: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    ai_reflection: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 

@@ -114,15 +114,36 @@ class CoverLetterGenerateRequest(BaseModel):
     )
 
 
-# --- 워크플로우 ④: 프로젝트 코파일럿 & 취준 회고 ---
+# --- 워크플로우 ④: 새 프로젝트 코파일럿 & 지원·취준 회고 ---
+class NewProjectBlueprintsRequest(BaseModel):
+    company_profile_id: int | None = Field(
+        default=None, description="연결할 리서치 목표 기업 ID (선택)"
+    )
+    focus_weakness: str = Field(
+        default="", description="집중 보완하고 싶은 캐릭터 약점/외적 축 (선택)"
+    )
+    topic_hint: str = Field(
+        default="", description="관심 주제나 아이디어 힌트 (선택)"
+    )
+    use_web_search: bool = Field(
+        default=True, description="최신 실무 사례·트렌드 웹 검색 포함 여부"
+    )
+
+
 class CopilotChatMessage(BaseModel):
     role: str = Field(..., pattern="^(user|assistant)$")
     content: str
 
 
 class CopilotChatRequest(BaseModel):
-    message: str = Field(..., min_length=2, description="코파일럿 질문")
-    project_id: int | None = Field(default=None, description="특정 프로젝트 컨텍스트 (선택)")
+    message: str = Field(..., min_length=2, description="새 프로젝트 코파일럿 질문")
+    project_id: int | None = Field(default=None, description="참고할 기존 프로젝트 ID (선택)")
+    company_profile_id: int | None = Field(
+        default=None, description="연결할 리서치 목표 기업 ID (선택)"
+    )
+    focus_weakness: str = Field(
+        default="", description="보완하고 싶은 포트폴리오 캐릭터 약점 (선택)"
+    )
     chat_history: list[CopilotChatMessage] = Field(default_factory=list)
 
 

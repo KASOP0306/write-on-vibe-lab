@@ -90,18 +90,32 @@ export async function streamSSE(path, body, onEvent) {
 }
 
 export const api = {
-  // Profile & Interests
+  // Profile & Belief Notes (Quotes / Lectures / Thoughts)
   getProfile: () => apiRequest("/api/profile"),
   updateProfile: (data) =>
     apiRequest("/api/profile", { method: "PUT", body: JSON.stringify(data) }),
-  listInterests: () => apiRequest("/api/interests"),
-  createInterest: (keyword, source = "manual") =>
-    apiRequest("/api/interests", {
+  listBeliefNotes: (sourceType = null) =>
+    apiRequest(
+      sourceType
+        ? `/api/beliefs/notes?source_type=${encodeURIComponent(sourceType)}`
+        : "/api/beliefs/notes"
+    ),
+  createBeliefNote: (data) =>
+    apiRequest("/api/beliefs/notes", {
       method: "POST",
-      body: JSON.stringify({ keyword, source }),
+      body: JSON.stringify(data),
     }),
-  deleteInterest: (id) =>
-    apiRequest(`/api/interests/${id}`, { method: "DELETE" }),
+  updateBeliefNote: (id, data) =>
+    apiRequest(`/api/beliefs/notes/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteBeliefNote: (id) =>
+    apiRequest(`/api/beliefs/notes/${id}`, { method: "DELETE" }),
+  reflectBeliefNote: (id) =>
+    apiRequest(`/api/beliefs/notes/${id}/reflect`, { method: "POST" }),
+  synthesizeIdentityFromNotes: () =>
+    apiRequest("/api/beliefs/synthesize-identity", { method: "POST" }),
 
   // Projects, Modular Sections, Documents, Rubrics, STAR Onboarding & Diagnosis
   getProjectTemplates: () => apiRequest("/api/projects/templates"),
@@ -259,6 +273,11 @@ export const api = {
     }),
   generateCoverLetter: (body, onEvent) =>
     streamSSE("/api/agents/cover-letter/generate", body, onEvent),
+  proposeNewProjects: (body) =>
+    apiRequest("/api/agents/copilot/propose-projects", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   copilotChat: (body, onEvent) =>
     streamSSE("/api/agents/copilot/chat", body, onEvent),
   retrospectApplication: (body, onEvent) =>

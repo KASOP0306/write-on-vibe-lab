@@ -28,7 +28,11 @@ from app.core.database import (
 )
 from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
-from app.graphs.copilot_graph import build_copilot_chat_graph, build_retrospect_graph
+from app.graphs.copilot_graph import (
+    build_copilot_chat_graph,
+    build_retrospect_graph,
+    propose_new_project_blueprints,
+)
 from app.graphs.cover_letter_graph import (
     build_cover_letter_graph,
     recommend_cover_letter_materials,
@@ -47,6 +51,7 @@ from app.schemas.agents import (
     InterestSearchRequest,
     InterviewReplyRequest,
     InterviewStartRequest,
+    NewProjectBlueprintsRequest,
 )
 from app.schemas.projects import ExperienceSummary
 from app.tools.web_search import search_interest_sources
@@ -627,8 +632,28 @@ async def delete_experience(
 
 
 # ==============================================================================
-# 워크플로우 ④: 프로젝트 코파일럿 (Corrective RAG) & 취준 회고 (SSE + REST)
+# 워크플로우 ④: 새 프로젝트 코파일럿 (캐릭터 약점 보완 + 기업 리서치 + 웹 검색) & 회고
 # ==============================================================================
+@router.post("/agents/copilot/propose-projects")
+async def propose_copilot_projects(
+    payload: NewProjectBlueprintsRequest,
+) -> dict[str, Any]:
+    """포트폴리오 캐릭터 약점 + 기업 리서치 + 실시간 웹 검색으로 보완형 새 프로젝트 청사진 2~3개를 추천한다."""
+    try:
+        return await propose_new_project_blueprints(
+            company_profile_id=payload.company_profile_id,
+            focus_weakness=payload.focus_weakness.strip(),
+            topic_hint=payload.topic_hint.strip(),
+            use_web_search=payload.use_web_search,
+        )
+    except Exception as exc:
+        logger.exception("New project blueprint proposal failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"새 프로젝트 청사진 추천 중 오류가 발생했습니다: {exc}",
+        )
+
+
 @router.post("/agents/copilot/chat")
 async def copilot_chat(payload: CopilotChatRequest):
     async def event_stream():
@@ -637,13 +662,15 @@ async def copilot_chat(payload: CopilotChatRequest):
             initial_state = {
                 "message": payload.message.strip(),
                 "project_id": payload.project_id,
+                "company_profile_id": payload.company_profile_id,
+                "focus_weakness": payload.focus_weakness.strip(),
                 "chat_history": [m.model_dump() for m in payload.chat_history],
             }
             accumulated: dict[str, Any] = dict(initial_state)
 
             yield sse_node_start(
                 "copilot_retriever",
-                "과거 프로젝트 경험과 저장된 관심 기술 클립을 검색하는 중...",
+                "포트폴리오 캐릭터 약점·리서치한 기업 동향·신념·보유 경험을 불러오는 중...",
             )
 
             async for chunk in graph.astream(initial_state, stream_mode="updates"):
@@ -655,12 +682,11 @@ async def copilot_chat(payload: CopilotChatRequest):
                             "copilot_retriever",
                             {
                                 "experience_count": len(update.get("experience_docs") or []),
-                                "interest_count": len(update.get("interest_docs") or []),
                             },
                         )
                         yield sse_node_start(
                             "relevance_grader",
-                            "내부 자료만으로 답변이 충분한지 평가하는 중...",
+                            "최신 외부 사례·레퍼런스 웹 검색이 필요한지 판단하는 중...",
                         )
                     elif node_name == "relevance_grader":
                         is_suff = bool(update.get("is_sufficient"))
@@ -675,12 +701,12 @@ async def copilot_chat(payload: CopilotChatRequest):
                         if not is_suff:
                             yield sse_node_start(
                                 "web_search_fallback",
-                                f"최신 외부 자료를 보강 검색하는 중: '{update.get('rewritten_query', '')}'",
+                                f"최신 웹 사례·레퍼런스를 검색하는 중: '{update.get('rewritten_query', '')}'",
                             )
                         else:
                             yield sse_node_start(
                                 "copilot_answer",
-                                "과거 경험과 관심 지식을 바탕으로 조언을 정리하는 중...",
+                                "포트폴리오 캐릭터와 기업 리서치를 바탕으로 새 프로젝트 가이드를 작성하는 중...",
                             )
                     elif node_name == "web_search_fallback":
                         yield sse_node_end(
@@ -689,7 +715,7 @@ async def copilot_chat(payload: CopilotChatRequest):
                         )
                         yield sse_node_start(
                             "copilot_answer",
-                            "내부 경험과 웹 검색 결과를 결합해 답변을 작성하는 중...",
+                            "캐릭터 약점·기업 리서치·웹 검색 결과를 결합해 실행 가이드를 정리하는 중...",
                         )
                     elif node_name == "copilot_answer":
                         yield sse_node_end(
@@ -709,7 +735,7 @@ async def copilot_chat(payload: CopilotChatRequest):
             )
         except Exception as exc:
             logger.exception("Copilot chat SSE failed: %s", exc)
-            yield sse_error(f"프로젝트 코파일럿 실행 중 오류가 발생했습니다: {exc}")
+            yield sse_error(f"새 프로젝트 코파일럿 실행 중 오류가 발생했습니다: {exc}")
 
     return create_sse_response(event_stream())
 
@@ -764,24 +790,17 @@ async def retrospect_application(payload: ApplicationRetrospectRequest):
                     accumulated.update(update)
 
                     if node_name == "load_retro_context":
-                        yield sse_node_end(
-                            "load_retro_context",
-                            {
-                                "existing_interests_count": len(
-                                    update.get("existing_interests") or []
-                                )
-                            },
-                        )
+                        yield sse_node_end("load_retro_context", {})
                         yield sse_node_start(
                             "analyze_gap_and_plan",
-                            "포트폴리오 대비 격차(Gap)를 진단하고 단기/중기 보완 플랜을 수립하는 중...",
+                            "포트폴리오 캐릭터·경험 대비 격차(Gap)를 진단하고 보완 플랜을 수립하는 중...",
                         )
                     elif node_name == "analyze_gap_and_plan":
                         yield sse_node_end(
                             "analyze_gap_and_plan",
                             {
-                                "suggested_interests": update.get(
-                                    "suggested_interests", []
+                                "recommended_copilot_topic": update.get(
+                                    "recommended_copilot_topic", ""
                                 ),
                             },
                         )
@@ -802,7 +821,9 @@ async def retrospect_application(payload: ApplicationRetrospectRequest):
                     "action_plan": accumulated.get("action_plan", ""),
                     "short_term_plan": accumulated.get("short_term_plan", []),
                     "mid_term_plan": accumulated.get("mid_term_plan", []),
-                    "suggested_interests": accumulated.get("suggested_interests", []),
+                    "recommended_copilot_topic": accumulated.get(
+                        "recommended_copilot_topic", ""
+                    ),
                 }
             )
         except Exception as exc:

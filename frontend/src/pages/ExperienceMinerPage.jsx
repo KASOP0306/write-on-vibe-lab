@@ -168,9 +168,9 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
     <div className="space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">2. 경험 채굴 (Active Interviewer)</h2>
+          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (STAR)</h2>
           <p className="text-sm text-slate-600 mt-1">
-            거친 메모를 입력하면 STAR 빈틈을 탐지해 역질문으로 정량 지표와 트러블슈팅 근거를 끌어냅니다.
+            거친 메모를 입력하면 5축 STAR-L BARS 기준으로 빈틈을 탐지해 역질문으로 정량 지표와 의사결정 근거를 끌어냅니다.
           </p>
         </div>
         {(threadId || savedResult) && (

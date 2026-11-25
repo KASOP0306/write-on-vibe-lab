@@ -250,27 +250,29 @@ sequenceDiagram
 | **STAR & Persona** | `POST /api/projects/{id}/star-onboarding/*`, `/{id}/evaluate-stars`, `GET/POST /api/projects/portfolio-diagnosis` | REST | 선택형 STAR 보강 역질문, 5축 STAR-L BARS 채점, 6축 포트폴리오 캐릭터(내적 3 × 외적 3, 강점·약점 50:50) 진단 |
 | **AI Prune** | `POST /api/projects/{id}/prune`, `/prune/apply` | REST | 프로젝트 트랙별 심사 기준 기반 중복·미사여구·불필요 내용 탐지 및 압축/삭제 |
 | **Recap / Export** | `GET /api/projects/{id}/export-markdown`, `POST /api/projects/{id}/recap` | REST | 모듈 섹션 기반 즉시 Markdown 내보내기 및 AI 리캡 생성 |
+| **Beliefs Journal** | `GET / POST / PUT / DELETE /api/beliefs/notes`, `/notes/{id}/reflect`, `/synthesize-identity` | REST | 책·강의 구절 및 일상 생각 회고 저널 (`career_identity` 벡터 자동 동기화), AI 생각 심화 회고 및 신념·비전 정제 |
 | **Agent ①** | `POST /api/agents/interview/start`, `/reply` | SSE | 경험 채굴 역질문 시작·답변·강제저장(`force_save`, 5축 STAR-L 자동 채점 포함) |
-| **Agent ②** | `POST /api/agents/company/research` | SSE | 목표 기업 리서치 & 신념 3각 매칭 저장 |
-| **Interest Search** | `POST /api/agents/interests/search`, `/clip` | SSE / REST | 관심사 뉴스·기술 검색 및 선택 클립 벡터 저장 |
+| **Agent ②** | `POST /api/agents/company/research` | SSE | 목표 기업 4관점 멀티소스 리서치 & 신념 3각 매칭 저장 |
 | **Agent ③** | `POST /api/agents/cover-letter/recommend`, `/generate` | REST / SSE | 기업 문항 심층 해부 & 프로젝트·STAR 추천(1단계) → 선택 소재 × 기업·내 신념 3축 융합 작성·비평·퇴고·De-AI(2단계) |
-| **Agent ④** | `POST /api/agents/copilot/chat` | SSE | 과거 경험 + 관심사 + Corrective RAG 조언 채팅 |
-| **Retrospect** | `POST /api/agents/applications/retrospect` | SSE | 취준 결과 저장 + Gap 분석 + 보완 액션 플랜 도출 |
+| **Agent ④ (Copilot)** | `POST /api/agents/copilot/propose-projects`, `/chat` | REST / SSE | 포트폴리오 캐릭터 약점 + 기업 리서치 + 실시간 웹 검색 기반 **새 프로젝트 청사진 추천 & 설계 채팅** |
+| **Retrospect** | `POST /api/agents/applications/retrospect` | SSE | 지원 결과 저장 + 캐릭터 대비 Gap 분석 + 코파일럿 연계 보완 플랜 도출 |
 
 ---
 
 ## 6. 프론트엔드 아키텍처 (`frontend/`)
 
-- **레이아웃:** 좌측 고정 사이드바(`Sidebar`: 나의 신념 요약, 프로젝트/경험 카운트, 관심사 태그) + 우측 5개 기능 뷰 전환 구조.
+- **레이아웃:** 좌측 고정 사이드바(`Sidebar`: 나의 신념 요약, 생각 노트·프로젝트·STAR 카운트) + 우측 **7개 독립 기능 뷰** 전환 구조.
 - **상태 관리:** 전역 스토어 없이 React `useState` / `useEffect` + [client.js](./frontend/src/api/client.js)의 `apiRequest()` / `streamSSE()` 조합으로 경량 유지.
 
 | 화면 컴포넌트 | 역할 | 주요 연동 |
 | :--- | :--- | :--- |
-| `IdentityPortfolioPage.jsx` | 신념·비전·문체 편집, 프로젝트 카드, 포트폴리오 리캡 모달 | REST CRUD + Recap API |
-| `ExperienceMinerPage.jsx` | 메모 입력, STAR 완성도 게이지(`StarMeter`), 역질문 채팅, `[이 상태로 저장하기]` | SSE + `thread_id` 재개 |
-| `CompanyInterestPage.jsx` | 기업 리서치·3각 매칭 카드(상단) + 관심 키워드 검색·클립 저장(하단) | SSE + REST |
-| `CoverLetterStudioPage.jsx` | 기업·문항 입력, 실시간 단계 표시기(`StepIndicator`), 최종본·De-AI 변경 리포트 | SSE |
-| `CopilotRetroPage.jsx` | 프로젝트 Q&A 코파일럿 채팅 + 취준 결과 회고·보완 플랜·관심사 원클릭 추가 | SSE + REST |
+| `IdentityBeliefsPage.jsx` | 1. 나의 신념·비전·문체 편집, 책·강의 구절·일상 생각 회고 저널, AI 생각 심화 회고 & 신념 정제 | `/api/profile`, `/api/beliefs/*` |
+| `IdentityPortfolioPage.jsx` | 2. 6축 포트폴리오 캐릭터 진단 대시보드(내적3×외적3, 강점50:약점50) + 멀티트랙 프로젝트 허브 & 워크스페이스 | `/api/projects/*` |
+| `ExperienceMinerPage.jsx` | 3. 메모 입력, 5축 STAR-L 게이지(`StarMeter`), 역질문 채팅, `[이 상태로 저장하기]` | SSE + `thread_id` 재개 |
+| `CompanyInterestPage.jsx` | 4. 목표 기업 4관점 멀티소스 리서치 & 신념×포트폴리오 3각 매칭 | SSE + REST |
+| `CoverLetterStudioPage.jsx` | 5. 자소서 공방 v2: 문항 심층 해부 → 프로젝트·STAR 추천·선택 → 3축 융합 작성 & De-AI | REST + SSE |
+| `ProjectCopilotPage.jsx` | 6. 새 프로젝트 코파일럿: 캐릭터 약점 + 기업 리서치 + 웹 검색 기반 청사진 추천 & 설계 채팅 | REST + SSE |
+| `ApplicationRetroPage.jsx` | 7. 지원 & 취준 회고: 지원 현황 통계, Gap 분석, 새 프로젝트 코파일럿 연계 | SSE + REST |
 
 ---
 

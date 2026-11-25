@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
 import {
-  BookmarkPlus,
   Building2,
-  Check,
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  Globe,
   Link2,
-  Search,
   Trash2,
 } from "lucide-react";
 import { api } from "../api/client.js";
@@ -23,8 +19,7 @@ const SOURCE_BADGES = {
   web: { label: "Web", cls: "bg-slate-100 text-slate-700" },
 };
 
-export default function CompanyInterestPage({ interests }) {
-  // Top section: Company Research
+export default function CompanyInterestPage() {
   const [companyName, setCompanyName] = useState("");
   const [targetRole, setTargetRole] = useState("");
   const [showAdvancedInput, setShowAdvancedInput] = useState(false);
@@ -35,24 +30,10 @@ export default function CompanyInterestPage({ interests }) {
   const [latestCompany, setLatestCompany] = useState(null);
   const [companies, setCompanies] = useState([]);
 
-  // Bottom section: Interest Web Search & Clip
-  const [searchKeyword, setSearchKeyword] = useState("");
-  const [searchScope, setSearchScope] = useState("ko");
-  const [searchRecency, setSearchRecency] = useState("recent");
-  const [interestSteps, setInterestSteps] = useState([]);
-  const [interestRunning, setInterestRunning] = useState(false);
-  const [clipCandidates, setClipCandidates] = useState([]);
-  const [savedUrls, setSavedUrls] = useState(new Set());
-  const [savedClips, setSavedClips] = useState([]);
-
   const loadData = async () => {
     try {
-      const [comps, clips] = await Promise.all([
-        api.listCompanies(),
-        api.listInterestClips(),
-      ]);
+      const comps = await api.listCompanies();
       setCompanies(comps || []);
-      setSavedClips(clips || []);
     } catch (err) {
       console.warn(err);
     }
@@ -150,55 +131,6 @@ export default function CompanyInterestPage({ interests }) {
     }
   };
 
-  const handleSearchInterests = async (e) => {
-    e.preventDefault();
-    const kw = searchKeyword.trim();
-    if (!kw || interestRunning) return;
-    setInterestRunning(true);
-    setInterestSteps([]);
-    setClipCandidates([]);
-
-    try {
-      await api.searchInterests(
-        {
-          keyword: kw,
-          scope: searchScope,
-          recency: searchRecency,
-          max_results: 6,
-        },
-        (ev) => {
-          updateStepList(setInterestSteps, ev);
-          if (ev.event === "done") {
-            setClipCandidates(ev.data?.clips || []);
-          }
-        }
-      );
-    } catch (err) {
-      setInterestSteps((prev) => [
-        ...prev,
-        { node: "error", status: "error", message: err.message },
-      ]);
-    } finally {
-      setInterestRunning(false);
-    }
-  };
-
-  const handleSaveClip = async (clip) => {
-    try {
-      await api.saveInterestClip({
-        keyword: searchKeyword.trim() || "관심 분야",
-        title: clip.title,
-        url: clip.url,
-        summary: clip.summary,
-        key_takeaways: clip.key_takeaways || [],
-      });
-      setSavedUrls((prev) => new Set([...prev, clip.url || clip.title]));
-      await loadData();
-    } catch (err) {
-      alert(`클립 저장 실패: ${err.message}`);
-    }
-  };
-
   const activeCompany = latestCompany || companies[0] || null;
   const alignmentMap = activeCompany?.value_alignment_map || {};
   const triangularMatches = alignmentMap.triangular_matches || [];
@@ -206,11 +138,11 @@ export default function CompanyInterestPage({ interests }) {
   const researchSources = alignmentMap.sources || [];
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">3. 기업 &amp; 관심사</h2>
+        <h2 className="text-2xl font-bold text-slate-900">4. 기업 리서치</h2>
         <p className="text-sm text-slate-600 mt-1">
-          4관점 멀티소스 리서치(웹·Google News RSS·채용공고 JD·참고 URL)로 기업을 분석해 나의 신념·프로젝트와 3각 매칭하고, 관심 기술 지식을 선별 저장합니다.
+          4관점 멀티소스 리서치(웹·Google News RSS·채용공고 JD·참고 URL)로 목표 기업을 심층 분석해 나의 신념·포트폴리오와 3각 매칭합니다. 리서치 결과는 자소서 공방과 새 프로젝트 코파일럿에 자동 연동됩니다.
         </p>
       </div>
 
@@ -475,215 +407,6 @@ export default function CompanyInterestPage({ interests }) {
                 </div>
               </div>
             )}
-          </div>
-        )}
-      </section>
-
-      {/* Section 2: Interest Research & Clip Saving */}
-      <section className="space-y-4 pt-6 border-t border-slate-200">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Search className="w-4 h-4" />
-            <span>관심 분야 트렌드 검색 &amp; 선별 클립 저장</span>
-          </h3>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
-              {[
-                { id: "ko", label: "한국어 뉴스·블로그" },
-                { id: "global", label: "글로벌 기술 (HN·GitHub)" },
-                { id: "all", label: "통합" },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setSearchScope(opt.id)}
-                  className={`rounded-md px-2.5 py-1 font-medium ${
-                    searchScope === opt.id
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
-              {[
-                { id: "recent", label: "최신 우선" },
-                { id: "all", label: "전체 기간" },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setSearchRecency(opt.id)}
-                  className={`rounded-md px-2.5 py-1 font-medium ${
-                    searchRecency === opt.id
-                      ? "bg-indigo-600 text-white"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {interests.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {interests.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSearchKeyword(item.keyword)}
-                className="rounded-full bg-white border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100"
-              >
-                #{item.keyword}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={handleSearchInterests} className="flex gap-2">
-          <input
-            type="text"
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder="검색할 기술/도메인 키워드 입력 (예: Corrective RAG, Apache Iceberg, LangGraph)"
-            className="flex-1 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={interestRunning || !searchKeyword.trim()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            <Globe className="w-4 h-4" />
-            <span>{interestRunning ? "멀티소스 수집·요약 중..." : "최신 자료 검색"}</span>
-          </button>
-        </form>
-
-        <StepIndicator steps={interestSteps} />
-
-        {clipCandidates.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {clipCandidates.map((clip, idx) => {
-              const key = clip.url || clip.title;
-              const isSaved = savedUrls.has(key);
-              const badge =
-                SOURCE_BADGES[clip.source_type] || SOURCE_BADGES.web;
-              return (
-                <div
-                  key={idx}
-                  className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between gap-3 shadow-sm"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className={`rounded px-1.5 py-0.5 font-semibold ${badge.cls}`}
-                        >
-                          {badge.label}
-                        </span>
-                        {clip.domain && (
-                          <span className="text-slate-500 truncate">
-                            {clip.domain}
-                          </span>
-                        )}
-                        {clip.published_at && (
-                          <span className="text-slate-400">
-                            · {clip.published_at}
-                          </span>
-                        )}
-                      </div>
-                      {clip.url && (
-                        <a
-                          href={clip.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-slate-400 hover:text-blue-600 shrink-0"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      )}
-                    </div>
-
-                    <h4 className="text-sm font-bold text-slate-900">
-                      {clip.title}
-                    </h4>
-                    <p className="text-xs text-slate-700 leading-relaxed">
-                      {clip.summary}
-                    </p>
-                    {(clip.key_takeaways || []).length > 0 && (
-                      <ul className="list-disc pl-4 text-xs text-slate-600 space-y-0.5">
-                        {clip.key_takeaways.map((t, tIdx) => (
-                          <li key={tIdx}>{t}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={isSaved}
-                    onClick={() => handleSaveClip(clip)}
-                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ${
-                      isSaved
-                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        : "bg-slate-900 text-white hover:bg-slate-800"
-                    }`}
-                  >
-                    {isSaved ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>벡터 DB에 저장됨</span>
-                      </>
-                    ) : (
-                      <>
-                        <BookmarkPlus className="w-3.5 h-3.5" />
-                        <span>선별 클립으로 저장</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Saved Clips List */}
-        {savedClips.length > 0 && (
-          <div className="space-y-2 pt-2">
-            <div className="text-xs font-semibold text-slate-600">
-              저장된 지식 클립 ({savedClips.length})
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {savedClips.map((clip) => (
-                <div
-                  key={clip.ref_id}
-                  className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-1 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                      #{clip.keyword}
-                    </span>
-                    {clip.url && (
-                      <a
-                        href={clip.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 hover:underline inline-flex items-center gap-0.5"
-                      >
-                        원문 <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                  <div className="font-bold text-slate-900">{clip.title}</div>
-                  <p className="text-slate-600 line-clamp-2">{clip.summary}</p>
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </section>

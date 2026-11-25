@@ -1,4 +1,6 @@
-"""워크플로우 ④: 프로젝트 코파일럿(Corrective RAG) & 취준 결과 회고 플래너."""
+"""워크플로우 ④: 새 프로젝트 코파일럿 (캐릭터 약점 보완 + 기업 리서치 + 웹 검색) & 지원·취준 회고."""
+
+from __future__ import annotations
 
 import logging
 from typing import Any, TypedDict
@@ -11,29 +13,320 @@ from sqlalchemy import select
 from app.core.bedrock import ainvoke_structured, get_fast_llm, get_smart_llm
 from app.core.database import (
     ApplicationLog,
+    BeliefNote,
+    CompanyProfile,
     Experience,
     Project,
-    UserInterest,
     UserProfile,
     get_session_factory,
 )
+from app.core.project_templates import normalize_project_types
+from app.core.star_rubric import PORTFOLIO_AXES, PORTFOLIO_AXIS_ORDER
 from app.core.vector_store import DocType, search_documents
 from app.tools.web_search import search_and_extract
 
 logger = logging.getLogger(__name__)
 
 
+def _format_character_diagnosis(diag: dict[str, Any] | None) -> str:
+    if not diag or not diag.get("character_archetype"):
+        return "(아직 포트폴리오 캐릭터 진단 미실행 — 보유 프로젝트와 신념을 바탕으로 보완점을 추론)"
+
+    axes = diag.get("axes") or {}
+    axis_lines = []
+    for ax_id in PORTFOLIO_AXIS_ORDER:
+        meta = PORTFOLIO_AXES[ax_id]
+        entry = axes.get(ax_id) or {}
+        axis_lines.append(
+            f"  - {meta['label']} ({'외적' if meta['domain']=='external' else '내적'}): "
+            f"{entry.get('score', 0)}점 [{entry.get('evidence_status', 'unknown')}] — {entry.get('improvement_tip', '')}"
+        )
+
+    weak_lines = [
+        f"  - [약점] {w.get('title', '')}: {w.get('detail', '')}"
+        for w in (diag.get("weaknesses") or [])
+    ]
+    strength_lines = [
+        f"  - [강점] {s.get('title', '')}: {s.get('detail', '')}"
+        for s in (diag.get("strengths") or [])
+    ]
+    growth_lines = [
+        f"  - [성장 액션] {g.get('target_weakness', '')} → {g.get('action', '')}"
+        for g in (diag.get("growth_actions") or [])
+    ]
+
+    return (
+        f"캐릭터 아키타입: {diag.get('character_archetype')} ({diag.get('one_line_identity', '')})\n"
+        f"종합 {diag.get('overall_score', 0)}점 (내적 {diag.get('internal_score', 0)} / 외적 {diag.get('external_score', 0)})\n"
+        f"[6축 상태]\n" + "\n".join(axis_lines) + "\n"
+        f"[핵심 강점]\n" + ("\n".join(strength_lines) or "  (없음)") + "\n"
+        f"[핵심 약점 · 사각지대]\n" + ("\n".join(weak_lines) or "  (없음)") + "\n"
+        f"[우선 성장 액션]\n" + ("\n".join(growth_lines) or "  (없음)")
+    )
+
+
+async def _load_copilot_rich_context(
+    *,
+    company_profile_id: int | None = None,
+    project_id: int | None = None,
+) -> dict[str, Any]:
+    """포트폴리오 캐릭터 진단 + 신념/생각 노트 + 기업 리서치 + 기존 프로젝트/STAR를 종합 로드한다."""
+    async with get_session_factory()() as session:
+        profile = await session.get(UserProfile, 1)
+        projects = (
+            (await session.execute(select(Project).order_by(Project.created_at.desc()).limit(10)))
+            .scalars()
+            .all()
+        )
+        belief_notes = (
+            (await session.execute(select(BeliefNote).order_by(BeliefNote.created_at.desc()).limit(6)))
+            .scalars()
+            .all()
+        )
+
+        company_profiles: list[CompanyProfile] = []
+        if company_profile_id:
+            chosen = await session.get(CompanyProfile, company_profile_id)
+            if chosen:
+                company_profiles.append(chosen)
+        if not company_profiles:
+            company_profiles = (
+                (
+                    await session.execute(
+                        select(CompanyProfile).order_by(CompanyProfile.created_at.desc()).limit(3)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        exp_stmt = select(Experience).order_by(Experience.completeness_score.desc()).limit(6)
+        if project_id:
+            exp_stmt = (
+                select(Experience)
+                .where(Experience.project_id == project_id)
+                .order_by(Experience.created_at.desc())
+                .limit(6)
+            )
+        experiences = (await session.execute(exp_stmt)).scalars().all()
+
+    profile_summary = (
+        f"커리어 비전: {profile.career_vision}\n"
+        f"핵심 신념: {profile.core_beliefs}\n"
+        f"희망 직무: {profile.target_roles}"
+        if profile
+        else "(미설정)"
+    )
+    character_context = _format_character_diagnosis(
+        profile.portfolio_diagnosis if profile else None
+    )
+    belief_notes_context = (
+        "\n".join(
+            f"- [{n.source_type}] {n.source_title or '생각'}: {(n.quote_text or '')[:120]} / 생각: {n.my_reflection[:180]}"
+            for n in belief_notes
+        )
+        or "(등록된 생각 노트 없음)"
+    )
+    company_context = (
+        "\n\n".join(
+            f"### {c.company_name} ({c.target_role or '직무 미지정'})\n"
+            f"- 미션/비전: {c.mission_vision}\n"
+            f"- 핵심가치: {c.core_values}\n"
+            f"- 최근 동향: {c.recent_trends}"
+            for c in company_profiles
+        )
+        or "(저장된 기업 리서치 없음)"
+    )
+    existing_projects_context = (
+        "\n".join(
+            f"- {p.name} ({', '.join(normalize_project_types(p.project_types))}) | 역할: {p.role} | 스택: {', '.join(p.tech_stack or [])} | 요약: {p.summary}"
+            for p in projects
+        )
+        or "(등록된 프로젝트 없음)"
+    )
+    exp_docs = [
+        f"[경험] {e.title} ({e.completeness_score}점)\nAction: {e.action}\nResult: {e.result}\n지표: {e.quantified_metrics}"
+        for e in experiences
+    ]
+
+    return {
+        "profile_summary": profile_summary,
+        "character_context": character_context,
+        "belief_notes_context": belief_notes_context,
+        "company_context": company_context,
+        "existing_projects_context": existing_projects_context,
+        "experience_docs": exp_docs,
+        "target_roles": profile.target_roles if profile else "",
+        "company_names": [c.company_name for c in company_profiles],
+    }
+
+
 # ==============================================================================
-# 모드 A: 프로젝트 코파일럿 (Corrective RAG — 웹 검색 Fallback 최대 1회)
+# 모드 A-1: 포트폴리오 캐릭터 약점 보완형 '새 프로젝트 청사진' 원클릭 추천 (웹 검색 포함)
+# ==============================================================================
+class BlueprintQuerySchema(BaseModel):
+    queries: list[str] = Field(
+        default_factory=list,
+        description="최신 기술·오픈소스·실무 사례·벤치마크를 찾기 위한 웹 검색 쿼리 1~2개",
+    )
+
+
+class NewProjectBlueprintItem(BaseModel):
+    name: str = Field(description="새 프로젝트 제안 제목 (간결하고 임팩트 있게)")
+    tagline: str = Field(description="프로젝트 핵심 가치 한 줄 요약")
+    project_types: list[str] = Field(
+        default_factory=lambda: ["engineering"],
+        description="권장 멀티트랙 조합 ID (engineering / product_planning / data_research / operations_leadership / general 중 1~2개)",
+    )
+    target_weaknesses: list[str] = Field(
+        default_factory=list,
+        description="이 새 프로젝트가 정면으로 보완해 줄 캐릭터 약점·사각지대 (내적·외적 축 포함)",
+    )
+    company_alignment: str = Field(
+        description="리서치한 목표 기업(들)의 비전·최근 동향과 어떻게 맞물려 어필되는지 (2문장)"
+    )
+    problem_and_solution: str = Field(
+        description="해결할 구체적 문제와 차별화 솔루션 아이디어 (3~4문장)"
+    )
+    recommended_stack_and_tools: list[str] = Field(
+        default_factory=list,
+        description="추천 기술 스택·기획/분석/협업 도구 (최대 8개)",
+    )
+    execution_roadmap: list[str] = Field(
+        default_factory=list,
+        description="실제 진행 방법 4단계 로드맵 (예: '1주차: 문제 정의 & MVP 범위 절단 ...')",
+    )
+    evidence_plan: list[str] = Field(
+        default_factory=list,
+        description="이 프로젝트에서 반드시 남겨야 할 정량 지표·협업/일정 관리 증거 2~3가지",
+    )
+
+
+class NewProjectBlueprintsSchema(BaseModel):
+    character_focus_summary: str = Field(
+        description="현재 포트폴리오 캐릭터에서 왜 이런 새 프로젝트가 가장 효과적인지 2문장 전략 요약"
+    )
+    blueprints: list[NewProjectBlueprintItem] = Field(
+        default_factory=list,
+        description="서로 다른 각도의 보완형 새 프로젝트 청사진 2~3개",
+    )
+
+
+async def propose_new_project_blueprints(
+    *,
+    company_profile_id: int | None = None,
+    focus_weakness: str = "",
+    topic_hint: str = "",
+    use_web_search: bool = True,
+) -> dict[str, Any]:
+    """포트폴리오 캐릭터 약점 + 기업 리서치 + 실시간 웹 검색을 결합해 새 프로젝트 청사진 2~3개를 추천한다."""
+    ctx = await _load_copilot_rich_context(company_profile_id=company_profile_id)
+
+    web_sources: list[dict[str, Any]] = []
+    if use_web_search:
+        try:
+            q_llm = get_fast_llm(temperature=0.2, max_tokens=512)
+            q_res = await ainvoke_structured(
+                q_llm,
+                BlueprintQuerySchema,
+                [
+                    SystemMessage(
+                        content=(
+                            "지원자의 새 포트폴리오 프로젝트 기획에 참고할 최신 실무 사례, 오픈소스 아키텍처, "
+                            "또는 도메인 트렌드를 찾기 위한 간결한 웹 검색 쿼리 1~2개를 만드세요."
+                        )
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"희망 직무: {ctx['target_roles']}\n"
+                            f"목표 기업: {', '.join(ctx['company_names']) or '(미지정)'}\n"
+                            f"보완 약점 포커스: {focus_weakness or '(캐릭터 진단 약점 전반)'}\n"
+                            f"사용자 아이디어 힌트: {topic_hint or '(없음)'}\n"
+                            f"기업 동향 요약:\n{ctx['company_context'][:1500]}"
+                        )
+                    ),
+                ],
+                max_retries=1,
+            )
+            seen_urls: set[str] = set()
+            for q in (q_res.queries or [])[:2]:
+                hits = await search_and_extract(q, max_results=3, fetch_top_n=1)
+                for h in hits:
+                    u = h.get("url") or ""
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        web_sources.append(h)
+        except Exception as exc:
+            logger.warning("Blueprint web search skipped/failed: %s", exc)
+
+    web_dump = (
+        "\n\n".join(
+            f"- {s.get('title', '')} ({s.get('url', '')})\n  {(s.get('content') or s.get('snippet') or '')[:500]}"
+            for s in web_sources[:5]
+        )
+        or "(웹 검색 참고 자료 없음)"
+    )
+
+    system_prompt = (
+        "당신은 지원자의 **포트폴리오 캐릭터 진단(강점·약점·사각지대)**, **리서치한 목표 기업 동향**, "
+        "**지원자의 커리어 신념**, 그리고 **최신 웹 리서치 사례**를 결합해 "
+        "가장 전략적인 **새로운 프로젝트 청사진 2~3개**를 설계하는 커리어 프로덕트 아키텍트입니다.\n\n"
+        "핵심 설계 원칙:\n"
+        "1. 기존에 이미 한 프로젝트와 겹치는 식상한 토이 프로젝트는 배제하고, 캐릭터 진단에서 드러난 **약점·미검증 외적 축(시간/일정, 인적/협업, 정량 증거 등)**을 정면으로 증명할 수 있는 프로젝트를 제안하세요.\n"
+        "2. `project_types`는 `engineering`, `product_planning`, `data_research`, `operations_leadership`, `general` 중 가장 알맞은 1~2개 트랙 ID만 사용하세요.\n"
+        "3. `execution_roadmap`은 지원자가 오늘 바로 시작할 수 있도록 4단계(주차별) 구체적 실행 가이드를 제시하세요.\n"
+        "4. `evidence_plan`에는 프로젝트 완료 후 포트폴리오/자소서에 남길 구체적 정량 지표·협업/운영 증거 계획을 꼭 포함하세요."
+    )
+
+    user_prompt = (
+        f"[보완에 집중하고 싶은 약점/축] {focus_weakness or '(캐릭터 진단의 핵심 약점 3가지 우선 반영)'}\n"
+        f"[사용자가 떠올린 관심 주제 힌트] {topic_hint or '(자유 추천)'}\n\n"
+        f"=== 1. 나의 포트폴리오 캐릭터 진단 (강점·약점·6축) ===\n{ctx['character_context']}\n\n"
+        f"=== 2. 나의 커리어 신념 & 최근 생각 노트 ===\n{ctx['profile_summary']}\n{ctx['belief_notes_context']}\n\n"
+        f"=== 3. 리서치해둔 목표 기업 동향 ===\n{ctx['company_context'][:3000]}\n\n"
+        f"=== 4. 기존 보유 프로젝트 (중복 방지용) ===\n{ctx['existing_projects_context'][:2500]}\n\n"
+        f"=== 5. 최신 웹 검색 레퍼런스 ===\n{web_dump[:4000]}"
+    )
+
+    llm = get_smart_llm(temperature=0.35, max_tokens=5000)
+    res = await ainvoke_structured(
+        llm,
+        NewProjectBlueprintsSchema,
+        [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+        max_retries=2,
+    )
+
+    blueprints = []
+    for bp in res.blueprints[:3]:
+        d = bp.model_dump()
+        d["project_types"] = normalize_project_types(d.get("project_types"))
+        blueprints.append(d)
+
+    return {
+        "character_focus_summary": res.character_focus_summary.strip(),
+        "blueprints": blueprints,
+        "web_references": [
+            {
+                "title": s.get("title", ""),
+                "url": s.get("url", ""),
+                "snippet": (s.get("snippet") or s.get("content") or "")[:220],
+            }
+            for s in web_sources[:5]
+        ],
+    }
+
+
+# ==============================================================================
+# 모드 A-2: 새 프로젝트 설계 코파일럿 채팅 (Corrective RAG — 웹 검색 Fallback 최대 1회)
 # ==============================================================================
 class RelevanceGradeSchema(BaseModel):
     is_sufficient: bool = Field(
-        description="내부 검색 문서(experience + interest_clip)만으로 질문에 충분히 답할 수 있는지 여부"
+        description="내부 컨텍스트(캐릭터 진단·기업 리서치·보유 경험)만으로 새 프로젝트 진행 조언을 충분히 할 수 있는지 여부"
     )
     reason: str = Field(description="충분성 판단 근거 1문장")
     rewritten_query: str = Field(
         default="",
-        description="내부 근거가 부족할 때 웹 검색에 사용할 간결한 재작성 검색 쿼리",
+        description="최신 도구·레퍼런스·트렌드·사례 보강이 필요할 때 웹 검색에 사용할 간결한 검색 쿼리",
     )
 
 
@@ -41,9 +334,16 @@ class CopilotChatState(TypedDict, total=False):
     message: str
     chat_history: list[dict[str, str]]
     project_id: int | None
+    company_profile_id: int | None
+    focus_weakness: str
+
     experience_docs: list[str]
-    interest_docs: list[str]
+    character_context: str
+    company_context: str
+    belief_notes_context: str
+    existing_projects_context: str
     profile_summary: str
+
     is_sufficient: bool
     grade_reason: str
     rewritten_query: str
@@ -65,39 +365,24 @@ async def _safe_search(session, query: str, doc_type: DocType, top_k: int) -> li
 
 
 async def copilot_retriever(state: CopilotChatState) -> dict[str, Any]:
-    """과거 경험(experience)과 관심 분야 클립(interest_clip)을 분리 검색한다."""
+    """포트폴리오 캐릭터 + 기업 리서치 + 신념/생각 노트 + 보유 프로젝트/경험을 종합 로드한다."""
     query = state["message"]
+    rich = await _load_copilot_rich_context(
+        company_profile_id=state.get("company_profile_id"),
+        project_id=state.get("project_id"),
+    )
 
     async with get_session_factory()() as session:
-        exp_docs = await _safe_search(session, query, DocType.EXPERIENCE, top_k=4)
-        clip_docs = await _safe_search(session, query, DocType.INTEREST_CLIP, top_k=4)
-        profile = await session.get(UserProfile, 1)
+        rag_exp = await _safe_search(session, query, DocType.EXPERIENCE, top_k=4)
 
-        if not exp_docs:
-            stmt = select(Experience).order_by(Experience.created_at.desc()).limit(5)
-            if state.get("project_id"):
-                stmt = (
-                    select(Experience)
-                    .where(Experience.project_id == state["project_id"])
-                    .order_by(Experience.created_at.desc())
-                    .limit(5)
-                )
-            exps = (await session.execute(stmt)).scalars().all()
-            exp_docs = [
-                f"[경험] {e.title}\nAction: {e.action}\nResult: {e.result}\n지표: {e.quantified_metrics}"
-                for e in exps
-            ]
-
-        profile_summary = ""
-        if profile:
-            profile_summary = (
-                f"비전: {profile.career_vision} | 신념: {profile.core_beliefs} | 직무: {profile.target_roles}"
-            )
-
+    exp_docs = rag_exp or rich["experience_docs"]
     return {
         "experience_docs": exp_docs,
-        "interest_docs": clip_docs,
-        "profile_summary": profile_summary,
+        "character_context": rich["character_context"],
+        "company_context": rich["company_context"],
+        "belief_notes_context": rich["belief_notes_context"],
+        "existing_projects_context": rich["existing_projects_context"],
+        "profile_summary": rich["profile_summary"],
         "web_search_count": 0,
         "web_sources": [],
         "used_web_fallback": False,
@@ -105,25 +390,25 @@ async def copilot_retriever(state: CopilotChatState) -> dict[str, Any]:
 
 
 async def relevance_grader(state: CopilotChatState) -> dict[str, Any]:
-    """내부 RAG 자료의 충분성을 평가하고, 부족 시 웹 검색 쿼리를 재작성한다."""
-    llm = get_fast_llm(temperature=0.1)
-    exp_text = "\n---\n".join(state.get("experience_docs") or []) or "(없음)"
-    clip_text = "\n---\n".join(state.get("interest_docs") or []) or "(없음)"
+    """새 프로젝트 설계·진행 질문에 최신 외부 기술/사례 웹 검색이 필요한지 평가한다."""
+    llm = get_fast_llm(temperature=0.1, max_tokens=512)
 
     messages = [
         SystemMessage(
             content=(
-                "당신은 Corrective RAG의 관련성 평가기입니다.\n"
-                "사용자 질문에 답하기 위해 내부 자료(과거 프로젝트 경험 + 저장된 관심 기술 클립)가 충분한지 판단하세요.\n"
-                "최신 라이브러리/트렌드/외부 사례가 필요하거나 내부 자료가 부족하면 is_sufficient=false로 설정하고 "
-                "구체적인 한국어/영어 혼합 웹 검색 쿼리를 rewritten_query에 작성하세요."
+                "당신은 새 프로젝트 기획 코파일럿의 Corrective RAG 평가기입니다.\n"
+                "사용자가 최신 기술 스택 비교, 오픈소스 레퍼런스, 시장/기업 트렌드, 구체적 구현 사례나 "
+                "새 프로젝트 진행 방법을 묻고 있다면 is_sufficient=false로 설정해 최신 웹 검색을 1회 트리거하고 "
+                "구체적인 검색 쿼리를 rewritten_query에 작성하세요.\n"
+                "순전히 보유 경험 정리나 간단한 구조화 질문이라면 is_sufficient=true로 설정하세요."
             )
         ),
         HumanMessage(
             content=(
                 f"[사용자 질문]\n{state['message']}\n\n"
-                f"[과거 경험 자료]\n{exp_text}\n\n"
-                f"[관심 기술 클립 자료]\n{clip_text}"
+                f"[포커스 약점] {state.get('focus_weakness') or '(없음)'}\n\n"
+                f"[리서치된 기업 컨텍스트]\n{(state.get('company_context') or '')[:1200]}\n\n"
+                f"[보유 경험 요약]\n{chr(10).join(state.get('experience_docs') or [])[:1500]}"
             )
         ),
     ]
@@ -143,7 +428,7 @@ def route_after_relevance(state: CopilotChatState) -> str:
 
 
 async def web_search_fallback(state: CopilotChatState) -> dict[str, Any]:
-    """재작성된 쿼리로 DuckDuckGo + BS4 웹 검색을 최대 1회 수행한다."""
+    """재작성된 쿼리로 DuckDuckGo + 본문 추출 웹 검색을 최대 1회 수행한다."""
     query = state.get("rewritten_query") or state["message"]
     sources = await search_and_extract(query, max_results=4, fetch_top_n=2)
     return {
@@ -154,8 +439,8 @@ async def web_search_fallback(state: CopilotChatState) -> dict[str, Any]:
 
 
 async def copilot_answer(state: CopilotChatState) -> dict[str, Any]:
-    """내부 경험·관심 클립·(선택적) 웹 검색 결과를 종합해 실전 프로젝트 조언을 생성한다."""
-    llm = get_smart_llm(temperature=0.35)
+    """캐릭터 약점 + 기업 리서치 + 웹 검색을 종합해 새 프로젝트 기획·진행 가이드를 생성한다."""
+    llm = get_smart_llm(temperature=0.35, max_tokens=4000)
 
     history_lines = []
     for turn in (state.get("chat_history") or [])[-6:]:
@@ -165,27 +450,31 @@ async def copilot_answer(state: CopilotChatState) -> dict[str, Any]:
     history_text = "\n".join(history_lines) or "(이전 대화 없음)"
 
     web_text = "\n\n".join(
-        f"- {s.get('title', '')} ({s.get('url', '')})\n  {s.get('content', '')[:800]}"
+        f"- {s.get('title', '')} ({s.get('url', '')})\n  {(s.get('content') or s.get('snippet') or '')[:700]}"
         for s in (state.get("web_sources") or [])
     ) or "(웹 검색 미사용)"
 
     messages = [
         SystemMessage(
             content=(
-                "당신은 지원자의 과거 프로젝트 경험과 관심 기술 스택을 완벽히 기억하는 시니어 아키텍트 코파일럿입니다.\n"
-                "규칙:\n"
-                "1. 지원자의 과거 경험/트러블슈팅을 자연스럽게 연결해 실전적인 설계·구현·포트폴리오 전략을 제안하세요.\n"
-                "2. 웹 검색 자료를 참고했다면 핵심 출처 링크를 답변 하단에 간결히 표시하세요.\n"
-                "3. 한국어 Markdown으로 구조화해 바로 실행 가능한 액션 아이템을 포함하세요."
+                "당신은 지원자의 **포트폴리오 캐릭터(강점·약점·외적 사각지대)**와 **리서치해둔 목표 기업 동향**을 꿰뚫고, "
+                "**새로운 프로젝트를 어떻게 기획·설계·진행하면 가장 강력하게 약점을 보완하고 차별화할 수 있는지** 코칭하는 시니어 프로젝트 코파일럿입니다.\n\n"
+                "답변 원칙:\n"
+                "1. 새 프로젝트를 기준으로 답하되, 지원자의 **캐릭터 약점/사각지대**를 구체적으로 어떻게 메울지(정량 지표, 일정·우선순위, 협업/운영 증거 포함) 반드시 짚어주세요.\n"
+                "2. 저장된 **기업 리서치 내용**과 **웹 검색 최신 레퍼런스**가 있다면 실제 진행 방법(아키텍처·기능·검증 방식)에 구체적으로 연결하고, 웹 출처 링크를 하단에 명시하세요.\n"
+                "3. 한국어 Markdown으로 구조화해 바로 실행할 수 있는 단계별 체크리스트를 포함하세요."
             )
         ),
         HumanMessage(
             content=(
-                f"[지원자 커리어 프로필]\n{state.get('profile_summary') or '(미설정)'}\n\n"
+                f"[지원자 커리어 신념·프로필]\n{state.get('profile_summary') or '(미설정)'}\n"
+                f"[최근 생각 노트]\n{state.get('belief_notes_context') or '(없음)'}\n\n"
+                f"[포트폴리오 캐릭터 진단 & 보완 약점]\n{state.get('character_context') or '(미진단)'}\n"
+                f"[사용자가 선택한 집중 약점] {state.get('focus_weakness') or '(전체 약점 참고)'}\n\n"
+                f"[리서치된 목표 기업 정보]\n{(state.get('company_context') or '(없음)')[:2500]}\n\n"
+                f"[기존 보유 프로젝트]\n{(state.get('existing_projects_context') or '(없음)')[:1800]}\n\n"
                 f"[최근 대화]\n{history_text}\n\n"
                 f"[현재 질문]\n{state['message']}\n\n"
-                f"[관련 과거 경험 (experience)]\n{chr(10).join(state.get('experience_docs') or ['(없음)'])}\n\n"
-                f"[관련 관심 클립 (interest_clip)]\n{chr(10).join(state.get('interest_docs') or ['(없음)'])}\n\n"
                 f"[웹 검색 보강 자료]\n{web_text}"
             )
         ),
@@ -218,24 +507,24 @@ def build_copilot_chat_graph():
 
 
 # ==============================================================================
-# 모드 B: 취준 결과 회고 & Gap 분석 · 보완 액션 플랜
+# 모드 B: 지원 결과 & 취준 회고 (캐릭터 약점 대조 Gap 분석 + 코파일럿 연계)
 # ==============================================================================
 class RetrospectivePlanSchema(BaseModel):
     gap_analysis: str = Field(
         default="",
-        description="보유 포트폴리오·경험 대비 이번 지원 결과에서 드러난 핵심 격차(Gap) 진단 (한국어 Markdown)",
+        description="보유 포트폴리오·캐릭터 약점·경험 대비 이번 지원 결과에서 드러난 핵심 격차(Gap) 진단 (한국어 Markdown)",
     )
     short_term_plan: list[str] = Field(
         default_factory=list,
-        description="단기(1~2주) 자소서·포트폴리오·면접 보강 액션 아이템",
+        description="단기(1~2주) 자소서·포트폴리오·면접 답변 보강 액션 아이템 2~4개",
     )
     mid_term_plan: list[str] = Field(
         default_factory=list,
-        description="중기(1~2개월) 신규 프로젝트·기술 심화·학습 액션 아이템",
+        description="중기(1~2개월) 보완형 신규 프로젝트·역량 강화 액션 아이템 2~3개",
     )
-    suggested_interests: list[str] = Field(
-        default_factory=list,
-        description="보완이 필요한 신규 기술/도메인 관심 키워드 (user_interests 원클릭 추가용)",
+    recommended_copilot_topic: str = Field(
+        default="",
+        description="이 Gap을 메우기 위해 '새 프로젝트 코파일럿'에 바로 넘길 구체적인 보완 프로젝트 기획 주제 (1문장)",
     )
 
 
@@ -247,19 +536,19 @@ class RetrospectState(TypedDict, total=False):
     feedback_memo: str
 
     portfolio_context: str
+    character_context: str
     past_logs_context: str
-    existing_interests: list[str]
 
     gap_analysis: str
     short_term_plan: list[str]
     mid_term_plan: list[str]
     action_plan: str
-    suggested_interests: list[str]
+    recommended_copilot_topic: str
     application_log_id: int | None
 
 
 async def load_retro_context(state: RetrospectState) -> dict[str, Any]:
-    """보유 프로젝트, STAR 경험, 관심사, 과거 취준 회고 이력을 로드한다."""
+    """보유 프로젝트, STAR 경험, 포트폴리오 캐릭터 진단, 과거 취준 회고 이력을 로드한다."""
     async with get_session_factory()() as session:
         profile = await session.get(UserProfile, 1)
         projects = (
@@ -273,11 +562,6 @@ async def load_retro_context(state: RetrospectState) -> dict[str, Any]:
                     select(Experience).order_by(Experience.completeness_score.desc()).limit(12)
                 )
             )
-            .scalars()
-            .all()
-        )
-        interests = (
-            (await session.execute(select(UserInterest).order_by(UserInterest.created_at.desc())))
             .scalars()
             .all()
         )
@@ -304,6 +588,9 @@ async def load_retro_context(state: RetrospectState) -> dict[str, Any]:
         f"[보유 프로젝트 ({len(projects)}건)]\n" + ("\n".join(project_lines) or "(없음)") + "\n"
         f"[보유 STAR 경험 ({len(experiences)}건)]\n" + ("\n".join(exp_lines) or "(없음)")
     )
+    character_context = _format_character_diagnosis(
+        profile.portfolio_diagnosis if profile else None
+    )
     past_logs_context = "\n".join(
         f"- {log.company_name} / {log.role} / {log.stage} / {log.status}: {log.feedback_memo[:200]}"
         for log in past_logs
@@ -311,24 +598,24 @@ async def load_retro_context(state: RetrospectState) -> dict[str, Any]:
 
     return {
         "portfolio_context": portfolio_context,
+        "character_context": character_context,
         "past_logs_context": past_logs_context,
-        "existing_interests": [i.keyword for i in interests],
     }
 
 
 async def analyze_gap_and_plan(state: RetrospectState) -> dict[str, Any]:
-    """지원 결과와 포트폴리오를 대조해 Gap 진단, 단기/중기 보완 계획, 추천 관심 키워드를 도출한다."""
-    llm = get_smart_llm(temperature=0.3)
+    """지원 결과를 포트폴리오 캐릭터·경험과 대조해 Gap 진단, 단기/중기 플랜, 코파일럿 연계 주제를 도출한다."""
+    llm = get_smart_llm(temperature=0.3, max_tokens=3500)
 
     messages = [
         SystemMessage(
             content=(
-                "당신은 데이터 기반으로 취준 전략을 코칭하는 커리어 회고 플래너입니다.\n"
-                "지원 결과와 피드백을 지원자의 현재 포트폴리오·과거 회고와 대조하여:\n"
-                "1. 냉정하고 구체적인 Gap 분석(역량·경험·표현·기술 스택 격차)\n"
-                "2. 단기 보완 플랜(자소서/포폴/면접 답변 개선)\n"
-                "3. 중기 보완 플랜(다음 프로젝트 주제/학습 로드맵)\n"
-                "4. 기존 관심사와 겹치지 않는 핵심 보완 키워드(`suggested_interests`)를 도출하세요."
+                "당신은 데이터 기반으로 취준 전략을 코칭하는 냉철한 커리어 회고 플래너입니다.\n"
+                "지원 결과와 피드백을 지원자의 현재 포트폴리오·캐릭터 약점·과거 회고와 대조하여:\n"
+                "1. 냉정하고 구체적인 Gap 분석(직무 역량·증거·외적 운영·표현 격차)\n"
+                "2. 단기 보완 플랜(1~2주 내 자소서/포폴/면접 답변 개선)\n"
+                "3. 중기 보완 플랜(1~2개월 내 보완형 신규 프로젝트/역량 강화)\n"
+                "4. 이 Gap을 정면으로 메우기 위해 '새 프로젝트 코파일럿'에서 바로 기획할 수 있는 주제 1문장(`recommended_copilot_topic`)을 도출하세요."
             )
         ),
         HumanMessage(
@@ -339,31 +626,27 @@ async def analyze_gap_and_plan(state: RetrospectState) -> dict[str, Any]:
                 f"- 전형 단계: {state.get('stage', '')}\n"
                 f"- 결과: {state.get('status', '')}\n"
                 f"- 피드백/회고 메모:\n{state.get('feedback_memo', '')}\n\n"
+                f"[나의 포트폴리오 캐릭터 진단]\n{state.get('character_context', '')}\n\n"
                 f"[현재 보유 포트폴리오]\n{state.get('portfolio_context', '')}\n\n"
-                f"[과거 지원 이력]\n{state.get('past_logs_context', '')}\n\n"
-                f"[기존 등록된 관심 키워드]\n{state.get('existing_interests', [])}"
+                f"[과거 지원 이력]\n{state.get('past_logs_context', '')}"
             )
         ),
     ]
-    plan = await ainvoke_structured(llm, RetrospectivePlanSchema, messages, max_retries=1)
+    plan = await ainvoke_structured(llm, RetrospectivePlanSchema, messages, max_retries=2)
 
     short_md = "\n".join(f"- {item}" for item in plan.short_term_plan)
     mid_md = "\n".join(f"- {item}" for item in plan.mid_term_plan)
-    action_plan_md = f"### 단기 보완 플랜 (자소서·포폴)\n{short_md}\n\n### 중기 보완 플랜 (신규 프로젝트·학습)\n{mid_md}"
-
-    existing_lower = {k.lower() for k in (state.get("existing_interests") or [])}
-    deduped_suggestions = [
-        kw.strip()
-        for kw in plan.suggested_interests
-        if kw.strip() and kw.strip().lower() not in existing_lower
-    ]
+    action_plan_md = (
+        f"### 단기 보완 플랜 (자소서·포폴·면접)\n{short_md}\n\n"
+        f"### 중기 보완 플랜 (신규 프로젝트·역량 강화)\n{mid_md}"
+    )
 
     return {
         "gap_analysis": plan.gap_analysis,
         "short_term_plan": plan.short_term_plan,
         "mid_term_plan": plan.mid_term_plan,
         "action_plan": action_plan_md,
-        "suggested_interests": deduped_suggestions,
+        "recommended_copilot_topic": plan.recommended_copilot_topic.strip(),
     }
 
 

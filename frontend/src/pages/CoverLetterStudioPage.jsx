@@ -276,7 +276,7 @@ export default function CoverLetterStudioPage() {
     <div className="space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">
-          4. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
+          5. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
         </h2>
         <p className="text-sm text-slate-600 mt-1">
           <strong>1단계</strong>로 기업이 제시한 문항의 숨은 평가 의도를 해부해 내 포트폴리오 중 최적{" "}
@@ -450,7 +450,7 @@ export default function CoverLetterStudioPage() {
                 </span>
               ) : (
                 <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5">
-                  팁: &apos;3. 기업 &amp; 관심사&apos;에서 기업 리서치를 먼저 하면 신념 매칭이 더 정교해집니다
+                  팁: &apos;4. 기업 리서치&apos;에서 기업 리서치를 먼저 하면 신념 매칭이 더 정교해집니다
                 </span>
               )}
             </div>
@@ -526,7 +526,7 @@ export default function CoverLetterStudioPage() {
 
           {projects.length === 0 ? (
             <p className="text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 p-4 text-center">
-              등록된 프로젝트가 없습니다. &apos;1. 신념 &amp; 포트폴리오&apos;에서 프로젝트를 먼저 등록하면 여기에서 바로 선택해 자소서에 활용할 수 있습니다.
+              등록된 프로젝트가 없습니다. &apos;2. 포트폴리오 &amp; 캐릭터&apos;에서 프로젝트를 먼저 등록하면 여기에서 바로 선택해 자소서에 활용할 수 있습니다.
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
