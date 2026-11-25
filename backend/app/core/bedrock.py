@@ -1,14 +1,20 @@
-"""AWS Bedrock Fast/Smart LLM 및 Embeddings 팩토리와 Structured Output 재시도/JSON 폴백 래퍼."""
+"""AWS Bedrock Fast/Smart LLM 및 Embeddings 팩토리, 관측성(Telemetry) 추적 및 Structured Output 폴백 래퍼."""
+
+from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field
 import json
 import logging
 import re
-from typing import Any, TypeVar
+import time
+from typing import Any, Iterator, TypeVar
 
 import boto3
 from langchain_aws import BedrockEmbeddings, ChatBedrockConverse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel
 
 from app.config import settings
@@ -18,6 +24,190 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+# ==============================================================================
+# LLM Observability & Telemetry (Unit 2: usage_metadata / stopReason / latencyMs)
+# ==============================================================================
+@dataclass(slots=True)
+class LLMCallRecord:
+    caller: str
+    model_id: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    stop_reason: str = ""
+    latency_ms: int = 0
+    truncated: bool = False
+
+
+@dataclass
+class LLMTelemetryTracker:
+    request_name: str = "request"
+    calls: list[LLMCallRecord] = field(default_factory=list)
+
+    def add(self, record: LLMCallRecord) -> None:
+        self.calls.append(record)
+
+    def summary(self) -> dict[str, Any]:
+        total_in = sum(c.input_tokens for c in self.calls)
+        total_out = sum(c.output_tokens for c in self.calls)
+        total_tok = sum(c.total_tokens for c in self.calls)
+        total_ms = sum(c.latency_ms for c in self.calls)
+        truncated_calls = [c.caller for c in self.calls if c.truncated]
+        return {
+            "request_name": self.request_name,
+            "call_count": len(self.calls),
+            "input_tokens": total_in,
+            "output_tokens": total_out,
+            "total_tokens": total_tok,
+            "total_latency_ms": total_ms,
+            "truncated_callers": truncated_calls,
+            "calls": [asdict(c) for c in self.calls],
+        }
+
+
+_CURRENT_TELEMETRY: ContextVar[LLMTelemetryTracker | None] = ContextVar(
+    "current_llm_telemetry", default=None
+)
+
+
+@contextmanager
+def llm_telemetry_scope(request_name: str = "request") -> Iterator[LLMTelemetryTracker]:
+    """요청·그래프 단위 LLM 호출 텔레메트리를 수집하는 컨텍스트 매니저."""
+    tracker = LLMTelemetryTracker(request_name=request_name)
+    token = _CURRENT_TELEMETRY.set(tracker)
+    try:
+        yield tracker
+    finally:
+        _CURRENT_TELEMETRY.reset(token)
+        if tracker.calls:
+            summary = tracker.summary()
+            logger.info(
+                "LLM telemetry [%s]: calls=%d tokens=%d (in=%d, out=%d) latency=%dms truncated=%s",
+                summary["request_name"],
+                summary["call_count"],
+                summary["total_tokens"],
+                summary["input_tokens"],
+                summary["output_tokens"],
+                summary["total_latency_ms"],
+                summary["truncated_callers"] or "none",
+            )
+
+
+def get_current_telemetry_tracker() -> LLMTelemetryTracker | None:
+    return _CURRENT_TELEMETRY.get()
+
+
+def extract_llm_telemetry(
+    ai_msg: Any,
+    *,
+    model_id: str = "",
+    caller: str = "llm_call",
+    elapsed_ms: int = 0,
+) -> LLMCallRecord:
+    """AIMessage의 usage_metadata / response_metadata.stopReason / metrics.latencyMs를 안전하게 추출한다."""
+    usage = getattr(ai_msg, "usage_metadata", None) or {}
+    resp_meta = getattr(ai_msg, "response_metadata", None) or {}
+    metrics = resp_meta.get("metrics") or {}
+    token_usage = resp_meta.get("usage") or {}
+
+    input_tokens = int(
+        usage.get("input_tokens")
+        or token_usage.get("inputTokens")
+        or token_usage.get("prompt_tokens")
+        or 0
+    )
+    output_tokens = int(
+        usage.get("output_tokens")
+        or token_usage.get("outputTokens")
+        or token_usage.get("completion_tokens")
+        or 0
+    )
+    total_tokens = int(
+        usage.get("total_tokens")
+        or token_usage.get("totalTokens")
+        or (input_tokens + output_tokens)
+    )
+
+    stop_reason = str(
+        resp_meta.get("stopReason")
+        or resp_meta.get("stop_reason")
+        or resp_meta.get("finish_reason")
+        or ""
+    )
+
+    # Bedrock Converse metrics.latencyMs는 리스트 또는 int일 수 있음
+    raw_latency = metrics.get("latencyMs")
+    if isinstance(raw_latency, list) and raw_latency:
+        latency_ms = int(raw_latency[0])
+    elif isinstance(raw_latency, (int, float)):
+        latency_ms = int(raw_latency)
+    else:
+        latency_ms = int(elapsed_ms)
+
+    resolved_model = str(
+        model_id
+        or resp_meta.get("model_name")
+        or resp_meta.get("model_id")
+        or ""
+    )
+    truncated = stop_reason.lower() in {"max_tokens", "length"}
+
+    record = LLMCallRecord(
+        caller=caller,
+        model_id=resolved_model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        stop_reason=stop_reason,
+        latency_ms=latency_ms,
+        truncated=truncated,
+    )
+
+    tracker = _CURRENT_TELEMETRY.get()
+    if tracker is not None:
+        tracker.add(record)
+
+    if truncated:
+        logger.warning(
+            "LLM output truncated (stopReason=%s) caller=%s model=%s in=%d out=%d latency=%dms",
+            stop_reason,
+            caller,
+            resolved_model,
+            input_tokens,
+            output_tokens,
+            latency_ms,
+        )
+    else:
+        logger.debug(
+            "LLM call caller=%s model=%s stop=%s in=%d out=%d latency=%dms",
+            caller,
+            resolved_model,
+            stop_reason or "unknown",
+            input_tokens,
+            output_tokens,
+            latency_ms,
+        )
+    return record
+
+
+async def ainvoke_tracked(
+    llm: ChatBedrockConverse,
+    messages: list[BaseMessage] | list[Any],
+    *,
+    caller: str = "llm_call",
+) -> AIMessage:
+    """일반 AIMessage 호출을 지연시간·토큰·stopReason 텔레메트리와 함께 실행한다."""
+    model_id = str(getattr(llm, "model_id", "") or getattr(llm, "model", ""))
+    t0 = time.perf_counter()
+    ai_msg = await llm.ainvoke(messages)
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    extract_llm_telemetry(ai_msg, model_id=model_id, caller=caller, elapsed_ms=elapsed_ms)
+    return ai_msg
+
+
+# ==============================================================================
+# AWS Bedrock Factory
+# ==============================================================================
 def _create_boto_session() -> boto3.Session:
     """boto3 기본 자격 증명 체인(EC2 IAM Role 또는 로컬 ~/.aws 프로파일)에 위임."""
     if settings.aws_profile:
@@ -29,7 +219,7 @@ def _create_boto_session() -> boto3.Session:
 
 
 def get_fast_llm(temperature: float = 0.2, max_tokens: int = 2048) -> ChatBedrockConverse:
-    """라우팅, STAR 추출, 완성도 평가, 관련성 평가용 Fast Tier LLM."""
+    """라우팅, STAR-L 추출, 완성도 평가, 관련성 평가, 쿼리 재작성용 Fast Tier LLM."""
     client = _create_boto_session().client("bedrock-runtime")
     return ChatBedrockConverse(
         model=settings.bedrock_fast_model_id,
@@ -40,7 +230,7 @@ def get_fast_llm(temperature: float = 0.2, max_tokens: int = 2048) -> ChatBedroc
 
 
 def get_smart_llm(temperature: float = 0.4, max_tokens: int = 5000) -> ChatBedrockConverse:
-    """기업 3각 매칭, 자소서 초안/비평/퇴고, De-AI, 회고 분석용 Smart Tier LLM.
+    """기업 3각 매칭, 자소서 초안/비평/퇴고, De-AI, 코파일럿, 회고 분석용 Smart Tier LLM.
 
     Amazon Nova Pro의 최대 출력 토큰(5,120) 범위 내에서 넉넉하게 5,000을 기본 확보한다.
     """
@@ -88,12 +278,10 @@ def _extract_json_object(raw_text: str) -> str:
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if fenced:
         return fenced.group(1).strip()
-    # 닫는 ``` 없이 잘린 코드블록도 시작 '{'부터 끝까지 살려낸다.
     start = text.find("{")
     if start != -1:
         end = text.rfind("}")
         if end > start:
-            # 뒷부분에 닫히지 않은 괄호가 남아있으면 전체 tail을 보존해 복구 로직이 처리하도록 함
             tail = text[end + 1 :].strip()
             if tail and not tail.startswith("```"):
                 return text[start:].strip()
@@ -137,7 +325,6 @@ def _repair_truncated_json(raw_json: str) -> str:
         if escape:
             repaired = repaired[:-1]
         repaired += '"'
-    # 끝이 쉼표나 콜론으로 끝나면 제거
     repaired = re.sub(r",\s*$", "", repaired)
     repaired = re.sub(r":\s*$", ": null", repaired)
     repaired += "".join(reversed(stack))
@@ -149,22 +336,46 @@ async def ainvoke_structured(
     schema: type[T],
     messages: list[Any],
     max_retries: int = 2,
+    caller: str | None = None,
 ) -> T:
-    """Structured Output 안정성 래퍼 (agents_md.md 3.3).
+    """Structured Output 안정성 래퍼 (텔레메트리 수집 + JSON Schema 폴백 + 잘림 자동 복구).
 
-    1차: Bedrock Converse Tool-Calling 기반 with_structured_output 시도
+    1차: Bedrock Converse Tool-Calling 기반 with_structured_output(include_raw=True) 시도
     2차(폴백): Nova 등 모델에서 중첩 스키마 누락/ToolUse 오류 시 명시적 JSON Schema 프롬프트로 재시도
     """
-    structured_llm = llm.with_structured_output(schema)
+    call_label = caller or f"structured:{schema.__name__}"
+    model_id = str(getattr(llm, "model_id", "") or getattr(llm, "model", ""))
     last_error: Exception | None = None
 
-    # 1차: native structured output (tool calling)
+    # 1차: native structured output (include_raw=True로 usage_metadata/stopReason 함께 수집)
     try:
-        result = await structured_llm.ainvoke(messages)
-        if isinstance(result, schema):
-            return result
-        if result is not None:
-            return schema.model_validate(result)
+        try:
+            structured_llm = llm.with_structured_output(schema, include_raw=True)
+            t0 = time.perf_counter()
+            raw_bundle = await structured_llm.ainvoke(messages)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+
+            if isinstance(raw_bundle, dict) and "raw" in raw_bundle:
+                extract_llm_telemetry(
+                    raw_bundle["raw"],
+                    model_id=model_id,
+                    caller=call_label,
+                    elapsed_ms=elapsed_ms,
+                )
+                if raw_bundle.get("parsing_error"):
+                    raise ValueError(f"Parsing error: {raw_bundle['parsing_error']}")
+                parsed = raw_bundle.get("parsed")
+            else:
+                parsed = raw_bundle
+        except TypeError:
+            # include_raw를 지원하지 않는 mock/커스텀 LLM 호환
+            structured_llm = llm.with_structured_output(schema)
+            parsed = await structured_llm.ainvoke(messages)
+
+        if isinstance(parsed, schema):
+            return parsed
+        if parsed is not None:
+            return schema.model_validate(parsed)
         raise ValueError("Structured output returned None.")
     except Exception as exc:
         last_error = exc
@@ -192,7 +403,11 @@ async def ainvoke_structured(
                     f"JSON Schema:\n{schema_json}"
                 )
             )
-            ai_msg = await llm.ainvoke([*messages, fallback_instruction])
+            ai_msg = await ainvoke_tracked(
+                llm,
+                [*messages, fallback_instruction],
+                caller=f"{call_label}:fallback_{attempt + 1}",
+            )
             raw_content = (
                 ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
             )

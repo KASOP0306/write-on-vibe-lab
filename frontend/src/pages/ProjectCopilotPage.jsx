@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   AlertTriangle,
+  Brain,
   Building2,
   CheckCircle2,
   Compass,
@@ -10,10 +11,13 @@ import {
   Loader2,
   MessageSquare,
   PlusCircle,
+  RefreshCw,
   Rocket,
   Send,
   Sparkles,
   Target,
+  Trash2,
+  Wrench,
 } from "lucide-react";
 import { api } from "../api/client.js";
 import StepIndicator from "../components/StepIndicator.jsx";
@@ -25,6 +29,17 @@ const QUICK_PROMPTS = [
   "최신 오픈소스/실무 레퍼런스를 웹 검색해서 새 프로젝트에 쓸 최적의 기술 스택과 트레이드오프를 비교해줘",
   "협업·일정 관리(외적 역량)까지 포트폴리오 증거로 남길 수 있는 프로젝트 진행 방식과 산출물 체크리스트를 알려줘",
 ];
+
+const TOOL_LABELS = {
+  search_portfolio_docs: "포트폴리오 RAG 검색",
+  get_portfolio_character_and_loop: "캐릭터 진단·회고 Try 조회",
+  get_company_research: "기업 리서치 조회",
+  web_search_reference: "실시간 웹 검색",
+  save_career_memory: "장기 기억 저장",
+  recall_career_memory: "장기 기억 조회",
+};
+
+const createThreadId = () => `copilot-${Math.random().toString(36).slice(2, 10)}`;
 
 export default function ProjectCopilotPage({
   projects = [],
@@ -49,30 +64,80 @@ export default function ProjectCopilotPage({
   const [blueprintError, setBlueprintError] = useState("");
   const [creatingIdx, setCreatingIdx] = useState(null);
 
-  // New-Project Chat State
+  // New-Project Agentic Chat State (Short-term thread_id + Long-term Store memories)
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [threadId, setThreadId] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem("copilot_thread_id");
+      if (saved) return saved;
+      const fresh = createThreadId();
+      window.localStorage.setItem("copilot_thread_id", fresh);
+      return fresh;
+    } catch {
+      return createThreadId();
+    }
+  });
+  const [memories, setMemories] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSteps, setChatSteps] = useState([]);
   const [chatRunning, setChatRunning] = useState(false);
 
+  const loadMemories = async () => {
+    try {
+      const list = await api.listCopilotMemories();
+      setMemories(list || []);
+    } catch {
+      setMemories([]);
+    }
+  };
+
   useEffect(() => {
     const loadContext = async () => {
       try {
-        const [diag, comps, loop] = await Promise.all([
+        const [diag, comps, loop, hist, mems] = await Promise.all([
           api.getPortfolioDiagnosis().catch(() => null),
           api.listCompanies().catch(() => []),
           api.getProjectsLearningLoop().catch(() => null),
+          api.getCopilotHistory(threadId).catch(() => null),
+          api.listCopilotMemories().catch(() => []),
         ]);
         setDiagnosisData(diag);
         setCompanies(comps || []);
         setLearningLoop(loop);
+        if (hist?.messages?.length) {
+          setChatMessages(hist.messages);
+        }
+        setMemories(mems || []);
       } catch (err) {
         console.warn(err);
       }
     };
     loadContext();
-  }, []);
+  }, [threadId]);
+
+  const handleNewConversation = () => {
+    if (chatRunning) return;
+    const fresh = createThreadId();
+    try {
+      window.localStorage.setItem("copilot_thread_id", fresh);
+    } catch {
+      // ignore storage quota errors
+    }
+    setThreadId(fresh);
+    setChatMessages([]);
+    setChatSteps([]);
+    loadMemories();
+  };
+
+  const handleDeleteMemory = async (key) => {
+    try {
+      await api.deleteCopilotMemory(key);
+      setMemories((prev) => prev.filter((m) => m.key !== key));
+    } catch (err) {
+      alert(`장기 기억 삭제 실패: ${err.message}`);
+    }
+  };
 
   useEffect(() => {
     if (initialTopic) {
@@ -173,6 +238,7 @@ export default function ProjectCopilotPage({
       await api.copilotChat(
         {
           message: userMsg,
+          thread_id: threadId,
           project_id: selectedProjectId ? Number(selectedProjectId) : null,
           company_profile_id: selectedCompanyId ? Number(selectedCompanyId) : null,
           focus_weakness: focusWeakness.trim(),
@@ -189,14 +255,22 @@ export default function ProjectCopilotPage({
               const next = [...prev];
               for (let i = next.length - 1; i >= 0; i -= 1) {
                 if (next[i].node === ev.node || next[i].status === "running") {
+                  let badge;
+                  if (ev.node === "model" && ev.data?.decision === "tool_call") {
+                    const names = (ev.data?.tool_calls || [])
+                      .map((c) => TOOL_LABELS[c.name] || c.name)
+                      .join(", ");
+                    badge = `도구 호출: ${names}`;
+                  } else if (ev.node === "tools") {
+                    badge = `누적 도구 ${ev.data?.tool_count || 0}회`;
+                  } else if (ev.node === "stop") {
+                    badge = "상한 안전 종료";
+                  }
                   next[i] = {
                     ...next[i],
                     node: ev.node,
                     status: "done",
-                    badge:
-                      ev.node === "web_search_fallback"
-                        ? `웹 ${ev.data?.web_source_count || 0}건`
-                        : undefined,
+                    badge,
                   };
                   break;
                 }
@@ -204,15 +278,26 @@ export default function ProjectCopilotPage({
               return next;
             });
           } else if (ev.event === "done") {
+            if (ev.data?.thread_id && ev.data.thread_id !== threadId) {
+              setThreadId(ev.data.thread_id);
+            }
             setChatMessages((prev) => [
               ...prev,
               {
                 role: "assistant",
                 content: ev.data?.answer || "",
                 used_web_fallback: ev.data?.used_web_fallback,
-                web_sources: ev.data?.web_sources || [],
+                used_tools: ev.data?.used_tools || [],
+                tool_count: ev.data?.tool_count || 0,
+                telemetry: ev.data?.telemetry || null,
               },
             ]);
+            const savedMem = (ev.data?.used_tools || []).some(
+              (t) => t.name === "save_career_memory"
+            );
+            if (savedMem) {
+              loadMemories();
+            }
           } else if (ev.event === "error") {
             setChatSteps((prev) => [
               ...prev,
@@ -598,21 +683,37 @@ export default function ProjectCopilotPage({
           <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 flex flex-col justify-between min-h-[540px] shadow-sm">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                <div className="text-sm font-bold text-slate-900">
-                  새 프로젝트 기획 · 진행 코파일럿 (웹 검색 연동)
+                <div className="space-y-0.5">
+                  <div className="text-sm font-bold text-slate-900">
+                    새 프로젝트 Agentic RAG 코파일럿 (ReAct 도구 · 단기/장기 기억)
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    스레드 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">{threadId}</code> · 대화는 PostgreSQL 체크포인트에 자동 저장됩니다
+                  </div>
                 </div>
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs bg-white"
-                >
-                  <option value="">참고 기존 프로젝트: 전체</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      참고: {p.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs bg-white"
+                  >
+                    <option value="">참고 기존 프로젝트: 전체</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        참고: {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleNewConversation}
+                    disabled={chatRunning}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>새 대화</span>
+                  </button>
+                </div>
               </div>
 
               {chatMessages.length === 0 ? (
@@ -650,24 +751,57 @@ export default function ProjectCopilotPage({
                         </p>
                       ) : (
                         <div className="space-y-3">
+                          {(msg.used_tools || []).length > 0 && (
+                            <details className="rounded-lg border border-indigo-200/80 bg-indigo-50/40 px-3 py-2 text-[11px]">
+                              <summary className="cursor-pointer font-semibold text-indigo-800 flex items-center gap-1.5">
+                                <Wrench className="w-3.5 h-3.5" />
+                                <span>
+                                  에이전트 도구 호출 과정 ({msg.used_tools.length}회)
+                                  {msg.telemetry?.total_tokens
+                                    ? ` · ${msg.telemetry.total_tokens.toLocaleString()} tok · ${(msg.telemetry.total_latency_ms / 1000).toFixed(1)}s`
+                                    : ""}
+                                </span>
+                              </summary>
+                              <div className="mt-2 space-y-1.5 border-t border-indigo-100 pt-2">
+                                {msg.used_tools.map((t, ti) => (
+                                  <div key={ti} className="rounded-md bg-white/90 border border-indigo-100 p-2 space-y-0.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-bold text-slate-800">
+                                        {ti + 1}. {TOOL_LABELS[t.name] || t.name}
+                                      </span>
+                                      {t.args?.strategy && (
+                                        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                                          strategy: {t.args.strategy}
+                                        </span>
+                                      )}
+                                      {t.args?.doc_type && (
+                                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
+                                          {t.args.doc_type}
+                                        </span>
+                                      )}
+                                      {t.args?.query && (
+                                        <span className="text-[10px] text-slate-500 truncate max-w-[260px]">
+                                          “{t.args.query}”
+                                        </span>
+                                      )}
+                                    </div>
+                                    {t.preview && (
+                                      <p className="text-[10px] text-slate-500 line-clamp-2">
+                                        {t.preview}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
                           <div className="prose prose-xs prose-slate max-w-none">
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
                           </div>
-                          {msg.used_web_fallback && (
-                            <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center gap-1.5 text-[11px] text-indigo-700">
-                              <Globe className="w-3.5 h-3.5" />
-                              <span className="font-semibold">웹 검색 보강:</span>
-                              {(msg.web_sources || []).map((s, si) => (
-                                <a
-                                  key={si}
-                                  href={s.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="underline hover:text-indigo-900 truncate max-w-[240px]"
-                                >
-                                  {s.title || s.url}
-                                </a>
-                              ))}
+                          {msg.telemetry && (msg.used_tools || []).length === 0 && (
+                            <div className="text-[10px] text-slate-400">
+                              도구 호출 0회 (직접 응답) · {msg.telemetry.total_tokens?.toLocaleString() || 0} tok ·{" "}
+                              {((msg.telemetry.total_latency_ms || 0) / 1000).toFixed(1)}s
                             </div>
                           )}
                         </div>
@@ -697,8 +831,58 @@ export default function ProjectCopilotPage({
             </form>
           </div>
 
-          <div>
+          <div className="space-y-4">
             <StepIndicator steps={chatSteps} />
+
+            {/* Long-term Career Memory Drawer (AsyncPostgresStore) */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Brain className="w-4 h-4 text-violet-600" />
+                  <span>장기 기억 서랍 ({memories.length})</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadMemories}
+                  className="text-[11px] text-slate-500 hover:text-slate-800"
+                >
+                  새로고침
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                대화 중 시간 제약·선호 스택·목표 일정을 말하면 장기 기억에 저장되어{" "}
+                <strong>새 대화에서도 자동으로 꺼내 반영</strong>합니다.
+              </p>
+              {memories.length === 0 ? (
+                <div className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-400">
+                  예: &ldquo;나는 평일 저녁·주말 합쳐 주 12시간만 투자할 수 있고, Python+PostgreSQL 스택을 선호해&rdquo;
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
+                  {memories.map((m) => (
+                    <div
+                      key={m.key}
+                      className="rounded-lg border border-violet-100 bg-violet-50/40 px-2.5 py-2 text-[11px] flex items-start justify-between gap-2"
+                    >
+                      <div className="space-y-0.5">
+                        <span className="inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold text-violet-700">
+                          {m.category}
+                        </span>
+                        <p className="text-slate-700 leading-snug">{m.text}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMemory(m.key)}
+                        className="text-slate-400 hover:text-rose-600 shrink-0"
+                        title="기억 삭제"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

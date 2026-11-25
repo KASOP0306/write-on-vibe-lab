@@ -1,6 +1,7 @@
 """워크플로우 ③: 자소서 생성 · 비평 · 퇴고 · De-AI 루프 (Critic-Refiner-Humanizer)."""
 
 import logging
+import re
 from typing import Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.core.bedrock import ainvoke_structured, get_smart_llm
+from app.core.bedrock import ainvoke_structured, ainvoke_tracked, get_smart_llm
 from app.core.database import (
     CompanyProfile,
     Experience,
@@ -19,7 +20,8 @@ from app.core.database import (
 )
 from app.core.project_templates import get_track_labels, normalize_project_types
 from app.core.star_rubric import normalize_star_scores
-from app.core.vector_store import DocType, search_documents
+from app.core.vector_store import DocType, format_hits_with_citations, search_documents
+from app.prompts import build_chat_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,45 @@ DE_AI_CLICHE_LIST = (
     '"~을 통해 한 단계 성장", "귀사의 무궁한 발전", "혁신적인 시너지", '
     '"단순한 ~을 넘어", "결론적으로", "이를 바탕으로", "끊임없이 도전하는"'
 )
+
+DE_AI_CLICHE_SUBSTRINGS = (
+    "한 단계 성장",
+    "귀사의 무궁한 발전",
+    "혁신적인 시너지",
+    "결론적으로",
+    "끊임없이 도전하는",
+)
+
+_METRIC_TOKEN_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:%|배|ms|초|분|시간|만\s*명|만\s*건|억|건|명)\b")
+
+
+def validate_cover_letter_post_checks(
+    final_text: str,
+    experience_docs: list[str] | None = None,
+    sample_docs: list[str] | None = None,
+) -> list[str]:
+    """코드 레벨 사후 검증 (Unit 2): 금지 AI 클리셰 잔존 및 jasoseo_sample 수치 유입을 자동 탐지한다."""
+    warnings: list[str] = []
+    text = (final_text or "").strip()
+    if not text:
+        return ["최종 자소서 본문이 비어 있습니다."]
+
+    found_cliches = [c for c in DE_AI_CLICHE_SUBSTRINGS if c in text]
+    if found_cliches:
+        warnings.append(f"AI 상투어 잔존 감지: {', '.join(found_cliches)}")
+
+    exp_joined = "\n".join(experience_docs or [])
+    sample_joined = "\n".join(sample_docs or [])
+    if sample_joined:
+        exp_metrics = {m.replace(" ", "") for m in _METRIC_TOKEN_RE.findall(exp_joined)}
+        sample_metrics = {m.replace(" ", "") for m in _METRIC_TOKEN_RE.findall(sample_joined)}
+        final_metrics = {m.replace(" ", "") for m in _METRIC_TOKEN_RE.findall(text)}
+        leaked = sorted((final_metrics & sample_metrics) - exp_metrics)
+        if leaked:
+            warnings.append(
+                f"레퍼런스 샘플 전용 수치 혼입 의심(experience 미확인): {', '.join(leaked)}"
+            )
+    return warnings
 
 
 class CriticEvaluationSchema(BaseModel):
@@ -339,6 +380,7 @@ class CoverLetterState(TypedDict, total=False):
     revision_count: int
     final_text: str
     humanizer_changes: list[str]
+    post_check_warnings: list[str]
 
 
 async def _safe_vector_search(session, query: str, doc_type: DocType, top_k: int) -> list[str]:
@@ -348,8 +390,13 @@ async def _safe_vector_search(session, query: str, doc_type: DocType, top_k: int
             query=query,
             doc_types=[doc_type],
             top_k=top_k,
+            strategy="hybrid",
+            use_mmr=True,
+            max_distance=0.84,
         )
-        return [hit.content for hit in hits]
+        if not hits:
+            return []
+        return [format_hits_with_citations(hits, max_chars_per_hit=700)]
     except Exception as exc:
         logger.warning("Vector search fallback for doc_type=%s: %s", doc_type.value, exc)
         return []
@@ -533,43 +580,47 @@ def _format_question_analysis_block(qa: dict[str, Any] | None) -> str:
 
 
 async def drafter(state: CoverLetterState) -> dict[str, Any]:
-    """기업 문항 핵심 의도 × 선택 프로젝트·STAR × 기업·나의 신념 3축을 융합해 1차 초안을 작성한다."""
+    """기업 문항 핵심 의도 × 선택 프로젝트·STAR-L × 기업·나의 신념 3축을 융합해 1차 초안을 작성한다."""
     llm = get_smart_llm(temperature=0.45, max_tokens=4000)
     char_limit = state.get("char_limit") or 800
     qa_block = _format_question_analysis_block(state.get("question_analysis"))
 
-    system_prompt = (
-        "당신은 기업이 제공한 자소서 문항의 숨은 평가 의도를 정확히 관통하면서, "
-        "지원자가 선택한 실제 프로젝트·STAR 경험과 커리어 신념, 그리고 목표 기업의 이념을 하나의 설득력 있는 서사로 엮는 한국어 자기소개서 전문가입니다.\n"
-        f"[필수 환각 방지 규칙]\n{ANTI_HALLUCINATION_RULE}\n\n"
-        "작성 원칙:\n"
-        f"1. **문항 최우선:** 기업이 제시한 문항의 모든 질문 요소와 필수 체크포인트에 빠짐없이 답하세요.\n"
-        f"2. **분량 엄수:** 공백 포함 약 {char_limit}자 내외(±10%) 분량으로 작성하세요.\n"
-        "3. **선택 소재 활용:** 아래 1번에 제공된 지원자의 선택 프로젝트·STAR 팩트를 스토리의 뼈대로 삼되, 구체적 행동(Action)·기술/방법론·정량 근거(Result)를 중심에 두세요.\n"
-        "4. **신념 융합:** 지원자의 커리어 신념이 어떻게 해당 프로젝트 행동으로 증명되었고, 그것이 왜 목표 기업의 비전·핵심가치와 맞닿아 있는지 자연스럽게 연결하세요.\n"
-        "5. `experience`에 없는 수치·기간·성과·기술명은 절대 추가하지 마세요.\n"
-        "6. 소제목 1줄 + 자연스러운 본문 단락 형태로 깔끔하게 출력하세요."
+    messages = build_chat_prompt(
+        "cover_letter_draft",
+        (
+            "[지원 기업] {company_name} / [지원 직무] {target_role}\n"
+            "[기업 제공 자소서 문항]\n{question}\n\n"
+            "[문항 심층 분석 & 필수 체크포인트]\n{qa_block}\n\n"
+            "[기업 신념 × 나의 신념 × 프로젝트 융합 방향]\n{fusion_angle}\n"
+            "[사용자 추가 요청] {extra_instructions}\n\n"
+            "=== 1. 지원자 선택 프로젝트 · STAR-L 실제 팩트 (experience - 유일한 사실 근거) ===\n"
+            "{experience_block}\n\n"
+            "=== 2. 지원자 신념·비전 (career_identity) ===\n"
+            "{identity_block}\n\n"
+            "=== 3. 목표 기업 리서치 & 3각 매칭 (company_research) ===\n"
+            "{company_block}\n\n"
+            "=== 4. 전개 구조 참고용 레퍼런스 (jasoseo_sample - 구조·논리만 참고, 사실 차용 절대 금지) ===\n"
+            "{sample_block}"
+        ),
+        system_vars={
+            "anti_hallucination_rule": ANTI_HALLUCINATION_RULE,
+            "char_limit": char_limit,
+        },
+        human_vars={
+            "company_name": state["company_name"],
+            "target_role": state.get("target_role") or "(미지정)",
+            "question": state["question"],
+            "qa_block": qa_block,
+            "fusion_angle": state.get("fusion_angle") or "(제공된 신념과 프로젝트의 교집합을 자연스럽게 도출)",
+            "extra_instructions": state.get("extra_instructions") or "없음",
+            "experience_block": "\n".join(state.get("experience_docs") or ["(등록된 경험 없음)"])[:12000],
+            "identity_block": "\n".join(state.get("identity_docs") or ["(미등록)"]),
+            "company_block": "\n".join(state.get("company_docs") or ["(미등록)"]),
+            "sample_block": "\n".join(state.get("sample_docs") or ["(등록된 레퍼런스 없음)"]),
+        },
     )
 
-    user_prompt = (
-        f"[지원 기업] {state['company_name']} / [지원 직무] {state.get('target_role') or '(미지정)'}\n"
-        f"[기업 제공 자소서 문항]\n{state['question']}\n\n"
-        f"[문항 심층 분석 & 필수 체크포인트]\n{qa_block}\n\n"
-        f"[기업 신념 × 나의 신념 × 프로젝트 융합 방향]\n{state.get('fusion_angle') or '(제공된 신념과 프로젝트의 교집합을 자연스럽게 도출)'}\n"
-        f"[사용자 추가 요청] {state.get('extra_instructions') or '없음'}\n\n"
-        f"=== 1. 지원자 선택 프로젝트 · STAR 실제 팩트 (experience - 유일한 사실 근거) ===\n"
-        f"{chr(10).join(state.get('experience_docs') or ['(등록된 경험 없음)'])[:12000]}\n\n"
-        f"=== 2. 지원자 신념·비전 (career_identity) ===\n"
-        f"{chr(10).join(state.get('identity_docs') or ['(미등록)'])}\n\n"
-        f"=== 3. 목표 기업 리서치 & 3각 매칭 (company_research) ===\n"
-        f"{chr(10).join(state.get('company_docs') or ['(미등록)'])}\n\n"
-        f"=== 4. 전개 구조 참고용 레퍼런스 (jasoseo_sample - 구조·논리만 참고, 사실 차용 절대 금지) ===\n"
-        f"{chr(10).join(state.get('sample_docs') or ['(등록된 레퍼런스 없음)'])}"
-    )
-
-    response = await llm.ainvoke(
-        [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-    )
+    response = await ainvoke_tracked(llm, messages, caller="cover_letter:drafter")
     draft_text = response.content if isinstance(response.content, str) else str(response.content)
     return {"draft": draft_text.strip()}
 
@@ -579,33 +630,39 @@ async def critic(state: CoverLetterState) -> dict[str, Any]:
     llm = get_smart_llm(temperature=0.15, max_tokens=3000)
     qa_block = _format_question_analysis_block(state.get("question_analysis"))
 
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 대기업·유니콘 테크 기업 현업 실무 면접관입니다.\n"
-                f"환각 검증 기준: {ANTI_HALLUCINATION_RULE}\n"
-                "아래 기준으로 초안을 냉정하게 0~100점으로 평가하세요:\n"
-                "- **기업 문항 의도 및 필수 체크포인트 충족도 (30점)** — 문항이 묻는 본질에서 벗어나면 크게 감점\n"
-                "- **지원자 선택 프로젝트/STAR(`experience`) 기반 행동·정량 근거 구체성 (30점)**\n"
-                "- **기업 비전·가치와 지원자 신념의 자연스러운 3축 융합 (25점)**\n"
-                "- **목표 글자 수 준수 및 가독성/설득력 (15점)**\n"
-                "필수: `checkpoint_checks`에 각 문항 체크포인트의 `[충족]`/`[미흡]` 여부를 기록하고, "
-                "`experience`에 없는 수치·기업명·경험이 섞였다면 반드시 `hallucination_warnings`에 적고 크게 감점하세요."
-            )
+    messages = build_chat_prompt(
+        "cover_letter_critic",
+        (
+            "[지원 기업] {company_name} / [직무] {target_role}\n"
+            "[문항] {question} (목표 글자 수: {char_limit}자, 현재 초안 글자 수: {draft_len}자)\n\n"
+            "[문항 분석 & 필수 체크포인트]\n{qa_block}\n\n"
+            "[지원자 신념]\n{identity_block}\n\n"
+            "[기업 정보]\n{company_block}\n\n"
+            "[원본 사실 근거 (experience)]\n{experience_block}\n\n"
+            "[평가 대상 초안 (수정 {revision_count}회차)]\n{draft}"
         ),
-        HumanMessage(
-            content=(
-                f"[지원 기업] {state['company_name']} / [직무] {state.get('target_role', '')}\n"
-                f"[문항] {state['question']} (목표 글자 수: {state.get('char_limit', 800)}자, 현재 초안 글자 수: {len(state.get('draft', ''))}자)\n\n"
-                f"[문항 분석 & 필수 체크포인트]\n{qa_block}\n\n"
-                f"[지원자 신념]\n{chr(10).join(state.get('identity_docs') or [])[:1500]}\n\n"
-                f"[기업 정보]\n{chr(10).join(state.get('company_docs') or [])[:2000]}\n\n"
-                f"[원본 사실 근거 (experience)]\n{chr(10).join(state.get('experience_docs') or [])[:9000]}\n\n"
-                f"[평가 대상 초안 (수정 {state.get('revision_count', 0)}회차)]\n{state.get('draft', '')}"
-            )
-        ),
-    ]
-    evaluation = await ainvoke_structured(llm, CriticEvaluationSchema, messages, max_retries=2)
+        system_vars={"anti_hallucination_rule": ANTI_HALLUCINATION_RULE},
+        human_vars={
+            "company_name": state["company_name"],
+            "target_role": state.get("target_role", ""),
+            "question": state["question"],
+            "char_limit": state.get("char_limit", 800),
+            "draft_len": len(state.get("draft", "")),
+            "qa_block": qa_block,
+            "identity_block": "\n".join(state.get("identity_docs") or [])[:1500],
+            "company_block": "\n".join(state.get("company_docs") or [])[:2000],
+            "experience_block": "\n".join(state.get("experience_docs") or [])[:9000],
+            "revision_count": state.get("revision_count", 0),
+            "draft": state.get("draft", ""),
+        },
+    )
+    evaluation = await ainvoke_structured(
+        llm,
+        CriticEvaluationSchema,
+        messages,
+        max_retries=2,
+        caller=f"cover_letter:critic_r{state.get('revision_count', 0)}",
+    )
 
     history = list(state.get("critic_history") or [])
     history.append(
@@ -640,24 +697,25 @@ async def refiner(state: CoverLetterState) -> dict[str, Any]:
     llm = get_smart_llm(temperature=0.35)
     next_rev = int(state.get("revision_count", 0)) + 1
 
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 면접관의 비평을 반영해 자소서의 설득력과 밀도를 끌어올리는 시니어 에디터입니다.\n"
-                f"[필수 환각 방지 규칙]\n{ANTI_HALLUCINATION_RULE}\n"
-                "사실 근거에 없는 내용을 지어내지 말고, 지적된 약점과 환각 경고를 정확히 수정해 본문 전체를 다시 작성하세요."
-            )
+    messages = build_chat_prompt(
+        "cover_letter_refiner",
+        (
+            "[문항] {question} (목표 글자 수: {char_limit}자)\n\n"
+            "[현재 초안]\n{draft}\n\n"
+            "[면접관 비평 (점수: {critic_score}/100)]\n{critic_feedback}\n\n"
+            "[원본 사실 근거 (experience)]\n{experience_block}"
         ),
-        HumanMessage(
-            content=(
-                f"[문항] {state['question']} (목표 글자 수: {state.get('char_limit', 800)}자)\n\n"
-                f"[현재 초안]\n{state.get('draft', '')}\n\n"
-                f"[면접관 비평 (점수: {state.get('critic_score', 0)}/100)]\n{state.get('critic_feedback', '')}\n\n"
-                f"[원본 사실 근거 (experience)]\n{chr(10).join(state.get('experience_docs') or [])}"
-            )
-        ),
-    ]
-    response = await llm.ainvoke(messages)
+        system_vars={"anti_hallucination_rule": ANTI_HALLUCINATION_RULE},
+        human_vars={
+            "question": state["question"],
+            "char_limit": state.get("char_limit", 800),
+            "draft": state.get("draft", ""),
+            "critic_score": state.get("critic_score", 0),
+            "critic_feedback": state.get("critic_feedback", ""),
+            "experience_block": "\n".join(state.get("experience_docs") or []),
+        },
+    )
+    response = await ainvoke_tracked(llm, messages, caller=f"cover_letter:refiner_r{next_rev}")
     revised_text = response.content if isinstance(response.content, str) else str(response.content)
 
     return {
@@ -667,35 +725,44 @@ async def refiner(state: CoverLetterState) -> dict[str, Any]:
 
 
 async def de_ai_humanizer(state: CoverLetterState) -> dict[str, Any]:
-    """De-AI Humanizer (agents_md.md 5.2): AI 상투어 제거, 추상 수식어 축소, 문장 리듬 & 선호 문체 반영."""
+    """De-AI Humanizer (agents_md.md 5.2) + 코드 레벨 사후 검증(Unit 2)."""
     llm = get_smart_llm(temperature=0.35)
     preferred_tone = state.get("preferred_tone") or "담백하고 구체적인 실무 엔지니어 문체"
 
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 AI가 쓴 티를 완전히 지우고 실제 지원자가 직접 쓴 듯한 자연스러운 글로 다듬는 "
-                "De-AI Humanizer입니다.\n"
-                "필수 체크리스트:\n"
-                f"1. 상투적 AI 표현을 모두 제거·치환하세요 ({DE_AI_CLICHE_LIST}).\n"
-                "2. 과도한 추상 명사·수식어를 줄이고 실제 기술명, 수치, 행동 동사 중심으로 고치세요.\n"
-                "3. 단문과 중문을 섞어 문장 길이 리듬을 다양화하고, 지원자의 선호 문체를 자연스럽게 반영하세요.\n"
-                "4. 원문에 없는 새로운 사실/수치를 절대 추가하지 마세요.\n"
-                "5. 무엇을 어떻게 고쳤는지 `humanizer_changes` 리스트에 구체적으로 기록하세요."
-            )
+    messages = build_chat_prompt(
+        "cover_letter_humanizer",
+        (
+            "[목표 글자 수] 약 {char_limit}자\n"
+            "[지원자 선호 문체 (preferred_tone)]\n{preferred_tone}\n\n"
+            "[퇴고 완료 초안]\n{draft}"
         ),
-        HumanMessage(
-            content=(
-                f"[목표 글자 수] 약 {state.get('char_limit', 800)}자\n"
-                f"[지원자 선호 문체 (preferred_tone)]\n{preferred_tone}\n\n"
-                f"[퇴고 완료 초안]\n{state.get('draft', '')}"
-            )
-        ),
-    ]
-    result = await ainvoke_structured(llm, HumanizerOutputSchema, messages, max_retries=1)
+        system_vars={"de_ai_cliche_list": DE_AI_CLICHE_LIST},
+        human_vars={
+            "char_limit": state.get("char_limit", 800),
+            "preferred_tone": preferred_tone,
+            "draft": state.get("draft", ""),
+        },
+    )
+    result = await ainvoke_structured(
+        llm,
+        HumanizerOutputSchema,
+        messages,
+        max_retries=1,
+        caller="cover_letter:de_ai_humanizer",
+    )
+    final_text = result.final_text.strip()
+    post_warnings = validate_cover_letter_post_checks(
+        final_text,
+        experience_docs=state.get("experience_docs"),
+        sample_docs=state.get("sample_docs"),
+    )
+    if post_warnings:
+        logger.warning("Cover letter post-check warnings: %s", post_warnings)
+
     return {
-        "final_text": result.final_text.strip(),
+        "final_text": final_text,
         "humanizer_changes": result.humanizer_changes,
+        "post_check_warnings": post_warnings,
     }
 
 

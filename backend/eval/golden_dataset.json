@@ -1,0 +1,190 @@
+{
+  "version": "golden_v1",
+  "description": "커리어 포트폴리오 RAG 정량 평가 골든 데이터셋 (Unit 6 5대 질문 유형: 사실찾기/조건적용/수치검증/유사구분/문서없음)",
+  "corpus": [
+    {
+      "ref_id": "eval-proj-realtime-pay",
+      "doc_type": "experience",
+      "metadata": {
+        "project_name": "PayGuard 실시간 정산 엔진",
+        "section_title": "아키텍처 및 트러블슈팅",
+        "track": "engineering"
+      },
+      "content": "# PayGuard 실시간 정산 엔진 아키텍처\n\n## 1. 프로젝트 개요 및 배경\n소상공인 정산 플랫폼 PayGuard에서 결제 승인 후 정산 배치 처리가 하루 1회 새벽에 몰려 오전 정산 지연 민원이 반복되었습니다. 저는 백엔드 리드로서 3명 팀에서 이벤트 기반 실시간 정산 파이프라인 전환을 단독 설계하고 구현했습니다.\n\n## 2. 아키텍처 결정과 트레이드오프\n초기에는 RabbitMQ와 Kafka를 비교했으나, 장애 시 특정 시점 재처리(Replay)와 가맹점 ID 기준 파티션 순서 보장이 필수였기 때문에 Apache Kafka를 선택했습니다. 정산 상태 저장소는 PostgreSQL 16과 Redis Cluster를 조합했습니다.\n\n## 3. 동시성 트러블슈팅 (중복 정산 방지)\n프로모션 이벤트 당일 초당 1,800 TPS 트래픽이 몰리면서 동일 결제 건이 2회 중복 정산되는 Race Condition이 발생했습니다. 처음에는 단순 DB SELECT FOR UPDATE를 적용했으나 락 경합으로 P99 지연시간이 1,420ms까지 치솟았습니다. 이를 해결하기 위해 Redis Redlock 대신 결제 고유키(idempotency_key) 기반 DB 유니크 제약 + Outbox 패턴 + Redis Lua 스크립트 분산 락(TTL 3초)으로 전환했습니다.\n\n## 4. 정량 성과 및 검증\n부하 테스트(k6, 2,000 VU) 및 실서비스 3주 운영 결과, P99 정산 응답 지연시간이 1,420ms에서 185ms로 87% 단축되었고, 중복 정산 오류율은 0.42%에서 0.00%로 완전히 제거되었습니다. 일일 정산 마감 소요 시간도 기존 4시간 20분에서 실시간(평균 1.2초)으로 줄어들어 가맹점 CS 문의가 월 310건에서 42건으로 86.5% 감소했습니다.\n\n## 5. 회고 및 재발 방지 규칙 (Learning)\n락 타임아웃보다 느린 외부 PG API 호출을 트랜잭션 안에 두면 연쇄 장애가 발생한다는 교훈을 얻었습니다. 이후 외부 API 호출은 반드시 트랜잭션 경계 밖으로 분리하고 멱등성 키를 DB 제약조건으로 강제하는 사내 체크리스트를 문서화했습니다."
+    },
+    {
+      "ref_id": "eval-proj-commerce-cache",
+      "doc_type": "experience",
+      "metadata": {
+        "project_name": "FlashDeal 특가 커머스 캐시 최적화",
+        "section_title": "성능 개선 및 장애 대응",
+        "track": "engineering"
+      },
+      "content": "# FlashDeal 특가 커머스 캐시 최적화\n\n## 1. 문제 상황\n매일 정오 12시 선착순 타임특가 오픈 직후 상품 상세 조회 트래픽이 평시 대비 18배 급증해 MySQL 읽기 복제본 CPU가 98%에 도달하고 502 장애가 발생했습니다.\n\n## 2. 원인 분석과 해결 행동\n캐시 만료 시점에 수천 건의 요청이 동시에 DB로 몰리는 Cache Stampede(Thundering Herd)가 핵심 원인이었습니다. Redis에 상품 정보를 캐싱할 때 고정 TTL(300초) 대신 TTL Jitter(±45초 무작위 분산)와 Singleflight(요청 병합) 패턴을 적용했습니다. 또한 재고 차감은 DB 락이 아니라 Redis DECR 원자 연산과 비동기 SQS 영속화로 분리했습니다.\n\n## 3. 정량 결과\n특가 오픈 5분간 동시 접속자 12,000명 환경에서 MySQL CPU 사용률을 98%에서 31%로 67%p 낮췄고, 상품 상세 API 평균 응답시간을 890ms에서 48ms로 개선했습니다. Redis 메모리 사용량도 직렬화 포맷을 JSON에서 MessagePack으로 교체해 4.8GB에서 2.9GB로 39.6% 절감했습니다.\n\n## 4. 배운 점\n캐시 적중률(99.2%)만 모니터링하면 만료 직전 스파이크를 놓친다는 점을 깨닫고, 캐시 미스율 급증 알람과 사전 워밍업 배치를 배포 파이프라인에 포함했습니다."
+    },
+    {
+      "ref_id": "eval-proj-edu-rag",
+      "doc_type": "experience",
+      "metadata": {
+        "project_name": "EduPilot 학습 튜터 RAG 플랫폼",
+        "section_title": "검색 품질 개선 및 제품 기획",
+        "track": "product_planning"
+      },
+      "content": "# EduPilot 학습 튜터 RAG 플랫폼\n\n## 1. 기획 배경 및 사용자 인터뷰\n온라인 코딩 부트캠프 수강생 45명을 대상으로 심층 인터뷰를 진행한 결과, 질문의 68%가 강의 슬라이드와 과제 명세서에 이미 적힌 내용이었지만 검색어 불일치로 찾지 못해 멘토 대기 시간이 평균 38분에 달했습니다.\n\n## 2. 검색 파이프라인 및 평가 체계 개선\n초기 단순 벡터 검색(k=3)에서는 한국어 합성어와 에러 코드 검색 정확도가 64%에 머물렀습니다. 이를 해결하기 위해 500자/겹침 100자 마크다운 헤더 청킹, 한국어 2-gram BM25 + pgvector 코사인 유사도 RRF 하이브리드 검색, 그리고 20문항 골든 평가셋 기반 LLM-as-a-Judge 자동 채점을 도입했습니다.\n\n## 3. 성과 및 협업 지표\n검색 정확도(Hit@3)가 64%에서 92%로 28%p 상승했고, 환각 응답률은 19%에서 3% 이하로 줄었습니다. 멘토 1인당 일일 단순 반복 답변 건수가 42건에서 14건으로 66.7% 감소했으며, 6주 스프린트 동안 디자이너 1명·프론트엔드 1명과 주 2회 지표 리뷰를 운영해 마감 3일 전 조기 출시했습니다."
+    },
+    {
+      "ref_id": "eval-company-toss",
+      "doc_type": "company_research",
+      "metadata": {
+        "company_name": "토스페이먼츠",
+        "target_role": "백엔드 엔지니어"
+      },
+      "content": "[기업] 토스페이먼츠 (백엔드 엔지니어)\n[미션/비전] 결제의 모든 복잡함을 제거해 가맹점과 소비자에게 가장 빠르고 안전한 결제 인프라를 제공합니다.\n[핵심가치] 높은 자율성과 책임감(DRI), 데이터 기반 의사결정, 99.99% 이상의 무중단 결제 안정성, 멱등성과 장애 격리 설계.\n[최근 동향] 대형 커머스 가맹점 확장에 따라 대용량 트래픽 정산 지연 제로화와 실시간 이상거래 탐지 파이프라인 고도화에 집중하고 있습니다."
+    },
+    {
+      "ref_id": "eval-identity-belief",
+      "doc_type": "career_identity",
+      "metadata": {
+        "source_label": "커리어 신념·비전"
+      },
+      "content": "[커리어 비전] 측정 가능한 지표와 견고한 장애 격리 설계로 사용자가 불안을 느끼지 않는 금융·AI 인프라를 만드는 엔지니어.\n[핵심 신념] 1) 추측하지 않고 부하 테스트와 평가 데이터셋 같은 숫자로 증명한다. 2) 장애는 예외가 아니라 기본값이므로 멱등성과 재발 방지 체크리스트를 코드·DB 제약에 녹인다."
+    }
+  ],
+  "questions": [
+    {
+      "id": "q01",
+      "category": "fact_lookup",
+      "doc_types": ["experience"],
+      "question": "PayGuard 정산 엔진에서 RabbitMQ 대신 Apache Kafka를 선택한 이유는 무엇인가요?",
+      "reference_answer": "장애 시 특정 시점 재처리(Replay)와 가맹점 ID 기준 파티션 순서 보장이 필수였기 때문에 Apache Kafka를 선택했습니다.",
+      "expected_parent_ref_id": "eval-proj-realtime-pay",
+      "expected_keywords": ["Kafka", "Replay", "파티션"]
+    },
+    {
+      "id": "q02",
+      "category": "fact_lookup",
+      "doc_types": ["experience"],
+      "question": "PayGuard에서 중복 정산을 막기 위해 Redis Redlock 대신 어떤 조합을 도입했나요?",
+      "reference_answer": "결제 고유키(idempotency_key) 기반 DB 유니크 제약, Outbox 패턴, 그리고 TTL 3초의 Redis Lua 스크립트 분산 락 조합을 도입했습니다.",
+      "expected_parent_ref_id": "eval-proj-realtime-pay",
+      "expected_keywords": ["idempotency_key", "Outbox", "Lua"]
+    },
+    {
+      "id": "q03",
+      "category": "fact_lookup",
+      "doc_types": ["experience"],
+      "question": "FlashDeal에서 캐시 만료 시점에 요청이 DB로 몰리는 현상을 어떻게 해결했나요?",
+      "reference_answer": "Cache Stampede를 해결하기 위해 고정 TTL(300초) 대신 ±45초 무작위 TTL Jitter와 Singleflight(요청 병합) 패턴을 적용했습니다.",
+      "expected_parent_ref_id": "eval-proj-commerce-cache",
+      "expected_keywords": ["Jitter", "Singleflight", "Cache Stampede"]
+    },
+    {
+      "id": "q04",
+      "category": "fact_lookup",
+      "doc_types": ["experience"],
+      "question": "EduPilot 프로젝트에서 한국어 합성어와 에러 코드 검색 정확도를 높이기 위해 도입한 검색 방식은?",
+      "reference_answer": "500자/겹침 100자 마크다운 헤더 청킹과 한국어 2-gram BM25 + pgvector 코사인 유사도 RRF 하이브리드 검색을 도입했습니다.",
+      "expected_parent_ref_id": "eval-proj-edu-rag",
+      "expected_keywords": ["2-gram", "BM25", "RRF"]
+    },
+    {
+      "id": "q05",
+      "category": "metric_verify",
+      "doc_types": ["experience"],
+      "question": "PayGuard 정산 파이프라인 개선 후 P99 응답 지연시간과 중복 정산 오류율은 어떻게 변했나요?",
+      "reference_answer": "P99 정산 응답 지연시간이 1,420ms에서 185ms로 87% 단축되었고, 중복 정산 오류율은 0.42%에서 0.00%로 제거되었습니다.",
+      "expected_parent_ref_id": "eval-proj-realtime-pay",
+      "expected_keywords": ["185ms", "87%", "0.00%"]
+    },
+    {
+      "id": "q06",
+      "category": "metric_verify",
+      "doc_types": ["experience"],
+      "question": "FlashDeal에서 직렬화 포맷을 바꾼 뒤 Redis 메모리가 얼마나 줄었나요?",
+      "reference_answer": "JSON에서 MessagePack으로 교체해 Redis 메모리 사용량을 4.8GB에서 2.9GB로 39.6% 절감했습니다.",
+      "expected_parent_ref_id": "eval-proj-commerce-cache",
+      "expected_keywords": ["MessagePack", "2.9GB", "39.6%"]
+    },
+    {
+      "id": "q07",
+      "category": "metric_verify",
+      "doc_types": ["experience"],
+      "question": "EduPilot 검색 개선 이후 Hit@3 정확도와 환각 응답률 변화 수치를 알려주세요.",
+      "reference_answer": "Hit@3 정확도가 64%에서 92%로 28%p 상승했고, 환각 응답률은 19%에서 3% 이하로 줄었습니다.",
+      "expected_parent_ref_id": "eval-proj-edu-rag",
+      "expected_keywords": ["92%", "19%", "3%"]
+    },
+    {
+      "id": "q08",
+      "category": "disambiguate",
+      "doc_types": ["experience"],
+      "question": "Redis를 쓴 두 프로젝트 중, 결제 멱등성·중복 정산 방지가 목적이었던 프로젝트와 그 핵심 기법은?",
+      "reference_answer": "PayGuard 실시간 정산 엔진이며, 결제 고유키 DB 유니크 제약, Outbox 패턴, Redis Lua 스크립트 분산 락을 적용했습니다.",
+      "expected_parent_ref_id": "eval-proj-realtime-pay",
+      "expected_keywords": ["PayGuard", "idempotency_key", "Lua"]
+    },
+    {
+      "id": "q09",
+      "category": "disambiguate",
+      "doc_types": ["experience"],
+      "question": "Redis를 쓴 두 프로젝트 중, 재고 차감과 상품 상세 조회 캐시 스탬피드를 다룬 프로젝트의 MySQL CPU 개선 수치는?",
+      "reference_answer": "FlashDeal 특가 커머스 캐시 최적화 프로젝트이며, MySQL CPU 사용률을 98%에서 31%로 67%p 낮췄습니다.",
+      "expected_parent_ref_id": "eval-proj-commerce-cache",
+      "expected_keywords": ["FlashDeal", "98%", "31%"]
+    },
+    {
+      "id": "q10",
+      "category": "disambiguate",
+      "doc_types": ["experience"],
+      "question": "CS 또는 멘토 반복 문의 감소 성과를 낸 프로젝트 중 온라인 부트캠프 수강생을 대상으로 한 프로젝트의 지표는?",
+      "reference_answer": "EduPilot 학습 튜터 RAG 플랫폼이며, 멘토 1인당 일일 단순 반복 답변 건수가 42건에서 14건으로 66.7% 감소했습니다.",
+      "expected_parent_ref_id": "eval-proj-edu-rag",
+      "expected_keywords": ["EduPilot", "42건", "14건"]
+    },
+    {
+      "id": "q11",
+      "category": "condition_apply",
+      "doc_types": ["experience"],
+      "question": "외부 API 장애가 DB 트랜잭션 전체로 번지는 걸 막기 위해 정리한 재발 방지 원칙은 무엇인가요?",
+      "reference_answer": "외부 PG API 호출을 트랜잭션 경계 밖으로 분리하고, 멱등성 키를 DB 제약조건으로 강제하는 사내 체크리스트를 문서화했습니다.",
+      "expected_parent_ref_id": "eval-proj-realtime-pay",
+      "expected_keywords": ["트랜잭션 경계", "멱등성 키"]
+    },
+    {
+      "id": "q12",
+      "category": "condition_apply",
+      "doc_types": ["experience"],
+      "question": "디자이너와 프론트엔드 개발자와 함께 6주 스프린트를 운영해 마감 전에 출시한 협업 경험이 있나요?",
+      "reference_answer": "EduPilot 프로젝트에서 6주 스프린트 동안 디자이너 1명·프론트엔드 1명과 주 2회 지표 리뷰를 운영해 마감 3일 전 조기 출시했습니다.",
+      "expected_parent_ref_id": "eval-proj-edu-rag",
+      "expected_keywords": ["6주", "디자이너", "조기 출시"]
+    },
+    {
+      "id": "q13",
+      "category": "condition_apply",
+      "doc_types": ["company_research"],
+      "question": "토스페이먼츠 백엔드 엔지니어 직무가 최근 집중하는 기술 과제는 무엇인가요?",
+      "reference_answer": "대형 커머스 가맹점 확장에 따른 대용량 트래픽 정산 지연 제로화와 실시간 이상거래 탐지 파이프라인 고도화에 집중하고 있습니다.",
+      "expected_parent_ref_id": "eval-company-toss",
+      "expected_keywords": ["정산 지연", "이상거래"]
+    },
+    {
+      "id": "q14",
+      "category": "out_of_scope",
+      "doc_types": ["experience"],
+      "question": "Kubernetes 멀티 클러스터 Istio 서비스 메시를 직접 구축한 프로젝트의 노드 수와 비용 절감률은?",
+      "reference_answer": "등록된 포트폴리오에서 확인할 수 없습니다.",
+      "expected_parent_ref_id": null,
+      "expected_keywords": []
+    },
+    {
+      "id": "q15",
+      "category": "out_of_scope",
+      "doc_types": ["experience"],
+      "question": "iOS SwiftUI 모바일 앱을 앱스토어에 출시해 받은 평점과 다운로드 수는 얼마인가요?",
+      "reference_answer": "등록된 포트폴리오에서 확인할 수 없습니다.",
+      "expected_parent_ref_id": null,
+      "expected_keywords": []
+    }
+  ]
+}

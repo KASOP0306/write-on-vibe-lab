@@ -291,6 +291,13 @@ export const api = {
     }),
   copilotChat: (body, onEvent) =>
     streamSSE("/api/agents/copilot/chat", body, onEvent),
+  getCopilotHistory: (threadId) =>
+    apiRequest(`/api/agents/copilot/history/${encodeURIComponent(threadId)}`),
+  listCopilotMemories: () => apiRequest("/api/agents/copilot/memories"),
+  deleteCopilotMemory: (key) =>
+    apiRequest(`/api/agents/copilot/memories/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    }),
   retrospectApplication: (body, onEvent) =>
     streamSSE("/api/agents/applications/retrospect", body, onEvent),
 };

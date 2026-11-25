@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres.aio import AsyncPostgresStore
 from pgvector.sqlalchemy import Vector
 from psycopg import AsyncConnection
 from sqlalchemy import (
@@ -356,13 +357,39 @@ async def init_db() -> None:
                 "ADD COLUMN IF NOT EXISTS external_competency_notes JSONB NOT NULL DEFAULT '{}'::jsonb"
             )
         )
-    logger.info("PostgreSQL tables and pgvector extension initialized.")
+        # Unit 5: pgvector HNSW 코사인 유사도 인덱스 (검색 속도·확장성 확보)
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_vector_documents_embedding_hnsw "
+                "ON vector_documents USING hnsw (embedding vector_cosine_ops)"
+            )
+        )
+    logger.info("PostgreSQL tables, pgvector extension, and HNSW index initialized.")
 
     conninfo = get_psycopg_conninfo()
     async with await AsyncConnection.connect(conninfo, autocommit=True) as aconn:
         checkpointer = AsyncPostgresSaver(aconn)
         await checkpointer.setup()
-    logger.info("LangGraph AsyncPostgresSaver checkpoint tables initialized.")
+        store = AsyncPostgresStore(
+            aconn,
+            index={
+                "dims": settings.embedding_dim,
+                "embed": _store_embed_texts,
+                "fields": ["text"],
+            },
+        )
+        await store.setup()
+    logger.info("LangGraph AsyncPostgresSaver & AsyncPostgresStore tables initialized.")
+
+
+async def _store_embed_texts(texts: list[str]) -> list[list[float]]:
+    """AsyncPostgresStore 장기 기억용 비동기 임베딩 어댑터 (Titan Embed v2 1024차원)."""
+    from app.core.bedrock import embed_text
+
+    vectors: list[list[float]] = []
+    for item in texts:
+        vectors.append(await embed_text(str(item)))
+    return vectors
 
 
 async def close_db() -> None:

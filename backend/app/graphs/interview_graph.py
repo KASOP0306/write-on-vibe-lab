@@ -17,6 +17,7 @@ from app.core.star_rubric import (
     evaluate_star_experience_rubric,
 )
 from app.core.vector_store import DocType, try_upsert_document
+from app.prompts import build_chat_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,21 @@ class InterviewState(TypedDict, total=False):
     vector_synced: bool
 
 
-def _build_context_text(state: InterviewState) -> str:
+def _build_context_text(state: InterviewState, max_recent_turns: int = 6) -> str:
+    """초기 메모 + 최근 Q&A 턴을 조합한다. 턴이 길어지면 오래된 턴은 핵심 요약으로 압축해 토큰을 제어한다."""
     lines = [f"[초기 메모]\n{state.get('raw_notes', '')}"]
     qa_history = state.get("qa_history") or []
     if qa_history:
-        lines.append("\n[추가 질의응답 누적]")
-        for idx, turn in enumerate(qa_history, start=1):
+        older = qa_history[:-max_recent_turns] if len(qa_history) > max_recent_turns else []
+        recent = qa_history[-max_recent_turns:]
+        if older:
+            lines.append("\n[이전 턴 요약 (압축)]")
+            for idx, turn in enumerate(older, start=1):
+                ans = str(turn.get("answer", "")).strip()
+                lines.append(f"- 턴 {idx} 핵심 답변: {ans[:180]}{'...' if len(ans) > 180 else ''}")
+        lines.append("\n[최근 질의응답 누적]")
+        offset = len(older)
+        for idx, turn in enumerate(recent, start=offset + 1):
             qs = " / ".join(turn.get("questions") or [])
             ans = turn.get("answer", "")
             lines.append(f"턴 {idx} 질문: {qs}\n턴 {idx} 답변: {ans}")
@@ -135,20 +145,22 @@ def route_after_prepare(state: InterviewState) -> str:
 
 
 async def extract_star(state: InterviewState) -> dict[str, Any]:
-    """누적된 메모와 Q&A에서 STAR 구조와 정량 지표를 추출한다."""
+    """누적된 메모와 Q&A에서 5축 STAR-L 구조와 정량 지표를 추출한다."""
     llm = get_fast_llm(temperature=0.1)
     context_text = _build_context_text(state)
 
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 지원자의 거친 메모를 STAR(Situation, Task, Action, Result) 구조로 정리하는 "
-                "커리어 인터뷰 분석가입니다. 사용자가 언급하지 않은 수치, 기술, 성과는 절대 지어내지 마세요."
-            )
-        ),
-        HumanMessage(content=f"아래 내용을 바탕으로 STAR 구조를 추출해 주세요.\n\n{context_text}"),
-    ]
-    extracted = await ainvoke_structured(llm, StarExtractionSchema, messages, max_retries=1)
+    messages = build_chat_prompt(
+        "interview_extract",
+        "아래 내용을 바탕으로 5축 STAR-L 구조를 추출해 주세요.\n\n{context_text}",
+        human_vars={"context_text": context_text},
+    )
+    extracted = await ainvoke_structured(
+        llm,
+        StarExtractionSchema,
+        messages,
+        max_retries=1,
+        caller="interview:extract_star",
+    )
     return {"star": extracted.model_dump()}
 
 
@@ -201,32 +213,29 @@ async def generate_questions(state: InterviewState) -> dict[str, Any]:
         q for turn in qa_history for q in (turn.get("questions") or [])
     ]
 
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 DDI Funnel Probing과 Amazon Bar Raiser Drill-Down 기법을 구사하는 시니어 커리어 인터뷰어입니다.\n"
-                f"[현재 프로빙 단계] {depth_guide}\n\n"
-                "사용 가능한 프로빙 기법(`technique`):\n"
-                "- `ownership_drilldown`: 팀이 아닌 본인의 고유 의사결정·실행 경계 확인 ('I' Rule)\n"
-                "- `micro_behavioral`: 추상적 요약 대신 실제 취한 구체 행동·데이터·소통 장면 확인\n"
-                "- `counter_factual`: 포기한 대안, 제약조건, 리스크 트레이드오프 근거 검증\n"
-                "- `xyz_quantification`: Google XYZ 전후 비교 수치·규모·객관 검증 근거 확인\n"
-                "- `learning_transfer`: 단순 소감 대신 재발 방지 설계·다음 프로젝트 적용 원칙 확인\n\n"
-                "규칙:\n"
-                "1. 이전에 물어본 질문은 절대 반복하지 마세요.\n"
-                "2. 가장 점수가 낮은 축 2개를 서로 다른 기법으로 공략하는 짧고 답변하기 쉬운 역질문 2개를 만드세요."
-            )
+    messages = build_chat_prompt(
+        "interview_probe",
+        (
+            "[현재 STAR-L 요약]\n{star}\n\n"
+            "[현재 5축 점수 (낮은 순)]\n{weakest_summary}\n\n"
+            "[탐지된 빈틈]\n{missing_points}\n\n"
+            "[이미 물어본 질문 (반복 금지)]\n{prev_qs}"
         ),
-        HumanMessage(
-            content=(
-                f"[현재 STAR-L 요약]\n{star}\n\n"
-                f"[현재 5축 점수 (낮은 순)]\n{weakest_summary}\n\n"
-                f"[탐지된 빈틈]\n{missing_points}\n\n"
-                f"[이미 물어본 질문 (반복 금지)]\n{prev_qs or '(없음)'}"
-            )
-        ),
-    ]
-    followup = await ainvoke_structured(llm, FollowupQuestionsSchema, messages, max_retries=2)
+        system_vars={"depth_guide": depth_guide},
+        human_vars={
+            "star": str(star),
+            "weakest_summary": weakest_summary,
+            "missing_points": str(missing_points),
+            "prev_qs": str(prev_qs or "(없음)"),
+        },
+    )
+    followup = await ainvoke_structured(
+        llm,
+        FollowupQuestionsSchema,
+        messages,
+        max_retries=2,
+        caller="interview:generate_questions",
+    )
     structured: list[dict[str, str]] = []
     for item in (followup.questions or [])[:2]:
         q_text = item.question.strip()
@@ -364,7 +373,10 @@ async def stream_interview_graph(
     async with await AsyncConnection.connect(conninfo, autocommit=True) as aconn:
         checkpointer = AsyncPostgresSaver(aconn)
         graph = workflow.compile(checkpointer=checkpointer)
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 12,
+        }
 
         async for chunk in graph.astream(input_state, config=config, stream_mode="updates"):
             yield chunk

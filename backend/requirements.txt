@@ -7,6 +7,7 @@ psycopg[binary]
 psycopg-pool
 pgvector
 langchain
+langchain-text-splitters
 langgraph
 langgraph-checkpoint-postgres
 langchain-aws

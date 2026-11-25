@@ -18,7 +18,7 @@ from app.api.sse import (
     sse_node_end,
     sse_node_start,
 )
-from app.core.bedrock import ainvoke_structured, get_fast_llm
+from app.core.bedrock import ainvoke_structured, get_fast_llm, llm_telemetry_scope
 from app.core.database import (
     ApplicationLog,
     CompanyProfile,
@@ -28,8 +28,11 @@ from app.core.database import (
 )
 from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
+from app.graphs.copilot_agent_graph import (
+    get_copilot_thread_history,
+    stream_copilot_agent,
+)
 from app.graphs.copilot_graph import (
-    build_copilot_chat_graph,
     build_retrospect_graph,
     propose_new_project_blueprints,
 )
@@ -38,6 +41,7 @@ from app.graphs.cover_letter_graph import (
     recommend_cover_letter_materials,
 )
 from app.graphs.interview_graph import stream_interview_graph
+from app.tools.copilot_tools import delete_career_memory, list_career_memories
 from app.schemas.agents import (
     ApplicationLogResponse,
     ApplicationRetrospectRequest,
@@ -588,6 +592,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                 {
                     "final_text": accumulated.get("final_text", ""),
                     "diff_summary": accumulated.get("humanizer_changes", []),
+                    "post_check_warnings": accumulated.get("post_check_warnings", []),
                     "critic_score": accumulated.get("critic_score", 0),
                     "revision_count": accumulated.get("revision_count", 0),
                     "critic_history": accumulated.get("critic_history", []),
@@ -660,88 +665,114 @@ async def propose_copilot_projects(
 
 @router.post("/agents/copilot/chat")
 async def copilot_chat(payload: CopilotChatRequest):
+    """Agentic RAG 코파일럿 (ReAct 도구 호출 + 검색 전략 에스컬레이션 + 단기/장기 기억)."""
+    thread_id = (payload.thread_id or "").strip() or f"copilot-{uuid.uuid4().hex[:10]}"
+
     async def event_stream():
         try:
-            graph = build_copilot_chat_graph()
-            initial_state = {
-                "message": payload.message.strip(),
-                "project_id": payload.project_id,
-                "company_profile_id": payload.company_profile_id,
-                "focus_weakness": payload.focus_weakness.strip(),
-                "chat_history": [m.model_dump() for m in payload.chat_history],
-            }
-            accumulated: dict[str, Any] = dict(initial_state)
+            with llm_telemetry_scope(f"copilot_agent:{thread_id}") as telemetry:
+                yield sse_node_start(
+                    "model",
+                    "질문을 분석하고 필요한 도구(포트폴리오 검색·캐릭터·기업·웹·장기기억)를 판단하는 중...",
+                )
+                final_res: dict[str, Any] = {}
 
-            yield sse_node_start(
-                "copilot_retriever",
-                "포트폴리오 캐릭터 약점·리서치한 기업 동향·신념·보유 경험을 불러오는 중...",
-            )
+                async for chunk in stream_copilot_agent(
+                    thread_id=thread_id,
+                    message=payload.message.strip(),
+                    focus_weakness=payload.focus_weakness.strip(),
+                    company_profile_id=payload.company_profile_id,
+                ):
+                    if "__final_result__" in chunk:
+                        final_res = chunk["__final_result__"]
+                        continue
 
-            async for chunk in graph.astream(initial_state, stream_mode="updates"):
-                for node_name, update in chunk.items():
-                    accumulated.update(update)
-
-                    if node_name == "copilot_retriever":
-                        yield sse_node_end(
-                            "copilot_retriever",
-                            {
-                                "experience_count": len(update.get("experience_docs") or []),
-                            },
-                        )
-                        yield sse_node_start(
-                            "relevance_grader",
-                            "최신 외부 사례·레퍼런스 웹 검색이 필요한지 판단하는 중...",
-                        )
-                    elif node_name == "relevance_grader":
-                        is_suff = bool(update.get("is_sufficient"))
-                        yield sse_node_end(
-                            "relevance_grader",
-                            {
-                                "is_sufficient": is_suff,
-                                "reason": update.get("grade_reason", ""),
-                                "rewritten_query": update.get("rewritten_query", ""),
-                            },
-                        )
-                        if not is_suff:
-                            yield sse_node_start(
-                                "web_search_fallback",
-                                f"최신 웹 사례·레퍼런스를 검색하는 중: '{update.get('rewritten_query', '')}'",
+                    for node_name, update in chunk.items():
+                        if node_name == "model":
+                            msgs = update.get("messages") or []
+                            last_ai = msgs[-1] if msgs else None
+                            t_calls = getattr(last_ai, "tool_calls", None) or []
+                            if t_calls:
+                                call_summaries = [
+                                    {
+                                        "name": c.get("name"),
+                                        "args": c.get("args") or {},
+                                    }
+                                    for c in t_calls
+                                ]
+                                yield sse_node_end(
+                                    "model",
+                                    {"decision": "tool_call", "tool_calls": call_summaries},
+                                )
+                                labels = ", ".join(c.get("name", "") for c in t_calls)
+                                yield sse_node_start(
+                                    "tools",
+                                    f"에이전트가 선택한 도구를 실행하는 중: {labels}",
+                                )
+                            else:
+                                yield sse_node_end("model", {"decision": "final_answer"})
+                        elif node_name == "tools":
+                            used_tools = update.get("used_tools") or []
+                            yield sse_node_end(
+                                "tools",
+                                {
+                                    "tool_count": update.get("tool_count", 0),
+                                    "latest_tools": used_tools[-2:],
+                                },
                             )
-                        else:
                             yield sse_node_start(
-                                "copilot_answer",
-                                "포트폴리오 캐릭터와 기업 리서치를 바탕으로 새 프로젝트 가이드를 작성하는 중...",
+                                "model",
+                                "도구 결과를 검토해 추가 검색이 필요한지 판단하고 답변을 정리하는 중...",
                             )
-                    elif node_name == "web_search_fallback":
-                        yield sse_node_end(
-                            "web_search_fallback",
-                            {"web_source_count": len(update.get("web_sources") or [])},
-                        )
-                        yield sse_node_start(
-                            "copilot_answer",
-                            "캐릭터 약점·기업 리서치·웹 검색 결과를 결합해 실행 가이드를 정리하는 중...",
-                        )
-                    elif node_name == "copilot_answer":
-                        yield sse_node_end(
-                            "copilot_answer",
-                            {"char_count": len(update.get("answer") or "")},
-                        )
+                        elif node_name == "stop":
+                            yield sse_node_start(
+                                "stop",
+                                "도구 호출 상한에 도달해 수집된 근거로 최종 답변을 마무리하는 중...",
+                            )
+                            yield sse_node_end("stop", {"capped": True})
 
-            yield sse_done(
-                {
-                    "answer": accumulated.get("answer", ""),
-                    "used_web_fallback": bool(accumulated.get("used_web_fallback")),
-                    "web_sources": [
-                        {"title": s.get("title", ""), "url": s.get("url", "")}
-                        for s in (accumulated.get("web_sources") or [])
-                    ],
-                }
-            )
+                yield sse_done(
+                    {
+                        "thread_id": final_res.get("thread_id", thread_id),
+                        "answer": final_res.get("answer", ""),
+                        "tool_count": final_res.get("tool_count", 0),
+                        "used_tools": final_res.get("used_tools", []),
+                        "used_web_fallback": bool(final_res.get("used_web_fallback")),
+                        "telemetry": telemetry.summary(),
+                    }
+                )
         except Exception as exc:
-            logger.exception("Copilot chat SSE failed: %s", exc)
+            logger.exception("Copilot agent SSE failed: %s", exc)
             yield sse_error(f"새 프로젝트 코파일럿 실행 중 오류가 발생했습니다: {exc}")
 
     return create_sse_response(event_stream())
+
+
+@router.get("/agents/copilot/history/{thread_id}")
+async def get_copilot_history(thread_id: str) -> dict[str, Any]:
+    """단기 기억 체크포인터(AsyncPostgresSaver)에 저장된 특정 대화 스레드 기록을 반환한다."""
+    try:
+        messages = await get_copilot_thread_history(thread_id)
+        return {"thread_id": thread_id, "messages": messages}
+    except Exception as exc:
+        logger.warning("Failed to load copilot thread history %s: %s", thread_id, exc)
+        return {"thread_id": thread_id, "messages": []}
+
+
+@router.get("/agents/copilot/memories")
+async def get_copilot_memories() -> list[dict[str, Any]]:
+    """장기 기억 Store(AsyncPostgresStore)에 저장된 사용자 커리어 메모 목록을 조회한다."""
+    try:
+        return await list_career_memories(limit=30)
+    except Exception as exc:
+        logger.warning("Failed to list career memories: %s", exc)
+        return []
+
+
+@router.delete("/agents/copilot/memories/{memory_key}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_copilot_memory(memory_key: str) -> None:
+    """장기 기억 Store에서 특정 메모를 삭제한다."""
+    await delete_career_memory(memory_key)
 
 
 @router.get("/applications", response_model=list[ApplicationLogResponse])

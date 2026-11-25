@@ -136,7 +136,10 @@ class CopilotChatMessage(BaseModel):
 
 
 class CopilotChatRequest(BaseModel):
-    message: str = Field(..., min_length=2, description="새 프로젝트 코파일럿 질문")
+    message: str = Field(..., min_length=1, description="새 프로젝트 코파일럿 질문")
+    thread_id: str | None = Field(
+        default=None, description="단기 기억(AsyncPostgresSaver) 대화 스레드 ID (미지정 시 자동 생성)"
+    )
     project_id: int | None = Field(default=None, description="참고할 기존 프로젝트 ID (선택)")
     company_profile_id: int | None = Field(
         default=None, description="연결할 리서치 목표 기업 ID (선택)"
