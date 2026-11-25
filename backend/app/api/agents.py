@@ -29,7 +29,10 @@ from app.core.database import (
 from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
 from app.graphs.copilot_graph import build_copilot_chat_graph, build_retrospect_graph
-from app.graphs.cover_letter_graph import build_cover_letter_graph
+from app.graphs.cover_letter_graph import (
+    build_cover_letter_graph,
+    recommend_cover_letter_materials,
+)
 from app.graphs.interview_graph import stream_interview_graph
 from app.schemas.agents import (
     ApplicationLogResponse,
@@ -38,6 +41,7 @@ from app.schemas.agents import (
     CompanyResearchRequest,
     CopilotChatRequest,
     CoverLetterGenerateRequest,
+    CoverLetterRecommendRequest,
     InterestClipResponse,
     InterestClipSaveRequest,
     InterestSearchRequest,
@@ -92,6 +96,7 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                         "grade_gaps",
                         {
                             "completeness_score": update.get("completeness_score", 0),
+                            "star_scores": update.get("star_scores", {}),
                             "is_sufficient": update.get("is_sufficient", False),
                             "missing_points": update.get("missing_points", []),
                         },
@@ -117,6 +122,7 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                     "experience_id": final_state.get("saved_experience_id"),
                     "star": final_state.get("star", {}),
                     "completeness_score": final_state.get("completeness_score", 0),
+                    "star_scores": final_state.get("star_scores", {}),
                     "vector_synced": final_state.get("vector_synced", False),
                 }
             )
@@ -126,6 +132,7 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                 {
                     "questions": final_state.get("questions", []),
                     "completeness_score": final_state.get("completeness_score", 0),
+                    "star_scores": final_state.get("star_scores", {}),
                     "missing_points": final_state.get("missing_points", []),
                     "star": final_state.get("star", {}),
                 },
@@ -452,8 +459,29 @@ async def list_interest_clips(
 
 
 # ==============================================================================
-# 워크플로우 ③: 자소서 생성 · 비평 · 퇴고 · De-AI 루프 (SSE)
+# 워크플로우 ③: 자소서 문항 심층 분석 · 추천 (REST) & 생성 · 비평 · 퇴고 · De-AI (SSE)
 # ==============================================================================
+@router.post("/agents/cover-letter/recommend")
+async def recommend_cover_letter(
+    payload: CoverLetterRecommendRequest,
+) -> dict[str, Any]:
+    """Step 1: 기업 제공 문항을 심층 해부하고 등록된 프로젝트·STAR 중 최적 1~2개를 추천한다."""
+    try:
+        return await recommend_cover_letter_materials(
+            company_name=payload.company_name.strip(),
+            company_profile_id=payload.company_profile_id,
+            target_role=payload.target_role.strip(),
+            question=payload.question.strip(),
+            char_limit=payload.char_limit,
+        )
+    except Exception as exc:
+        logger.exception("Cover letter material recommendation failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"문항 분석 및 프로젝트 추천 중 오류가 발생했습니다: {exc}",
+        )
+
+
 @router.post("/agents/cover-letter/generate")
 async def generate_cover_letter(payload: CoverLetterGenerateRequest):
     async def event_stream():
@@ -466,12 +494,16 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                 "question": payload.question.strip(),
                 "char_limit": payload.char_limit,
                 "extra_instructions": payload.extra_instructions.strip(),
+                "selected_project_ids": list(payload.selected_project_ids or []),
+                "selected_experience_ids": list(payload.selected_experience_ids or []),
+                "question_analysis": dict(payload.question_analysis or {}),
+                "fusion_angle": payload.fusion_angle.strip(),
             }
             accumulated: dict[str, Any] = dict(initial_state)
 
             yield sse_node_start(
                 "multi_source_retriever",
-                "경험·신념·기업 리서치·자소서 레퍼런스를 doc_type별로 격리 검색하는 중...",
+                "선택한 프로젝트·STAR 원문과 신념·기업 리서치·레퍼런스를 격리 로드하는 중...",
             )
 
             async for chunk in graph.astream(initial_state, stream_mode="updates"):
@@ -482,6 +514,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                         yield sse_node_end(
                             "multi_source_retriever",
                             {
+                                "selected_project_count": len(update.get("used_projects") or []),
                                 "experience_count": len(update.get("experience_docs") or []),
                                 "identity_count": len(update.get("identity_docs") or []),
                                 "company_count": len(update.get("company_docs") or []),
@@ -490,7 +523,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                         )
                         yield sse_node_start(
                             "drafter",
-                            "지원자 경험 팩트와 기업 비전을 결합해 1차 초안을 작성하는 중...",
+                            "문항 핵심 의도 × 선택 프로젝트·STAR × 기업·내 신념 3축 융합 초안을 작성하는 중...",
                         )
                     elif node_name == "drafter":
                         yield sse_node_end(
@@ -498,7 +531,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                             {"char_count": len(update.get("draft") or "")},
                         )
                         yield sse_node_start(
-                            "critic", "면접관 관점에서 초안을 엄격하게 평가하는 중..."
+                            "critic", "면접관 관점에서 문항 체크포인트·팩트·신념 융합도를 엄격 평가하는 중..."
                         )
                     elif node_name == "critic":
                         score = update.get("critic_score", 0)
@@ -509,6 +542,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                                 "score": score,
                                 "revision": rev,
                                 "feedback": update.get("critic_feedback", ""),
+                                "checkpoint_checks": update.get("checkpoint_checks", []),
                             },
                         )
                         if rev >= 2 or score >= 85:
@@ -548,6 +582,10 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                     "critic_score": accumulated.get("critic_score", 0),
                     "revision_count": accumulated.get("revision_count", 0),
                     "critic_history": accumulated.get("critic_history", []),
+                    "checkpoint_checks": accumulated.get("checkpoint_checks", []),
+                    "used_projects": accumulated.get("used_projects", []),
+                    "used_experiences": accumulated.get("used_experiences", []),
+                    "question_analysis": accumulated.get("question_analysis", {}),
                 }
             )
         except Exception as exc:

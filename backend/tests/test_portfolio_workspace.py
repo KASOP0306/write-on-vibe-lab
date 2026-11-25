@@ -14,6 +14,13 @@ from app.core.project_templates import (
     infer_track_for_section_type,
     normalize_project_types,
 )
+from app.core.star_rubric import (
+    compute_average_star_axes,
+    compute_portfolio_overall_score,
+    compute_weighted_star_score,
+    get_rubric_reference_payload,
+    normalize_star_scores,
+)
 from app.tools.document_parser import DocumentParseError, parse_uploaded_file
 from app.tools.github_analyzer import GitHubAnalyzerError, parse_github_url
 from app.tools.portfolio_manager import STANDARD_SECTIONS, render_portfolio_markdown
@@ -153,6 +160,49 @@ class TestPortfolioWorkspace(unittest.TestCase):
         parsed = json.loads(repaired)
         self.assertEqual(parsed["name"], "demo")
         self.assertEqual(len(parsed["items"]), 1)
+
+    # --- 5축 STAR-L BARS & 6축 포트폴리오 루브릭 단위 테스트 ---
+    def test_star_rubric_weighted_math_and_normalization(self) -> None:
+        axes = {
+            "situation": {"level": 4, "score": 80},
+            "task": {"level": 3, "score": 60},
+            "action": {"level": 5, "score": 100},
+            "result": {"level": 2, "score": 40},
+            "learning": {"level": 4, "score": 80},
+        }
+        # 80*0.15 + 60*0.15 + 100*0.35 + 40*0.25 + 80*0.10 = 12 + 9 + 35 + 10 + 8 = 74
+        self.assertEqual(compute_weighted_star_score(axes), 74)
+        self.assertEqual(normalize_star_scores({}), {})
+        norm = normalize_star_scores({"axes": axes})
+        self.assertEqual(norm["weighted_score"], 74)
+
+        avg = compute_average_star_axes([{"star_scores": norm}, {"star_scores": {}}])
+        self.assertEqual(avg["evaluated_count"], 1)
+        self.assertEqual(avg["total_count"], 2)
+        self.assertEqual(avg["weighted_score"], 74)
+
+    def test_portfolio_6_axis_score_and_reference(self) -> None:
+        scores = compute_portfolio_overall_score(
+            {
+                "problem_depth": {"score": 90},
+                "evidence_impact": {"score": 80},
+                "narrative_coherence": {"score": 70},
+                "time_execution": {"score": 60},
+                "people_collaboration": {"score": 30},
+                "adaptability_growth": {"score": 60},
+            }
+        )
+        self.assertEqual(scores["internal_score"], 80)
+        self.assertEqual(scores["external_score"], 50)
+        self.assertEqual(scores["overall_score"], 65)
+
+        ref = get_rubric_reference_payload()
+        self.assertEqual(len(ref["star_rubric"]["axes"]), 5)
+        self.assertEqual(len(ref["portfolio_rubric"]["axes"]), 6)
+        internal = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "internal"]
+        external = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "external"]
+        self.assertEqual(len(internal), 3)
+        self.assertEqual(len(external), 3)
 
 
 if __name__ == "__main__":

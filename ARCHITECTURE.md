@@ -246,13 +246,14 @@ sequenceDiagram
 | **Sections** | `POST / PUT / DELETE /api/projects/{id}/sections` | REST | 공통 코어·트랙별·커스텀 포트폴리오 섹션 개별 편집·삭제 (`experience` 벡터 자동 동기화) |
 | **Doc-to-Project** | `POST /api/projects/analyze-document`, `/import-structured` | Multipart / REST | 기획서·발표자료·보고서(`.pdf`/`.pptx`/`.docx`/`.md` 등) 업로드 → 선택 트랙 맞춤 프로젝트·섹션·STAR 자동 생성 |
 | **GitHub Auto** | `POST /api/projects/analyze-github/stream`, `/import-github`, `/{id}/sync-github` | SSE / REST | GitHub 트리·핵심 코드 딥 분석 → 선택 트랙 맞춤 섹션 & STAR 자동 생성 / 재동기화 |
-| **Doc Update** | `POST /api/projects/{id}/ingest-document`, `/apply-updates` | Multipart / REST | `.pdf`/`.docx`/`.pptx`/`.md`/`.ipynb`/코드 업로드 → 섹션별 Before/After Diff 제안 및 반영 |
+| **Doc Update** | `POST /api/projects/{id}/ingest-document`, `/sections/{sec_id}/ingest-document`, `/apply-updates` | Multipart / REST | 프로젝트 전체 또는 **개별 섹션 전용** 파일·메모 업로드 → Before/After Diff 제안 및 반영 |
+| **STAR & Persona** | `POST /api/projects/{id}/star-onboarding/*`, `/{id}/evaluate-stars`, `GET/POST /api/projects/portfolio-diagnosis` | REST | 선택형 STAR 보강 역질문, 5축 STAR-L BARS 채점, 6축 포트폴리오 캐릭터(내적 3 × 외적 3, 강점·약점 50:50) 진단 |
 | **AI Prune** | `POST /api/projects/{id}/prune`, `/prune/apply` | REST | 프로젝트 트랙별 심사 기준 기반 중복·미사여구·불필요 내용 탐지 및 압축/삭제 |
 | **Recap / Export** | `GET /api/projects/{id}/export-markdown`, `POST /api/projects/{id}/recap` | REST | 모듈 섹션 기반 즉시 Markdown 내보내기 및 AI 리캡 생성 |
-| **Agent ①** | `POST /api/agents/interview/start`, `/reply` | SSE | 경험 채굴 역질문 시작·답변·강제저장(`force_save`) |
+| **Agent ①** | `POST /api/agents/interview/start`, `/reply` | SSE | 경험 채굴 역질문 시작·답변·강제저장(`force_save`, 5축 STAR-L 자동 채점 포함) |
 | **Agent ②** | `POST /api/agents/company/research` | SSE | 목표 기업 리서치 & 신념 3각 매칭 저장 |
 | **Interest Search** | `POST /api/agents/interests/search`, `/clip` | SSE / REST | 관심사 뉴스·기술 검색 및 선택 클립 벡터 저장 |
-| **Agent ③** | `POST /api/agents/cover-letter/generate` | SSE | 자소서 생성·비평·퇴고·De-AI Humanizer 실행 |
+| **Agent ③** | `POST /api/agents/cover-letter/recommend`, `/generate` | REST / SSE | 기업 문항 심층 해부 & 프로젝트·STAR 추천(1단계) → 선택 소재 × 기업·내 신념 3축 융합 작성·비평·퇴고·De-AI(2단계) |
 | **Agent ④** | `POST /api/agents/copilot/chat` | SSE | 과거 경험 + 관심사 + Corrective RAG 조언 채팅 |
 | **Retrospect** | `POST /api/agents/applications/retrospect` | SSE | 취준 결과 저장 + Gap 분석 + 보완 액션 플랜 도출 |
 

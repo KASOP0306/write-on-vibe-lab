@@ -43,6 +43,8 @@ class UserProfile(Base):
     core_beliefs: Mapped[str] = mapped_column(Text, default="", nullable=False)
     target_roles: Mapped[str] = mapped_column(Text, default="", nullable=False)
     preferred_tone: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    portfolio_diagnosis: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    external_competency_notes: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -156,6 +158,7 @@ class Experience(Base):
     result: Mapped[str] = mapped_column(Text, default="", nullable=False)
     quantified_metrics: Mapped[str] = mapped_column(Text, default="", nullable=False)
     completeness_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    star_scores: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     raw_notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -294,6 +297,24 @@ async def init_db() -> None:
             text(
                 "UPDATE project_sections SET track = 'engineering' "
                 "WHERE track = 'core' AND section_type IN ('architecture', 'decisions', 'implementation', 'troubleshooting')"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE experiences "
+                "ADD COLUMN IF NOT EXISTS star_scores JSONB NOT NULL DEFAULT '{}'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS portfolio_diagnosis JSONB NOT NULL DEFAULT '{}'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS external_competency_notes JSONB NOT NULL DEFAULT '{}'::jsonb"
             )
         )
     logger.info("PostgreSQL tables and pgvector extension initialized.")

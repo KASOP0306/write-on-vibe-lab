@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import PortfolioDiagnosisPanel from "../components/PortfolioDiagnosisPanel.jsx";
 import ProjectWorkspaceView from "../components/ProjectWorkspaceView.jsx";
 import StepIndicator from "../components/StepIndicator.jsx";
 import {
@@ -555,6 +556,9 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
           </form>
         )}
       </div>
+
+      {/* 6-Axis Portfolio Character & Dual Radar Diagnosis Dashboard */}
+      <PortfolioDiagnosisPanel projectCount={projects.length} />
 
       {/* Registered Portfolio Projects Hub with Multi-Track Filter */}
       <div className="space-y-4">

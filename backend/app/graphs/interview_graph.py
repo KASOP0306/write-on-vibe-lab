@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.core.bedrock import ainvoke_structured, get_fast_llm
 from app.core.database import Experience, get_psycopg_conninfo, get_session_factory
+from app.core.star_rubric import evaluate_star_experience_rubric
 from app.core.vector_store import DocType, try_upsert_document
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class InterviewState(TypedDict, total=False):
     force_save: bool
     star: dict[str, str]
     completeness_score: int
+    star_scores: dict[str, Any]
     is_sufficient: bool
     missing_points: list[str]
     questions: list[str]
@@ -124,35 +126,15 @@ async def extract_star(state: InterviewState) -> dict[str, Any]:
 
 
 async def grade_gaps(state: InterviewState) -> dict[str, Any]:
-    """추출된 STAR 경험의 완성도, 본인 기여도, 정량 근거 빈틈을 채점한다."""
-    llm = get_fast_llm(temperature=0.1)
+    """추출된 STAR 경험을 DDI BARS × Amazon Bar Raiser × Google XYZ 5축 루브릭으로 객관 채점한다."""
     star = state.get("star") or {}
     context_text = _build_context_text(state)
-
-    messages = [
-        SystemMessage(
-            content=(
-                "당신은 엄격한 테크 면접관입니다. STAR 경험 기록을 평가해 0~100점으로 채점하세요.\n"
-                "채점 기준:\n"
-                "- 문제 상황과 본인 역할이 명확한가 (25점)\n"
-                "- 기술적 의사결정/대안 비교/트러블슈팅 과정이 구체적인가 (35점)\n"
-                "- 정량적 성과 또는 전후 비교 근거가 있는가 (25점)\n"
-                "- 배운 점 또는 구조적 개선 연결이 있는가 (15점)\n"
-                "80점 이상이고 핵심 빈틈이 없을 때만 is_sufficient=true로 설정하세요."
-            )
-        ),
-        HumanMessage(
-            content=(
-                f"[추출된 STAR]\n{star}\n\n"
-                f"[원본 맥락]\n{context_text}"
-            )
-        ),
-    ]
-    grade = await ainvoke_structured(llm, GapGradeSchema, messages, max_retries=1)
+    result = await evaluate_star_experience_rubric(star, context_text=context_text)
     return {
-        "completeness_score": grade.completeness_score,
-        "is_sufficient": grade.is_sufficient,
-        "missing_points": grade.missing_points,
+        "completeness_score": result["completeness_score"],
+        "star_scores": result["star_scores"],
+        "is_sufficient": result["is_sufficient"],
+        "missing_points": result["missing_points"],
     }
 
 
@@ -211,6 +193,7 @@ async def save_experience(state: InterviewState) -> dict[str, Any]:
             result=str(star.get("result") or ""),
             quantified_metrics=str(star.get("quantified_metrics") or ""),
             completeness_score=completeness_score,
+            star_scores=dict(state.get("star_scores") or {}),
             raw_notes=raw_notes,
         )
         session.add(exp)

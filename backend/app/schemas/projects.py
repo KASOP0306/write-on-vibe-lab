@@ -21,6 +21,7 @@ class ExperienceSummary(BaseModel):
     result: str
     quantified_metrics: str
     completeness_score: int
+    star_scores: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -122,6 +123,7 @@ class ProjectDetailResponse(ProjectResponse):
     sections: list[ProjectSectionResponse] = Field(default_factory=list)
     documents: list[ProjectDocumentResponse] = Field(default_factory=list)
     assembled_markdown: str = ""
+    star_averages: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectRecapResponse(BaseModel):
@@ -284,3 +286,78 @@ class PruneApplyRequest(BaseModel):
 class PruneApplyResponse(BaseModel):
     updated_count: int = 0
     vector_synced_count: int = 0
+
+
+# ==============================================================================
+# 섹션 단일 문서 AI 업데이트 · 선택형 STAR 역질문 · 5축 STAR 채점 · 6축 캐릭터 진단
+# ==============================================================================
+class SectionIngestProposalResponse(BaseModel):
+    section_id: int
+    section_type: str
+    track: str = "core"
+    title: str
+    filename: str
+    source_type: str
+    file_format: str
+    raw_char_count: int
+    parse_info: str = ""
+    document_summary: str = ""
+    change_summary: str = ""
+    before_content: str = ""
+    proposed_content: str = ""
+    added_facts: list[str] = Field(default_factory=list)
+    suggested_tech_stack_additions: list[str] = Field(default_factory=list)
+
+
+class StarOnboardingQuestion(BaseModel):
+    id: str
+    target_axis: str
+    question: str
+    rationale: str = ""
+    example_hint: str = ""
+
+
+class StarOnboardingQuestionsResponse(BaseModel):
+    diagnosis_summary: str = ""
+    weak_axes: list[str] = Field(default_factory=list)
+    questions: list[StarOnboardingQuestion] = Field(default_factory=list)
+
+
+class StarOnboardingAnswerItem(BaseModel):
+    target_axis: str = ""
+    question: str
+    answer: str = ""
+
+
+class StarOnboardingApplyRequest(BaseModel):
+    answers: list[StarOnboardingAnswerItem] = Field(default_factory=list)
+    apply_section_patches: bool = Field(
+        default=True, description="답변에서 도출된 프로젝트 섹션 보강안도 자동 반영할지 여부"
+    )
+
+
+class StarOnboardingApplyResponse(BaseModel):
+    saved_experiences: list[ExperienceSummary] = Field(default_factory=list)
+    applied_section_types: list[str] = Field(default_factory=list)
+    section_patches: list[dict[str, Any]] = Field(default_factory=list)
+    vector_synced_count: int = 0
+
+
+class ProjectStarEvaluateResponse(BaseModel):
+    evaluated_count: int = 0
+    experiences: list[ExperienceSummary] = Field(default_factory=list)
+    star_averages: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioDiagnosisRequest(BaseModel):
+    external_notes: dict[str, str] | None = Field(
+        default=None,
+        description="선택: 외적 역량 보충 메모 (time_execution / people_collaboration / adaptability_growth)",
+    )
+
+
+class PortfolioDiagnosisResponse(BaseModel):
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
+    external_notes: dict[str, str] = Field(default_factory=dict)
+    overall_star_averages: dict[str, Any] = Field(default_factory=dict)
+    project_count: int = 0

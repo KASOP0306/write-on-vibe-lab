@@ -103,8 +103,15 @@ export const api = {
   deleteInterest: (id) =>
     apiRequest(`/api/interests/${id}`, { method: "DELETE" }),
 
-  // Projects, Modular Sections, Documents & Prune
+  // Projects, Modular Sections, Documents, Rubrics, STAR Onboarding & Diagnosis
   getProjectTemplates: () => apiRequest("/api/projects/templates"),
+  getRubricReference: () => apiRequest("/api/projects/rubric-reference"),
+  getPortfolioDiagnosis: () => apiRequest("/api/projects/portfolio-diagnosis"),
+  runPortfolioDiagnosis: (externalNotes = null) =>
+    apiRequest("/api/projects/portfolio-diagnosis", {
+      method: "POST",
+      body: JSON.stringify({ external_notes: externalNotes }),
+    }),
   listProjects: (projectType = null) =>
     apiRequest(
       projectType
@@ -176,6 +183,24 @@ export const api = {
       method: "POST",
       body: formData,
     }),
+  ingestSectionDocument: (projectId, sectionId, formData) =>
+    apiRequest(`/api/projects/${projectId}/sections/${sectionId}/ingest-document`, {
+      method: "POST",
+      body: formData,
+    }),
+  getStarOnboardingQuestions: (projectId) =>
+    apiRequest(`/api/projects/${projectId}/star-onboarding/questions`, {
+      method: "POST",
+    }),
+  applyStarOnboarding: (projectId, data) =>
+    apiRequest(`/api/projects/${projectId}/star-onboarding/apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  evaluateProjectStars: (projectId) =>
+    apiRequest(`/api/projects/${projectId}/evaluate-stars`, {
+      method: "POST",
+    }),
   applyProjectUpdates: (projectId, data) =>
     apiRequest(`/api/projects/${projectId}/apply-updates`, {
       method: "POST",
@@ -227,6 +252,11 @@ export const api = {
     streamSSE("/api/agents/company/research", body, onEvent),
   searchInterests: (body, onEvent) =>
     streamSSE("/api/agents/interests/search", body, onEvent),
+  recommendCoverLetter: (body) =>
+    apiRequest("/api/agents/cover-letter/recommend", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   generateCoverLetter: (body, onEvent) =>
     streamSSE("/api/agents/cover-letter/generate", body, onEvent),
   copilotChat: (body, onEvent) =>

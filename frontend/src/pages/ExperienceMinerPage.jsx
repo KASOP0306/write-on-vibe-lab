@@ -13,6 +13,7 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
   const [messages, setMessages] = useState([]);
   const [steps, setSteps] = useState([]);
   const [completenessScore, setCompletenessScore] = useState(0);
+  const [starScores, setStarScores] = useState(null);
   const [missingPoints, setMissingPoints] = useState([]);
   const [draftStar, setDraftStar] = useState(null);
   const [savedResult, setSavedResult] = useState(null);
@@ -47,10 +48,12 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
       if (ev.data?.completeness_score !== undefined) {
         setCompletenessScore(ev.data.completeness_score);
       }
+      if (ev.data?.star_scores?.axes) setStarScores(ev.data.star_scores);
       if (ev.data?.missing_points) setMissingPoints(ev.data.missing_points);
     } else if (ev.event === "interrupt") {
       setThreadId(ev.thread_id);
       setCompletenessScore(ev.data?.completeness_score ?? 0);
+      if (ev.data?.star_scores?.axes) setStarScores(ev.data.star_scores);
       setMissingPoints(ev.data?.missing_points || []);
       if (ev.data?.star) setDraftStar(ev.data.star);
       setMessages((prev) => [
@@ -64,6 +67,7 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
       setSavedResult(ev.data);
       setThreadId(null);
       setCompletenessScore(ev.data?.completeness_score ?? 100);
+      if (ev.data?.star_scores?.axes) setStarScores(ev.data.star_scores);
       setMissingPoints([]);
       if (ev.data?.star) setDraftStar(ev.data.star);
       onRefresh();
@@ -142,6 +146,7 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
     setMessages([]);
     setSteps([]);
     setCompletenessScore(0);
+    setStarScores(null);
     setMissingPoints([]);
     setDraftStar(null);
     setSavedResult(null);
@@ -314,7 +319,11 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
 
         {/* Right: Meter + Live STAR Preview + Steps */}
         <div className="space-y-4">
-          <StarMeter score={completenessScore} missingPoints={missingPoints} />
+          <StarMeter
+            score={completenessScore}
+            missingPoints={missingPoints}
+            starScores={starScores}
+          />
           <StepIndicator steps={steps} />
 
           {draftStar && (

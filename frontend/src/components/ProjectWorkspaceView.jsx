@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   ArrowLeft,
+  BookOpen,
   Check,
   Copy,
   Download,
@@ -13,9 +14,11 @@ import {
   FileUp,
   FolderOpen,
   Github,
+  HelpCircle,
   Layers,
   Link2,
   Loader2,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -25,12 +28,22 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import RadarChart, { RubricReferenceModal } from "./RadarChart.jsx";
+import StarMeter from "./StarMeter.jsx";
 import {
   DEFAULT_TRACKS,
   TRACK_SHORT_LABELS,
   getTrackBadgeClass,
   groupSectionsByTrack,
 } from "../utils/projectTracks.js";
+
+const STAR_RADAR_LABELS = [
+  { id: "situation", label: "S 상황" },
+  { id: "task", label: "T 책임" },
+  { id: "action", label: "A 행동" },
+  { id: "result", label: "R 성과" },
+  { id: "learning", label: "L 회고" },
+];
 
 export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefresh }) {
   const [project, setProject] = useState(null);
@@ -83,6 +96,31 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [markdownModal, setMarkdownModal] = useState(null);
   const [recapLoading, setRecapLoading] = useState(false);
   const [copiedMd, setCopiedMd] = useState(false);
+
+  // Section-Scoped Document AI Update State
+  const [showSecAiBar, setShowSecAiBar] = useState(false);
+  const [secAiMode, setSecAiMode] = useState("file"); // "file" | "text"
+  const [secUpdateStrategy, setSecUpdateStrategy] = useState("merge"); // "merge" | "replace" | "append"
+  const [secFile, setSecFile] = useState(null);
+  const [secPastedText, setSecPastedText] = useState("");
+  const [secInstruction, setSecInstruction] = useState("");
+  const [secIngesting, setSecIngesting] = useState(false);
+  const [secIngestError, setSecIngestError] = useState("");
+  const [secProposal, setSecProposal] = useState(null);
+  const [applyingSecProposal, setApplyingSecProposal] = useState(false);
+
+  // Opt-in STAR Deepening Interview & 5-Axis Evaluation State
+  const [dismissedStarBanner, setDismissedStarBanner] = useState(false);
+  const [showStarOnboarding, setShowStarOnboarding] = useState(false);
+  const [loadingStarQs, setLoadingStarQs] = useState(false);
+  const [starOnboardingData, setStarOnboardingData] = useState(null);
+  const [starAnswers, setStarAnswers] = useState({});
+  const [applyOnboardingPatches, setApplyOnboardingPatches] = useState(true);
+  const [submittingStarOnboarding, setSubmittingStarOnboarding] = useState(false);
+  const [onboardingError, setOnboardingError] = useState("");
+  const [evaluatingStars, setEvaluatingStars] = useState(false);
+  const [rubricRef, setRubricRef] = useState(null);
+  const [showRubricModal, setShowRubricModal] = useState(false);
 
   const loadProject = async (keepActiveKey = true) => {
     setLoading(true);
@@ -468,6 +506,156 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     URL.revokeObjectURL(url);
   };
 
+  const handleOpenRubricModal = async () => {
+    setShowRubricModal(true);
+    if (!rubricRef) {
+      try {
+        const ref = await api.getRubricReference();
+        setRubricRef(ref);
+      } catch (err) {
+        console.warn("Failed to load rubric reference:", err);
+      }
+    }
+  };
+
+  const handleRunSectionIngest = async (e) => {
+    e.preventDefault();
+    if (!activeSection || secIngesting) return;
+    setSecIngestError("");
+    setSecProposal(null);
+
+    const formData = new FormData();
+    if (secAiMode === "file") {
+      if (!secFile) {
+        setSecIngestError("업로드할 파일을 선택해 주세요.");
+        return;
+      }
+      formData.append("file", secFile);
+    } else {
+      if (!secPastedText.trim()) {
+        setSecIngestError("이 섹션에 반영할 메모나 문서 내용을 입력해 주세요.");
+        return;
+      }
+      formData.append("pasted_text", secPastedText.trim());
+    }
+    formData.append("instruction", secInstruction.trim());
+    formData.append("update_mode", secUpdateStrategy);
+
+    setSecIngesting(true);
+    try {
+      const proposal = await api.ingestSectionDocument(
+        projectId,
+        activeSection.id,
+        formData
+      );
+      setSecProposal(proposal);
+    } catch (err) {
+      setSecIngestError(err.message);
+    } finally {
+      setSecIngesting(false);
+    }
+  };
+
+  const handleApplySectionProposal = async () => {
+    if (!activeSection || !secProposal || applyingSecProposal) return;
+    setApplyingSecProposal(true);
+    try {
+      const updated = await api.updateSection(projectId, activeSection.id, {
+        title: secProposal.title || editTitle,
+        content: secProposal.proposed_content,
+      });
+      setEditTitle(updated.title);
+      setEditContent(updated.content);
+      setSectionStatus(
+        updated.vector_synced
+          ? "섹션 AI 업데이트 반영 및 벡터 동기화 완료"
+          : "섹션 AI 업데이트 반영 완료"
+      );
+      setSecProposal(null);
+      setSecFile(null);
+      setSecPastedText("");
+      setSecInstruction("");
+      setShowSecAiBar(false);
+      await loadProject(true);
+      onGlobalRefresh?.();
+    } catch (err) {
+      alert(`섹션 반영 실패: ${err.message}`);
+    } finally {
+      setApplyingSecProposal(false);
+    }
+  };
+
+  const handleOpenStarOnboarding = async () => {
+    setShowStarOnboarding(true);
+    setOnboardingError("");
+    if (starOnboardingData) return;
+    setLoadingStarQs(true);
+    try {
+      const data = await api.getStarOnboardingQuestions(projectId);
+      setStarOnboardingData(data);
+      const init = {};
+      (data.questions || []).forEach((q) => {
+        init[q.id] = "";
+      });
+      setStarAnswers(init);
+    } catch (err) {
+      setOnboardingError(err.message);
+    } finally {
+      setLoadingStarQs(false);
+    }
+  };
+
+  const handleSubmitStarOnboarding = async (e) => {
+    e.preventDefault();
+    if (!starOnboardingData || submittingStarOnboarding) return;
+    const answers = (starOnboardingData.questions || [])
+      .map((q) => ({
+        target_axis: q.target_axis,
+        question: q.question,
+        answer: (starAnswers[q.id] || "").trim(),
+      }))
+      .filter((a) => a.answer);
+
+    if (answers.length === 0) {
+      setOnboardingError("최소 1개 이상의 질문에 간단히 답변해 주세요.");
+      return;
+    }
+
+    setSubmittingStarOnboarding(true);
+    setOnboardingError("");
+    try {
+      await api.applyStarOnboarding(projectId, {
+        answers,
+        apply_section_patches: applyOnboardingPatches,
+      });
+      setShowStarOnboarding(false);
+      setStarOnboardingData(null);
+      setStarAnswers({});
+      setDismissedStarBanner(true);
+      await loadProject(false);
+      setActiveKey("stars");
+      onGlobalRefresh?.();
+    } catch (err) {
+      setOnboardingError(err.message);
+    } finally {
+      setSubmittingStarOnboarding(false);
+    }
+  };
+
+  const handleEvaluateProjectStars = async () => {
+    if (evaluatingStars) return;
+    setEvaluatingStars(true);
+    try {
+      await api.evaluateProjectStars(projectId);
+      await loadProject(true);
+      onGlobalRefresh?.();
+    } catch (err) {
+      alert(`5축 BARS 재채점 실패: ${err.message}`);
+    } finally {
+      setEvaluatingStars(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-12 flex items-center justify-center gap-2 text-sm text-slate-600">
@@ -500,9 +688,53 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     (t) => !projectTypes.includes(t.id)
   );
   const groupedSections = groupSectionsByTrack(project.sections || []);
+  const starAvg = project.star_averages || {};
+  const starRadarItems = STAR_RADAR_LABELS.map((m) => ({
+    id: m.id,
+    label: m.label,
+    score: starAvg?.axes?.[m.id]?.score || 0,
+  }));
+  const shouldSuggestStarOnboarding =
+    !dismissedStarBanner &&
+    ((project.experiences?.length || 0) === 0 ||
+      (starAvg.evaluated_count > 0 && (starAvg.weighted_score || 0) < 65));
 
   return (
     <div className="space-y-6">
+      {/* Opt-in Non-blocking STAR Deepening Banner */}
+      {shouldSuggestStarOnboarding && (
+        <div className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 to-indigo-50 px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <HelpCircle className="w-4 h-4 text-violet-600 shrink-0 mt-0.5" />
+            <div className="text-xs text-slate-700">
+              <strong className="text-violet-950">
+                STAR 경험이 아직 비어 있거나 보강 여지가 있습니다 (선택)
+              </strong>
+              <p className="text-slate-600 mt-0.5">
+                코드·문서에 없는 본인 역할(T), 의사결정 대안(A), 정량 성과(R)를 AI 역질문 3~4개로 가볍게 채워 보세요.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleOpenStarOnboarding}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>STAR 역질문 시작 (선택)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedStarBanner(true)}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-white/60 hover:text-slate-700"
+              title="배너 닫기"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
       {/* Header & Global Action Bar */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -584,6 +816,15 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleOpenStarOnboarding}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-900 hover:bg-violet-100"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>STAR 역질문</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -863,6 +1104,23 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSecIngestError("");
+                      setSecProposal(null);
+                      setShowSecAiBar((v) => !v);
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      showSecAiBar
+                        ? "border-indigo-500 bg-indigo-600 text-white"
+                        : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                    }`}
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                    <span>이 섹션 파일·AI 업데이트</span>
+                  </button>
+
                   <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
                     <button
                       type="button"
@@ -901,6 +1159,180 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 </div>
               </div>
 
+              {/* Section-Scoped File / Memo AI Update Bar */}
+              {showSecAiBar && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>
+                        &apos;{activeSection.title}&apos; 섹션 전용 파일·메모 AI 자동 업데이트
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px]">
+                      {[
+                        { id: "merge", label: "기존 유지 + 병합" },
+                        { id: "append", label: "하단 보강" },
+                        { id: "replace", label: "문서 기준 재작성" },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setSecUpdateStrategy(m.id)}
+                          className={`rounded-md px-2 py-0.5 font-semibold border ${
+                            secUpdateStrategy === m.id
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleRunSectionIngest} className="space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setSecAiMode("file")}
+                        className={`rounded-lg px-2.5 py-1 font-medium ${
+                          secAiMode === "file"
+                            ? "bg-slate-900 text-white"
+                            : "bg-white border border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        파일 업로드 (.pdf/.docx/.pptx/.md/.ipynb/코드)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSecAiMode("text")}
+                        className={`rounded-lg px-2.5 py-1 font-medium ${
+                          secAiMode === "text"
+                            ? "bg-slate-900 text-white"
+                            : "bg-white border border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        메모·로그 직접 붙여넣기
+                      </button>
+                    </div>
+
+                    {secAiMode === "file" ? (
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.ipynb,.py,.js,.jsx,.ts,.tsx,.java,.go,.sql,.yaml,.yml,.json"
+                        onChange={(e) => setSecFile(e.target.files?.[0] || null)}
+                        className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
+                      />
+                    ) : (
+                      <textarea
+                        rows={4}
+                        value={secPastedText}
+                        onChange={(e) => setSecPastedText(e.target.value)}
+                        placeholder="이 섹션에 반영할 트러블슈팅 로그, 회의록, 벤치마크 수치, 인터뷰 메모 등을 붙여넣으세요..."
+                        className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={secInstruction}
+                        onChange={(e) => setSecInstruction(e.target.value)}
+                        placeholder="선택 지시: 예) Latency 전/후 수치와 원인 중심으로 정리해줘"
+                        className="flex-1 min-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
+                      />
+                      <button
+                        type="submit"
+                        disabled={secIngesting}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {secIngesting ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5" />
+                        )}
+                        <span>{secIngesting ? "AI 분석 중..." : "이 섹션 Diff 생성"}</span>
+                      </button>
+                    </div>
+
+                    {secIngestError && (
+                      <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+                        {secIngestError}
+                      </div>
+                    )}
+                  </form>
+
+                  {/* Inline Section Before / After Diff Preview */}
+                  {secProposal && (
+                    <div className="rounded-xl border border-emerald-200 bg-white p-4 space-y-3 text-xs">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-slate-900">
+                            AI 섹션 업데이트 제안 ({secProposal.filename})
+                          </div>
+                          {secProposal.change_summary && (
+                            <p className="text-indigo-700 mt-0.5">
+                              {secProposal.change_summary}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSecProposal(null)}
+                            className="rounded-lg border border-slate-200 px-2.5 py-1 text-slate-600 hover:bg-slate-50"
+                          >
+                            취소
+                          </button>
+                          <button
+                            type="button"
+                            disabled={applyingSecProposal}
+                            onClick={handleApplySectionProposal}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>{applyingSecProposal ? "반영 중..." : "이 섹션에 반영"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {(secProposal.added_facts || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {secProposal.added_facts.map((f, i) => (
+                            <span
+                              key={i}
+                              className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] text-emerald-800"
+                            >
+                              + {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                          <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            변경 전 (Before)
+                          </div>
+                          <pre className="whitespace-pre-wrap font-sans text-slate-600 max-h-48 overflow-y-auto">
+                            {secProposal.before_content || "(비어 있음)"}
+                          </pre>
+                        </div>
+                        <div className="rounded-lg bg-emerald-50/50 border border-emerald-200 p-3">
+                          <div className="text-[10px] font-bold uppercase text-emerald-700 mb-1">
+                            업데이트 제안 (After)
+                          </div>
+                          <pre className="whitespace-pre-wrap font-sans text-slate-800 max-h-48 overflow-y-auto">
+                            {secProposal.proposed_content}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {sectionViewMode === "edit" ? (
                 <textarea
                   rows={14}
@@ -935,26 +1367,115 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
               </div>
             </div>
           ) : activeKey === "stars" ? (
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  연결된 STAR 경험 ({project.experiences?.length || 0})
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  자소서 공방과 코파일럿에서 사실 근거(experience)로 활용됩니다.
-                </p>
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    연결된 STAR 경험 &amp; 5축 객관 평가 ({project.experiences?.length || 0})
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    DDI BARS × Amazon Bar Raiser × Google XYZ 기준으로 S·T·A·R·L 5축을 계량화합니다.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenRubricModal}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>평가 기준 레퍼런스</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenStarOnboarding}
+                    className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-900 hover:bg-violet-100"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    <span>STAR 역질문 보강</span>
+                  </button>
+                  {(project.experiences || []).length > 0 && (
+                    <button
+                      type="button"
+                      disabled={evaluatingStars}
+                      onClick={handleEvaluateProjectStars}
+                      className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {evaluatingStars ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      <span>{evaluatingStars ? "5축 채점 중..." : "5축 BARS 재채점"}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
+              {/* Project-level 5-Axis STAR-L Radar Card */}
+              {(project.experiences || []).length > 0 && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                  <div>
+                    <RadarChart
+                      items={starRadarItems}
+                      size={240}
+                      strokeColor="#4f46e5"
+                      fillColor="rgba(79, 70, 229, 0.16)"
+                    />
+                  </div>
+                  <div className="space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800">
+                        프로젝트 평균 STAR-L 종합
+                      </span>
+                      <span className="text-base font-extrabold text-indigo-700">
+                        {starAvg.evaluated_count > 0 ? `${starAvg.weighted_score}점` : "미채점"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      {starAvg.evaluated_count > 0
+                        ? `총 ${starAvg.total_count}건 중 ${starAvg.evaluated_count}건이 5축 BARS 기준으로 평가되었습니다.`
+                        : "우측 상단 '5축 BARS 재채점'을 누르면 기존 STAR 경험들의 S·T·A·R·L 5축 점수가 산출됩니다."}
+                    </p>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {starRadarItems.map((it) => (
+                        <div
+                          key={it.id}
+                          className="rounded-lg bg-white border border-slate-200 p-2 text-center"
+                        >
+                          <div className="text-[10px] font-bold text-slate-500">
+                            {it.label}
+                          </div>
+                          <div className="text-xs font-extrabold text-slate-900 mt-0.5">
+                            {it.score}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {(project.experiences || []).length === 0 ? (
-                <p className="text-sm text-slate-400 py-8 text-center">
-                  연결된 STAR 경험이 없습니다. 문서를 업로드하거나 &apos;2. 경험 채굴&apos;에서 추가해 보세요.
-                </p>
+                <div className="rounded-xl border border-dashed border-slate-200 py-8 px-4 text-center space-y-2">
+                  <p className="text-sm text-slate-500">
+                    연결된 STAR 경험이 없습니다.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleOpenStarOnboarding}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-violet-700"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AI 역질문 3~4개로 STAR 바로 채우기 (선택)</span>
+                  </button>
+                </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {project.experiences.map((exp) => (
                     <div
                       key={exp.id}
-                      className="rounded-xl border border-slate-200 p-4 space-y-1.5 text-xs"
+                      className="rounded-xl border border-slate-200 p-4 space-y-3 text-xs"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="font-bold text-sm text-slate-900">
@@ -969,23 +1490,29 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
-                      <p className="text-slate-700">
-                        <strong>S:</strong> {exp.situation}
-                      </p>
-                      <p className="text-slate-700">
-                        <strong>T:</strong> {exp.task}
-                      </p>
-                      <p className="text-slate-700">
-                        <strong>A:</strong> {exp.action}
-                      </p>
-                      <p className="text-slate-700">
-                        <strong>R:</strong> {exp.result}
-                      </p>
+                      <div className="space-y-1 text-slate-700">
+                        <p>
+                          <strong>S:</strong> {exp.situation}
+                        </p>
+                        <p>
+                          <strong>T:</strong> {exp.task}
+                        </p>
+                        <p>
+                          <strong>A:</strong> {exp.action}
+                        </p>
+                        <p>
+                          <strong>R:</strong> {exp.result}
+                        </p>
+                      </div>
                       {exp.quantified_metrics && (
                         <div className="rounded-md bg-emerald-50 px-2.5 py-1 text-emerald-800">
                           <strong>정량 지표:</strong> {exp.quantified_metrics}
                         </div>
                       )}
+                      <StarMeter
+                        score={exp.completeness_score}
+                        starScores={exp.star_scores}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1558,6 +2085,131 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
           </div>
         </div>
       )}
+
+      {/* Modal 5: Opt-in STAR Deepening Interview */}
+      {showStarOnboarding && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSubmitStarOnboarding}
+            className="bg-white rounded-2xl max-w-2xl w-full max-h-[88vh] flex flex-col shadow-xl"
+          >
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <HelpCircle className="w-4 h-4 text-violet-600" />
+                  <span>STAR 경험 보강 AI 역질문 (선택)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  답하고 싶은 질문만 간단히 2~3줄씩 적으셔도 5축 BARS 평가 STAR 경험과 관련 섹션이 자동 보강됩니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStarOnboarding(false)}
+                className="text-slate-400 hover:text-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 text-xs">
+              {loadingStarQs ? (
+                <div className="py-10 flex items-center justify-center gap-2 text-slate-600">
+                  <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
+                  <span>프로젝트 기록에서 빈약한 STAR-L 축을 진단하고 맞춤 역질문을 생성하는 중...</span>
+                </div>
+              ) : starOnboardingData ? (
+                <>
+                  {starOnboardingData.diagnosis_summary && (
+                    <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-violet-950">
+                      <strong>진단 요약:</strong> {starOnboardingData.diagnosis_summary}
+                    </div>
+                  )}
+
+                  {(starOnboardingData.questions || []).map((q, idx) => (
+                    <div
+                      key={q.id || idx}
+                      className="rounded-xl border border-slate-200 p-4 space-y-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-800">
+                          보강 축: {q.target_axis}
+                        </span>
+                        <span className="text-[11px] text-slate-500">{q.rationale}</span>
+                      </div>
+                      <div className="text-sm font-bold text-slate-900">
+                        Q{idx + 1}. {q.question}
+                      </div>
+                      {q.example_hint && (
+                        <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5">
+                          답변 힌트: {q.example_hint}
+                        </div>
+                      )}
+                      <textarea
+                        rows={3}
+                        value={starAnswers[q.id] || ""}
+                        onChange={(e) =>
+                          setStarAnswers((prev) => ({
+                            ...prev,
+                            [q.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="기억나는 사실, 수치, 선택 이유를 편하게 적어주세요 (비워두면 건너뜁니다)"
+                        className="w-full rounded-lg border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+                      />
+                    </div>
+                  ))}
+
+                  <label className="flex items-center gap-2 text-xs text-slate-700 pt-1">
+                    <input
+                      type="checkbox"
+                      checked={applyOnboardingPatches}
+                      onChange={(e) => setApplyOnboardingPatches(e.target.checked)}
+                    />
+                    <span>답변에서 나온 핵심 의사결정·성과를 프로젝트 관련 섹션에도 자동 보강</span>
+                  </label>
+                </>
+              ) : null}
+
+              {onboardingError && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
+                  {onboardingError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowStarOnboarding(false)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700"
+              >
+                나중에 하기
+              </button>
+              <button
+                type="submit"
+                disabled={loadingStarQs || submittingStarOnboarding || !starOnboardingData}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+              >
+                {submittingStarOnboarding ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {submittingStarOnboarding ? "STAR 생성 & 5축 채점 중..." : "답변 반영 및 5축 채점"}
+                </span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <RubricReferenceModal
+        open={showRubricModal}
+        onClose={() => setShowRubricModal(false)}
+        reference={rubricRef}
+      />
     </div>
   );
 }

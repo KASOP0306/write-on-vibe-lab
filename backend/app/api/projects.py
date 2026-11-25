@@ -36,6 +36,12 @@ from app.core.project_templates import (
     infer_track_for_section_type,
     normalize_project_types,
 )
+from app.core.star_rubric import (
+    compute_average_star_axes,
+    evaluate_star_experience_rubric,
+    get_rubric_reference_payload,
+    normalize_star_scores,
+)
 from app.core.vector_store import DocType, delete_document, try_upsert_document
 from app.schemas.projects import (
     AddTracksRequest,
@@ -49,6 +55,8 @@ from app.schemas.projects import (
     GitHubAnalyzeResponse,
     GitHubImportResponse,
     GitHubSyncRequest,
+    PortfolioDiagnosisRequest,
+    PortfolioDiagnosisResponse,
     ProjectCreateRequest,
     ProjectDetailResponse,
     ProjectDocumentResponse,
@@ -57,10 +65,15 @@ from app.schemas.projects import (
     ProjectSectionDraft,
     ProjectSectionResponse,
     ProjectSectionUpdateRequest,
+    ProjectStarEvaluateResponse,
     ProjectUpdateRequest,
     PruneApplyRequest,
     PruneApplyResponse,
     PruneProposalResponse,
+    SectionIngestProposalResponse,
+    StarOnboardingApplyRequest,
+    StarOnboardingApplyResponse,
+    StarOnboardingQuestionsResponse,
     StructuredProjectImportRequest,
 )
 from app.tools.document_parser import DocumentParseError, parse_uploaded_file
@@ -73,9 +86,13 @@ from app.tools.github_analyzer import (
 )
 from app.tools.portfolio_manager import (
     analyze_document_to_portfolio,
+    diagnose_portfolio_character,
+    generate_star_onboarding_questions,
     propose_document_updates,
     propose_noise_pruning,
+    propose_section_document_update,
     render_portfolio_markdown,
+    synthesize_star_onboarding_answers,
 )
 
 logger = logging.getLogger(__name__)
@@ -231,6 +248,125 @@ async def _ensure_sections_for_project_types(
 async def get_project_templates() -> dict[str, Any]:
     """공통 코어 + 5종 조합형 프로젝트 유형 트랙 팩 메타데이터를 반환한다."""
     return get_templates_payload()
+
+
+@router.get("/rubric-reference")
+async def get_rubric_reference() -> dict[str, Any]:
+    """5축 STAR-L BARS 및 6축 포트폴리오 캐릭터 진단 레퍼런스 기준표를 반환한다."""
+    return get_rubric_reference_payload()
+
+
+@router.get("/portfolio-diagnosis", response_model=PortfolioDiagnosisResponse)
+async def get_portfolio_diagnosis(
+    session: AsyncSession = Depends(get_db_session),
+) -> PortfolioDiagnosisResponse:
+    """캐시된 전체 포트폴리오 캐릭터 진단 + 전체 평균 STAR-L 5축 점수를 반환한다."""
+    profile = await session.get(UserProfile, 1)
+    projects = (
+        (await session.execute(select(Project.id))).scalars().all()
+    )
+    all_exps = (await session.execute(select(Experience))).scalars().all()
+    star_avg = compute_average_star_axes(
+        [{"star_scores": e.star_scores} for e in all_exps]
+    )
+    return PortfolioDiagnosisResponse(
+        diagnosis=dict(profile.portfolio_diagnosis or {}) if profile else {},
+        external_notes=dict(profile.external_competency_notes or {}) if profile else {},
+        overall_star_averages=star_avg,
+        project_count=len(projects),
+    )
+
+
+@router.post("/portfolio-diagnosis", response_model=PortfolioDiagnosisResponse)
+async def run_portfolio_diagnosis(
+    payload: PortfolioDiagnosisRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> PortfolioDiagnosisResponse:
+    """전체 프로젝트·섹션·STAR·신념·외적 보충 메모를 종합해 6축 육각형 포트폴리오 캐릭터를 진단·저장한다."""
+    profile = await session.get(UserProfile, 1)
+    if profile is None:
+        profile = UserProfile(id=1)
+        session.add(profile)
+        await session.commit()
+        await session.refresh(profile)
+
+    merged_ext = dict(profile.external_competency_notes or {})
+    if payload.external_notes is not None:
+        for k, v in payload.external_notes.items():
+            merged_ext[str(k).strip()] = str(v or "").strip()
+        profile.external_competency_notes = merged_ext
+        await session.commit()
+
+    stmt = (
+        select(Project)
+        .options(
+            selectinload(Project.sections),
+            selectinload(Project.experiences),
+        )
+        .order_by(Project.created_at.desc(), Project.id.desc())
+    )
+    projects = (await session.execute(stmt)).scalars().all()
+    if not projects:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="진단할 프로젝트가 아직 없습니다. 먼저 프로젝트를 1개 이상 등록해 주세요.",
+        )
+
+    projects_payload = [
+        {
+            **_project_to_dict(p),
+            "sections": [_section_to_dict(s) for s in p.sections],
+            "experiences": [
+                {
+                    "id": e.id,
+                    "title": e.title,
+                    "situation": e.situation,
+                    "task": e.task,
+                    "action": e.action,
+                    "result": e.result,
+                    "quantified_metrics": e.quantified_metrics,
+                    "completeness_score": e.completeness_score,
+                    "star_scores": normalize_star_scores(e.star_scores),
+                }
+                for e in p.experiences
+            ],
+        }
+        for p in projects
+    ]
+    profile_dict = {
+        "career_vision": profile.career_vision,
+        "core_beliefs": profile.core_beliefs,
+        "target_roles": profile.target_roles,
+        "preferred_tone": profile.preferred_tone,
+    }
+
+    try:
+        diagnosis = await diagnose_portfolio_character(
+            profile=profile_dict,
+            projects=projects_payload,
+            external_notes=merged_ext,
+        )
+    except Exception as exc:
+        logger.exception("Portfolio character diagnosis failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"포트폴리오 캐릭터 진단 중 오류가 발생했습니다: {exc}",
+        )
+
+    profile.portfolio_diagnosis = diagnosis
+    await session.commit()
+
+    all_exps = (await session.execute(select(Experience))).scalars().all()
+    star_avg = compute_average_star_axes(
+        [{"star_scores": e.star_scores} for e in all_exps]
+    )
+
+    return PortfolioDiagnosisResponse(
+        diagnosis=diagnosis,
+        external_notes=merged_ext,
+        overall_star_averages=star_avg,
+        project_count=len(projects),
+    )
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -679,6 +815,9 @@ async def get_project(
     assembled_md = render_portfolio_markdown(
         _project_to_dict(project), [_section_to_dict(s) for s in sections]
     )
+    star_avg = compute_average_star_axes(
+        [{"star_scores": e.star_scores} for e in experiences]
+    )
 
     return ProjectDetailResponse(
         id=project.id,
@@ -700,6 +839,7 @@ async def get_project(
         sections=[ProjectSectionResponse.model_validate(s) for s in sections],
         documents=[ProjectDocumentResponse.model_validate(d) for d in documents],
         assembled_markdown=assembled_md,
+        star_averages=star_avg,
     )
 
 
@@ -1345,4 +1485,267 @@ async def generate_project_recap(
         project_name=project.name,
         experience_count=len(experiences),
         markdown=markdown_text,
+    )
+
+
+# ==============================================================================
+# 7. 섹션 단일 문서 AI 업데이트 · 선택형 STAR 역질문 · 5축 STAR BARS 일괄 채점
+# ==============================================================================
+@router.post(
+    "/{project_id}/sections/{section_id}/ingest-document",
+    response_model=SectionIngestProposalResponse,
+)
+async def ingest_section_document(
+    project_id: int,
+    section_id: int,
+    file: UploadFile | None = File(default=None),
+    pasted_text: str = Form(default=""),
+    doc_title: str = Form(default=""),
+    instruction: str = Form(default=""),
+    update_mode: str = Form(default="merge"),
+    session: AsyncSession = Depends(get_db_session),
+) -> SectionIngestProposalResponse:
+    """특정 섹션 1개만을 대상으로 파일 또는 메모를 분석해 정밀 Before/After Diff를 제안한다."""
+    project = await _load_project_full(session, project_id)
+    target = next((s for s in project.sections if s.id == section_id), None)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Section {section_id} not found in project {project_id}.",
+        )
+
+    if file is not None and file.filename:
+        raw_bytes = await file.read()
+        try:
+            parsed = parse_uploaded_file(file.filename, raw_bytes)
+        except DocumentParseError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        filename = parsed["filename"]
+        file_format = parsed["file_format"]
+        source_type = "section_file_upload"
+        doc_text = parsed["text"]
+        parse_info = parsed["extra_info"]
+    elif pasted_text.strip():
+        filename = doc_title.strip() or f"{target.title}_메모.md"
+        file_format = "txt"
+        source_type = "section_pasted_note"
+        doc_text = pasted_text.strip()
+        parse_info = f"{len(doc_text)} chars"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="업로드할 파일 또는 업데이트할 메모 텍스트를 입력해 주세요.",
+        )
+
+    safe_mode = update_mode if update_mode in ("merge", "replace", "append") else "merge"
+    try:
+        proposal = await propose_section_document_update(
+            project=_project_to_dict(project),
+            target_section=_section_to_dict(target),
+            doc_text=doc_text,
+            filename=filename,
+            instruction=instruction.strip(),
+            update_mode=safe_mode,  # type: ignore[arg-type]
+        )
+    except Exception as exc:
+        logger.exception("Section-scoped document ingest failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"섹션 문서 AI 업데이트 분석 실패: {exc}",
+        )
+
+    return SectionIngestProposalResponse(
+        filename=filename,
+        source_type=source_type,
+        file_format=file_format,
+        raw_char_count=len(doc_text),
+        parse_info=parse_info,
+        **proposal,
+    )
+
+
+@router.post(
+    "/{project_id}/star-onboarding/questions",
+    response_model=StarOnboardingQuestionsResponse,
+)
+async def get_star_onboarding_questions(
+    project_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> StarOnboardingQuestionsResponse:
+    """선택형 프로젝트 STAR 딥다이브 역질문 3~4개를 생성한다."""
+    project = await _load_project_full(session, project_id)
+    exps_payload = [
+        {
+            "title": e.title,
+            "situation": e.situation,
+            "task": e.task,
+            "action": e.action,
+            "result": e.result,
+            "quantified_metrics": e.quantified_metrics,
+            "completeness_score": e.completeness_score,
+        }
+        for e in project.experiences
+    ]
+    try:
+        res = await generate_star_onboarding_questions(
+            project=_project_to_dict(project),
+            sections=[_section_to_dict(s) for s in project.sections],
+            experiences=exps_payload,
+        )
+    except Exception as exc:
+        logger.exception("STAR onboarding questions failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"STAR 보강 역질문 생성 실패: {exc}",
+        )
+    return StarOnboardingQuestionsResponse(**res)
+
+
+@router.post(
+    "/{project_id}/star-onboarding/apply",
+    response_model=StarOnboardingApplyResponse,
+)
+async def apply_star_onboarding(
+    project_id: int,
+    payload: StarOnboardingApplyRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> StarOnboardingApplyResponse:
+    """사용자의 선택형 STAR 역질문 답변을 반영해 5축 평가된 STAR 경험과 섹션 보강을 저장한다."""
+    project = await _load_project_full(session, project_id)
+    answered = [a.model_dump() for a in payload.answers if a.answer.strip()]
+    if not answered:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="최소 1개 이상의 질문에 답변을 입력해 주세요.",
+        )
+
+    try:
+        synthesized = await synthesize_star_onboarding_answers(
+            project=_project_to_dict(project),
+            sections=[_section_to_dict(s) for s in project.sections],
+            qa_pairs=answered,
+        )
+    except Exception as exc:
+        logger.exception("STAR onboarding apply failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"STAR 답변 반영 중 오류가 발생했습니다: {exc}",
+        )
+
+    norm_types = normalize_project_types(project.project_types)
+    qa_raw = "\n\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in answered)
+    saved_exps: list[Experience] = []
+    vector_synced_count = 0
+
+    for item in synthesized["experiences"]:
+        exp = Experience(
+            project_id=project.id,
+            title=str(item.get("title") or "보강된 경험")[:300],
+            situation=str(item.get("situation") or ""),
+            task=str(item.get("task") or ""),
+            action=str(item.get("action") or ""),
+            result=str(item.get("result") or ""),
+            quantified_metrics=str(item.get("quantified_metrics") or ""),
+            completeness_score=int(item.get("completeness_score") or 0),
+            star_scores=dict(item.get("star_scores") or {}),
+            raw_notes=f"[STAR 보강 역질문]\n{qa_raw}",
+        )
+        session.add(exp)
+        await session.commit()
+        await session.refresh(exp)
+        saved_exps.append(exp)
+
+        vector_content = (
+            f"[프로젝트] {project.name} ({', '.join(norm_types)})\n"
+            f"[경험 제목] {exp.title}\n"
+            f"[Situation] {exp.situation}\n"
+            f"[Task] {exp.task}\n"
+            f"[Action] {exp.action}\n"
+            f"[Result] {exp.result}\n"
+            f"[정량 지표] {exp.quantified_metrics}"
+        )
+        if await try_upsert_document(
+            session,
+            doc_type=DocType.EXPERIENCE,
+            ref_id=f"exp-{exp.id}",
+            content=vector_content,
+            metadata={
+                "experience_id": exp.id,
+                "project_id": project.id,
+                "project_types": norm_types,
+                "title": exp.title,
+                "source": "star_onboarding",
+            },
+        ):
+            vector_synced_count += 1
+
+    applied_section_types: list[str] = []
+    section_patches = synthesized.get("section_patches") or []
+    if payload.apply_section_patches and section_patches:
+        sec_by_id = {s.id: s for s in project.sections}
+        patched_secs: list[ProjectSection] = []
+        for patch in section_patches:
+            target_sec = sec_by_id.get(patch["section_id"])
+            if target_sec and patch.get("proposed_content"):
+                target_sec.content = patch["proposed_content"].strip()
+                patched_secs.append(target_sec)
+                applied_section_types.append(target_sec.section_type)
+        if patched_secs:
+            await session.commit()
+            for sec in patched_secs:
+                await session.refresh(sec)
+                if await _sync_section_vector(session, project, sec):
+                    vector_synced_count += 1
+
+    return StarOnboardingApplyResponse(
+        saved_experiences=[ExperienceSummary.model_validate(e) for e in saved_exps],
+        applied_section_types=applied_section_types,
+        section_patches=section_patches,
+        vector_synced_count=vector_synced_count,
+    )
+
+
+@router.post(
+    "/{project_id}/evaluate-stars",
+    response_model=ProjectStarEvaluateResponse,
+)
+async def evaluate_project_stars(
+    project_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> ProjectStarEvaluateResponse:
+    """프로젝트에 연결된 모든 STAR 경험을 5축 STAR-L BARS 루브릭으로 객관 재채점한다."""
+    project = await _load_project_full(session, project_id)
+    if not project.experiences:
+        return ProjectStarEvaluateResponse(
+            evaluated_count=0,
+            experiences=[],
+            star_averages=compute_average_star_axes([]),
+        )
+
+    evaluated_count = 0
+    for exp in project.experiences:
+        grade = await evaluate_star_experience_rubric(
+            {
+                "title": exp.title,
+                "situation": exp.situation,
+                "task": exp.task,
+                "action": exp.action,
+                "result": exp.result,
+                "quantified_metrics": exp.quantified_metrics,
+            },
+            context_text=exp.raw_notes,
+        )
+        exp.completeness_score = grade["completeness_score"]
+        exp.star_scores = grade["star_scores"]
+        evaluated_count += 1
+
+    await session.commit()
+    project = await _load_project_full(session, project_id)
+    exps = sorted(project.experiences, key=lambda e: e.created_at, reverse=True)
+    return ProjectStarEvaluateResponse(
+        evaluated_count=evaluated_count,
+        experiences=[ExperienceSummary.model_validate(e) for e in exps],
+        star_averages=compute_average_star_axes(
+            [{"star_scores": e.star_scores} for e in exps]
+        ),
     )

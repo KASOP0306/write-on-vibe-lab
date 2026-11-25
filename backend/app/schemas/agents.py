@@ -80,7 +80,15 @@ class InterestClipResponse(BaseModel):
     created_at: datetime
 
 
-# --- 워크플로우 ③: 자소서 생성 · 비평 · 퇴고 · De-AI ---
+# --- 워크플로우 ③: 자소서 문항 분석 · 소재 추천 · 생성 · 비평 · 퇴고 · De-AI ---
+class CoverLetterRecommendRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    company_profile_id: int | None = Field(default=None)
+    target_role: str = Field(default="", max_length=200)
+    question: str = Field(..., min_length=5, description="기업 제공 자기소개서 문항")
+    char_limit: int = Field(default=800, ge=200, le=3000, description="목표 글자 수")
+
+
 class CoverLetterGenerateRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)
     company_profile_id: int | None = Field(default=None)
@@ -88,6 +96,22 @@ class CoverLetterGenerateRequest(BaseModel):
     question: str = Field(..., min_length=5, description="자기소개서 문항")
     char_limit: int = Field(default=800, ge=200, le=3000, description="목표 글자 수")
     extra_instructions: str = Field(default="", description="추가 강조 요청 (선택)")
+    selected_project_ids: list[int] = Field(
+        default_factory=list,
+        description="사용자가 선택한 핵심 프로젝트 ID 목록 (최우선 1급 팩트로 주입)",
+    )
+    selected_experience_ids: list[int] = Field(
+        default_factory=list,
+        description="사용자가 선택한 핵심 STAR 경험 ID 목록",
+    )
+    question_analysis: dict[str, Any] = Field(
+        default_factory=dict,
+        description="1단계 문항 심층 분석 결과 (체크포인트·권장 구조 등)",
+    )
+    fusion_angle: str = Field(
+        default="",
+        description="기업 신념 × 나의 신념 × 선택 프로젝트 융합 스토리 각도",
+    )
 
 
 # --- 워크플로우 ④: 프로젝트 코파일럿 & 취준 회고 ---
