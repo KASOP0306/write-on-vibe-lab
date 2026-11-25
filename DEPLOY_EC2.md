@@ -25,10 +25,13 @@
      ]
    }
    ```
-3. AWS Bedrock 콘솔(`AWS_REGION`, 예: `us-east-1`)에서 사용할 모델(`amazon.nova-lite-v1:0`, `us.anthropic.claude-3-7-sonnet-20250219-v1:0`, `cohere.embed-multilingual-v3`)의 액세스를 활성화합니다.
+3. AWS Bedrock 콘솔(`AWS_REGION`, 기본 `us-east-1`)에서 사용할 모델 액세스를 활성화합니다.
+   - Fast LLM: `amazon.nova-lite-v1:0`
+   - Smart LLM: `amazon.nova-pro-v1:0`
+   - Embedding: `amazon.titan-embed-text-v2:0` (1024차원)
 
 ### 1.2 EC2 인스턴스 생성 & 보안 그룹
-- **OS / 스펙:** Ubuntu 24.04 LTS, `t3.small` 이상 (권장: `t3.medium`), EBS 스토리지 20~30GB
+- **OS / 스펙:** Amazon Linux 2023 또는 Ubuntu 24.04 LTS, `t3.small` / `t4g.small` 이상 (권장: `t3.medium` 또는 `t4g.medium`), EBS 스토리지 20~30GB 권장
 - **IAM Instance Profile:** 위에서 만든 IAM Role 연결
 - **보안 그룹 인바운드 규칙:**
   - `TCP 80` (HTTP): 웹 접속용 (본인 IP 또는 `0.0.0.0/0`)
@@ -52,7 +55,7 @@ aws ec2 modify-instance-metadata-options \
 EC2 SSH 접속 후 아래 순서대로 실행합니다.
 
 ```bash
-# 1. Docker & Docker Compose 플러그인 설치 (Ubuntu)
+# 1. Docker & Docker Compose 플러그인 설치 (Ubuntu 기준)
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl git
 curl -fsSL https://get.docker.com | sudo sh
@@ -76,7 +79,7 @@ docker compose up -d --build
 
 ## 3. 배포 후 최종 E2E 검증 체크리스트
 
-### 3.1 컨테이너 헬스 & AWS Bedrock 호출 검증
+### 3.1 컨테이너 헬스, 단위 테스트 & AWS Bedrock 호출 검증
 ```bash
 # 컨테이너 상태 확인 (db healthy, backend/frontend up)
 docker compose ps
@@ -84,15 +87,18 @@ docker compose ps
 # Nginx -> Backend -> PostgreSQL 헬스체크
 curl http://localhost/api/health
 
-# IAM Role 기반 Bedrock Fast/Smart LLM & Embeddings 단위 검증
-docker compose exec backend python -m app.scripts.verify_bedrock
+# 백엔드 단위 테스트 실행
+docker compose exec -T backend python -m unittest discover -s tests -v
+
+# IAM Role 기반 Bedrock Fast/Smart LLM & Titan Embeddings 단위 검증
+docker compose exec -T backend python -m app.scripts.verify_bedrock
 ```
 
 ### 3.2 자소서 레퍼런스 등록 (선택)
-- 웹 브라우저에서 `http://<EC2_PUBLIC_IP>` 접속 → **4. 자소서 공방 → 내 합격 자소서 레퍼런스 → 레퍼런스 직접 등록**으로 실제 합격 자소서를 DB에만 안전하게 추가합니다.
-- 또는 로컬에서 준비한 `backend/app/seeds/jasoseo_samples.local.json`을 서버에 올려 아래 명령으로 일괄 시딩합니다.
+- 웹 브라우저에서 `http://<EC2_PUBLIC_IP>` 접속 → **5. 자소서 공방 → 내 합격 자소서 레퍼런스 → 레퍼런스 직접 등록**으로 실제 합격 자소서를 DB에만 안전하게 추가합니다.
+- 또는 로컬에서 준비한 `backend/app/seeds/jasoseo_samples.local.json`을 서버에 올려 아래 명령으로 일괄 시딩합니다. *(이 파일은 `.gitignore` 처리되어 Git에 커밋되지 않습니다.)*
   ```bash
-  docker compose exec backend python -m app.seeds.seed_jasoseo
+  docker compose exec -T backend python -m app.seeds.seed_jasoseo
   ```
 
 ### 3.3 컨테이너 재시작 후 `pgdata` 볼륨 영속성 검증
@@ -107,12 +113,14 @@ docker compose down && docker compose up -d
 python3 scripts/e2e_verify.py --base-url http://localhost --verify-persistence
 ```
 
-### 3.4 웹 UI 전체 E2E 순환 시나리오 점검
-1. **1. 신념 & 포트폴리오:** 커리어 비전·신념·선호 문체 저장 (`career_identity` 동기화 확인) + 본인 프로젝트 2건 등록
-2. **2. 경험 채굴:** 프로젝트 연결 후 거친 메모 입력 → 실시간 STAR 완성도 게이지 & 역질문 수신 → 답변 또는 `[이 상태로 저장하기]`로 저장
-3. **3. 기업 & 관심사:** 목표 기업 1곳 리서치 → 신념 3각 매칭표 확인 + 관심 키워드 검색 후 1건 클립 저장
-4. **4. 자소서 공방:** 리서치한 기업 + 문항 입력 → SSE 단계 표시기(검색→초안→비평→퇴고→De-AI) 실시간 진행 & 최종본·변경 리포트 확인
-5. **5. 코파일럿 & 회고:** 프로젝트 질문(Corrective RAG) + 지원 결과 입력 → Gap 분석 & 추천 키워드 원클릭 관심사 추가 확인
+### 3.4 웹 UI 전체 7-페이지 순환 시나리오 점검
+1. **1. 나의 신념 & 일상 회고:** 커리어 비전·신념·선호 문체 저장 (`career_identity` 동기화) + 일상 회고 노트 작성 & AI 심화 회고
+2. **2. 포트폴리오 & 캐릭터:** 프로젝트 등록(직접/문서/GitHub) → 개별 섹션 파일·메모 AI 업데이트 → 선택형 STAR-L 온보딩 역질문 → 프로젝트 회고 인터뷰(`KPT`/`4Ls`/`Post-Mortem`) → 6축 포트폴리오 캐릭터 진단(접기/펼치기) 확인
+3. **3. 경험 채굴 (STAR-L):** 프로젝트 연결 후 거친 메모 입력 → 5축 STAR-L 레이더 & S~D 등급 확인 → DDI/Bar-Raiser 역질문 답변 또는 `[이 상태로 저장하기]` 저장
+4. **4. 기업 리서치:** 목표 기업 + JD 입력 → 4관점 멀티소스 리서치 & 출처 인용 포함 신념 3각 매칭표 확인
+5. **5. 자소서 공방:** 기업·문항 입력 → 1단계 문항 해부 & 최적 프로젝트·STAR-L 추천 선택 → 2단계 3축 융합 작성·비평·퇴고·De-AI 실시간 SSE & 변경 리포트 확인
+6. **6. 지원 & 취준 회고:** 지원 결과·피드백 입력 → 6축 캐릭터 대비 Gap 분석 & 보완 플랜 → 코파일럿 주제로 원클릭 연계
+7. **7. 새 프로젝트 코파일럿:** 이전 회고 `Try` 학습 루프 + 캐릭터 약점 + 기업 리서치 + 웹 검색 기반 청사진 추천 & 설계 채팅 확인
 
 ---
 
