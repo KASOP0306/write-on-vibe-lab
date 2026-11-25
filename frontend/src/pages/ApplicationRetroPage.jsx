@@ -111,7 +111,7 @@ export default function ApplicationRetroPage({ onJumpToCopilot }) {
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <ClipboardCheck className="w-6 h-6 text-indigo-600" />
-          <span>7. 지원 &amp; 취준 회고</span>
+          <span>5. 지원 &amp; 취준 회고</span>
         </h2>
         <p className="text-sm text-slate-600 mt-1">
           서류·과제·면접 결과를 기록하면 <strong>내 포트폴리오 캐릭터와 경험</strong> 대비 핵심 격차(Gap)를 진단하고,

@@ -407,9 +407,9 @@ async def multi_source_retriever(state: CoverLetterState) -> dict[str, Any]:
                         seen_exp_ids.add(e.id)
                         used_experiences.append({"id": e.id, "title": e.title, "project_id": e.project_id})
                         selected_portfolio_docs.append(
-                            f"[연결 STAR 경험] {e.title} (완성도 {e.completeness_score})\n"
+                            f"[연결 STAR-L 경험] {e.title} (완성도 {e.completeness_score})\n"
                             f"S: {e.situation}\nT: {e.task}\nA: {e.action}\nR: {e.result}\n"
-                            f"정량 지표: {e.quantified_metrics}"
+                            f"L: {e.learning}\n정량 지표: {e.quantified_metrics}"
                         )
 
         if sel_exp_ids:
@@ -421,9 +421,9 @@ async def multi_source_retriever(state: CoverLetterState) -> dict[str, Any]:
                 seen_exp_ids.add(e.id)
                 used_experiences.append({"id": e.id, "title": e.title, "project_id": e.project_id})
                 selected_portfolio_docs.append(
-                    f"[선택 핵심 STAR 경험] {e.title} (완성도 {e.completeness_score})\n"
+                    f"[선택 핵심 STAR-L 경험] {e.title} (완성도 {e.completeness_score})\n"
                     f"S: {e.situation}\nT: {e.task}\nA: {e.action}\nR: {e.result}\n"
-                    f"정량 지표: {e.quantified_metrics}"
+                    f"L: {e.learning}\n정량 지표: {e.quantified_metrics}"
                 )
 
         # 1. 보조 벡터 검색 (doc_type 4종 엄격 격리)

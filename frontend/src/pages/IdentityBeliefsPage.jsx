@@ -20,16 +20,16 @@ import {
 import { api } from "../api/client.js";
 
 const SOURCE_TYPES = [
+  { id: "thought", label: "일상 회고", icon: Lightbulb, badge: "bg-emerald-50 text-emerald-800 border-emerald-200" },
   { id: "book", label: "책 · 독서", icon: BookOpen, badge: "bg-amber-50 text-amber-800 border-amber-200" },
   { id: "lecture", label: "강의 · 세미나", icon: GraduationCap, badge: "bg-indigo-50 text-indigo-800 border-indigo-200" },
   { id: "article", label: "아티클 · 영상", icon: Newspaper, badge: "bg-sky-50 text-sky-800 border-sky-200" },
-  { id: "thought", label: "일상 생각 · 회고", icon: Lightbulb, badge: "bg-emerald-50 text-emerald-800 border-emerald-200" },
 ];
 
 const SOURCE_MAP = Object.fromEntries(SOURCE_TYPES.map((s) => [s.id, s]));
 
 const EMPTY_NOTE = {
-  source_type: "book",
+  source_type: "thought",
   source_title: "",
   quote_text: "",
   my_reflection: "",
@@ -196,10 +196,10 @@ export default function IdentityBeliefsPage({ profile, notes = [], onRefresh }) 
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <BookHeart className="w-6 h-6 text-indigo-600" />
-          <span>1. 나의 신념 &amp; 생각 노트</span>
+          <span>1. 나의 신념 &amp; 일상 회고 저널</span>
         </h2>
         <p className="text-sm text-slate-600 mt-1">
-          커리어 비전·일하는 신념을 다듬고, <strong>책·강의의 인상 깊은 구절과 평소의 생각</strong>을 회고하며 나만의 철학을 축적합니다. 저장된 기록은 기업 매칭과 자소서 공방에 자동 반영됩니다.
+          커리어 비전·일하는 신념을 다듬고, <strong>일상 속 생각·회고와 인상 깊었던 책·강의 구절</strong>을 기록하며 나만의 철학을 축적합니다. 저장된 기록은 기업 매칭과 자소서 공방에 자동 반영됩니다.
         </p>
       </div>
 
@@ -380,20 +380,20 @@ export default function IdentityBeliefsPage({ profile, notes = [], onRefresh }) 
           <div>
             <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Quote className="w-5 h-5 text-indigo-600" />
-              <span>책 · 강의 구절 &amp; 일상 생각 회고 저널 ({filteredNotes.length})</span>
+              <span>일상 회고 저널 ({filteredNotes.length})</span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              마음에 남았던 문장이나 평소 떠오른 생각을 기록하고 AI와 함께 나의 신념·경험으로 연결해 보세요.
+              평소 들었던 생각과 회고, 영감을 준 책·강의·아티클 구절을 기록하고 AI와 함께 나의 신념·경험으로 연결해 보세요.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={() => openNewNote("book")}
+            onClick={() => openNewNote("thought")}
             className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
           >
             <Plus className="w-4 h-4" />
-            <span>구절 · 생각 기록하기</span>
+            <span>일상 회고 기록하기</span>
           </button>
         </div>
 

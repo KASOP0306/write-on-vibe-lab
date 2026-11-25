@@ -21,8 +21,12 @@ class StarExtractionSchema(BaseModel):
     title: str = Field(description="경험을 한눈에 요약하는 구체적 제목 (30자 내외)")
     situation: str = Field(description="배경 및 문제 상황 (Situation)")
     task: str = Field(description="본인이 맡은 과제 및 목표 (Task)")
-    action: str = Field(description="본인이 직접 수행한 구체적 행동·기술적 의사결정 (Action)")
+    action: str = Field(description="본인이 직접 수행한 구체적 행동·의사결정 (Action)")
     result: str = Field(description="결과 및 변화 (Result)")
+    learning: str = Field(
+        default="",
+        description="이 경험에서 배운 점, 재발 방지 설계, 다음 프로젝트·직무에 적용할 원칙 (Learning)",
+    )
     quantified_metrics: str = Field(
         default="",
         description="확인된 정량 지표/수치만 정리 (없으면 빈 문자열, 절대 추측/날조 금지)",
@@ -191,6 +195,7 @@ async def save_experience(state: InterviewState) -> dict[str, Any]:
             task=str(star.get("task") or ""),
             action=str(star.get("action") or ""),
             result=str(star.get("result") or ""),
+            learning=str(star.get("learning") or ""),
             quantified_metrics=str(star.get("quantified_metrics") or ""),
             completeness_score=completeness_score,
             star_scores=dict(state.get("star_scores") or {}),
@@ -206,6 +211,7 @@ async def save_experience(state: InterviewState) -> dict[str, Any]:
             f"[Task] {exp.task}\n"
             f"[Action] {exp.action}\n"
             f"[Result] {exp.result}\n"
+            f"[Learning] {exp.learning}\n"
             f"[정량 지표] {exp.quantified_metrics}"
         )
         vector_synced = await try_upsert_document(

@@ -276,11 +276,11 @@ export default function CoverLetterStudioPage() {
     <div className="space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">
-          5. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
+          7. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
         </h2>
         <p className="text-sm text-slate-600 mt-1">
           <strong>1단계</strong>로 기업이 제시한 문항의 숨은 평가 의도를 해부해 내 포트폴리오 중 최적{" "}
-          <strong>1~2개 프로젝트 &amp; STAR</strong>를 추천받고,{" "}
+          <strong>1~2개 프로젝트 &amp; STAR-L</strong>을 추천받고,{" "}
           <strong>2단계</strong>로 선택한 소재 × 기업 신념 × 나의 신념을 융합해 초안·비평·퇴고·De-AI까지 작성합니다.
         </p>
       </div>
@@ -421,7 +421,7 @@ export default function CoverLetterStudioPage() {
           <div>
             <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-700">
               <FolderKanban className="w-4 h-4" />
-              <span>STEP 2. 문항 의도 확인 &amp; 활용할 포트폴리오·STAR 선택</span>
+              <span>STEP 2. 문항 의도 확인 &amp; 활용할 포트폴리오·STAR-L 선택</span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               선택한 프로젝트의 <strong>전체 섹션 원문</strong>과 <strong>STAR 경험</strong>이 자소서 1급 사실 근거로 직접 주입됩니다.
@@ -619,7 +619,7 @@ export default function CoverLetterStudioPage() {
           <div className="space-y-2.5 pt-2 border-t border-slate-100">
             <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>함께 강조할 STAR 경험 선택 (선택 — 미선택 시 선택한 프로젝트의 연결 STAR 자동 활용)</span>
+              <span>함께 강조할 STAR-L 경험 선택 (선택 — 미선택 시 선택한 프로젝트의 연결 STAR-L 자동 활용)</span>
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               {experiences.map((exp) => {

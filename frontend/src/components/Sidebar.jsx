@@ -9,13 +9,13 @@ import {
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { id: "beliefs", label: "1. 나의 신념 & 생각 노트", icon: BookHeart },
+  { id: "beliefs", label: "1. 나의 신념 & 일상 회고", icon: BookHeart },
   { id: "portfolio", label: "2. 포트폴리오 & 캐릭터", icon: FolderKanban },
-  { id: "experience", label: "3. 경험 채굴 (STAR)", icon: Sparkles },
+  { id: "experience", label: "3. 경험 채굴 (STAR-L)", icon: Sparkles },
   { id: "company", label: "4. 기업 리서치", icon: Building2 },
-  { id: "cover-letter", label: "5. 자소서 공방", icon: FileEdit },
+  { id: "retro", label: "5. 지원 & 취준 회고", icon: ClipboardCheck },
   { id: "copilot", label: "6. 새 프로젝트 코파일럿", icon: Rocket },
-  { id: "retro", label: "7. 지원 & 취준 회고", icon: ClipboardCheck },
+  { id: "cover-letter", label: "7. 자소서 공방", icon: FileEdit },
 ];
 
 export default function Sidebar({
@@ -57,13 +57,13 @@ export default function Sidebar({
           </p>
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
             <span className="inline-flex items-center rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-              생각 노트 {beliefNoteCount}
+              일상 회고 {beliefNoteCount}
             </span>
             <span className="inline-flex items-center rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700">
               프로젝트 {projectCount}
             </span>
             <span className="inline-flex items-center rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-              STAR {experienceCount}
+              STAR-L {experienceCount}
             </span>
           </div>
         </div>

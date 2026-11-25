@@ -168,9 +168,9 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
     <div className="space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (STAR)</h2>
+          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (STAR-L)</h2>
           <p className="text-sm text-slate-600 mt-1">
-            거친 메모를 입력하면 5축 STAR-L BARS 기준으로 빈틈을 탐지해 역질문으로 정량 지표와 의사결정 근거를 끌어냅니다.
+            거친 메모를 입력하면 5축 STAR-L BARS 기준으로 빈틈을 탐지해 역질문으로 정량 지표·의사결정·배운 점(L)을 끌어냅니다.
           </p>
         </div>
         {(threadId || savedResult) && (
@@ -343,6 +343,11 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
               <p>
                 <strong className="text-slate-700">R:</strong> {draftStar.result}
               </p>
+              {draftStar.learning && (
+                <p>
+                  <strong className="text-indigo-700">L (배운 점):</strong> {draftStar.learning}
+                </p>
+              )}
               {draftStar.quantified_metrics && (
                 <p className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">
                   <strong>정량 지표:</strong> {draftStar.quantified_metrics}
@@ -397,6 +402,11 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
                 <p className="text-xs text-slate-700 line-clamp-2">
                   <strong>Result:</strong> {exp.result}
                 </p>
+                {exp.learning && (
+                  <p className="text-xs text-indigo-800 line-clamp-2">
+                    <strong>Learning:</strong> {exp.learning}
+                  </p>
+                )}
                 {exp.quantified_metrics && (
                   <div className="text-[11px] text-emerald-800 bg-emerald-50 rounded-md px-2 py-1">
                     지표: {exp.quantified_metrics}

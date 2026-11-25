@@ -19,6 +19,7 @@ class ExperienceSummary(BaseModel):
     task: str
     action: str
     result: str
+    learning: str = ""
     quantified_metrics: str
     completeness_score: int
     star_scores: dict[str, Any] = Field(default_factory=dict)
@@ -168,6 +169,7 @@ class SuggestedExperienceDraft(BaseModel):
     task: str = ""
     action: str = ""
     result: str = ""
+    learning: str = ""
     quantified_metrics: str = ""
 
 

@@ -380,12 +380,13 @@ async def evaluate_star_experience_rubric(
     )
 
     user_prompt = (
-        f"[평가 대상 STAR]\n"
+        f"[평가 대상 STAR-L]\n"
         f"- 제목: {star.get('title', '')}\n"
         f"- Situation: {star.get('situation', '')}\n"
         f"- Task: {star.get('task', '')}\n"
         f"- Action: {star.get('action', '')}\n"
         f"- Result: {star.get('result', '')}\n"
+        f"- Learning (배운 점·회고·확장성): {star.get('learning', '')}\n"
         f"- 정량 지표: {star.get('quantified_metrics', '')}\n"
     )
     if context_text.strip():

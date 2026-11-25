@@ -181,6 +181,7 @@ class Experience(Base):
     task: Mapped[str] = mapped_column(Text, default="", nullable=False)
     action: Mapped[str] = mapped_column(Text, default="", nullable=False)
     result: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    learning: Mapped[str] = mapped_column(Text, default="", nullable=False)
     quantified_metrics: Mapped[str] = mapped_column(Text, default="", nullable=False)
     completeness_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     star_scores: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
@@ -328,6 +329,12 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE experiences "
                 "ADD COLUMN IF NOT EXISTS star_scores JSONB NOT NULL DEFAULT '{}'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE experiences "
+                "ADD COLUMN IF NOT EXISTS learning TEXT NOT NULL DEFAULT ''"
             )
         )
         await conn.execute(

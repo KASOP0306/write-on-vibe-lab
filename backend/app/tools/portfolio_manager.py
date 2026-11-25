@@ -113,11 +113,15 @@ class GeneratedSectionDraft(BaseModel):
 
 
 class ExtractedStarDraft(BaseModel):
-    title: str = Field(default="", description="STAR 경험 제목 (30자 내외)")
+    title: str = Field(default="", description="STAR-L 경험 제목 (30자 내외)")
     situation: str = Field(default="")
     task: str = Field(default="")
     action: str = Field(default="")
     result: str = Field(default="")
+    learning: str = Field(
+        default="",
+        description="이 경험에서 배운 점, 재발 방지 설계, 다음 프로젝트·직무 적용 원칙 (Learning)",
+    )
     quantified_metrics: str = Field(
         default="", description="문서에 실제 명시된 수치만 기재 (없으면 빈 문자열)"
     )
