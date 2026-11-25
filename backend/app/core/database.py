@@ -104,6 +104,7 @@ class Project(Base):
         JSONB, default=lambda: ["engineering"], nullable=False
     )
     artifact_links: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    retrospective: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -311,6 +312,12 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE projects "
                 "ADD COLUMN IF NOT EXISTS artifact_links JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE projects "
+                "ADD COLUMN IF NOT EXISTS retrospective JSONB NOT NULL DEFAULT '{}'::jsonb"
             )
         )
         await conn.execute(

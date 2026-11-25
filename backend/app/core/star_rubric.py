@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,7 +25,91 @@ from app.core.bedrock import ainvoke_structured, get_fast_llm
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# 1. 5축 STAR-L BARS 루브릭 정의
+# 0. BARS 5단계 Calibration 등급 체계 (Amazon Bar Raiser × DDI BARS)
+# ==============================================================================
+CALIBRATION_TIERS: list[dict[str, Any]] = [
+    {
+        "grade": "S",
+        "min_score": 90,
+        "label": "Bar Raiser 수준 (최상위)",
+        "color": "emerald",
+        "description": "대안 비교·트레이드오프·정량 검증(XYZ)·재발 방지 원칙까지 완비되어 심층 꼬리질문도 방어 가능한 수준",
+    },
+    {
+        "grade": "A",
+        "min_score": 80,
+        "label": "Clear Signal (채용 기준 충족)",
+        "color": "indigo",
+        "description": "개인 오너십('I')과 구체 행동·성과 근거가 선명해 자소서·면접 핵심 소재로 즉시 활용 가능한 수준",
+    },
+    {
+        "grade": "B",
+        "min_score": 65,
+        "label": "Mixed Signal (보완 권장)",
+        "color": "amber",
+        "description": "핵심 뼈대는 갖췄으나 정량 지표, 대안 비교, 또는 개인 기여 경계 보강이 필요한 수준",
+    },
+    {
+        "grade": "C",
+        "min_score": 45,
+        "label": "Below Bar (핵심 공백)",
+        "color": "orange",
+        "description": "면접관 드릴다운 시 기여도·근거 공백이 바로 노출될 수 있어 역질문 보강이 필요한 수준",
+    },
+    {
+        "grade": "D",
+        "min_score": 0,
+        "label": "Strong Concern (근거 부족)",
+        "color": "rose",
+        "description": "핵심 사실·행동·성과 기록이 크게 부족해 보충 기록이 우선 필요한 수준",
+    },
+]
+
+PROBING_TECHNIQUES: dict[str, dict[str, str]] = {
+    "ownership_drilldown": {
+        "id": "ownership_drilldown",
+        "label": "'I' Rule 오너십 드릴다운",
+        "reference": "Amazon Bar Raiser — Peel-the-Onion",
+        "purpose": "'우리가 했다'에서 본인 고유의 판단·실행 경계를 분리합니다.",
+    },
+    "micro_behavioral": {
+        "id": "micro_behavioral",
+        "label": "DDI 미세 행동 프로빙",
+        "reference": "DDI Funnel Probing (Directed → Micro)",
+        "purpose": "추상적 요약 대신 그 순간 취한 구체적 행동·데이터·대화 근거를 끌어냅니다.",
+    },
+    "counter_factual": {
+        "id": "counter_factual",
+        "label": "반사실 · 트레이드오프 프로빙",
+        "reference": "Google GCA & Amazon Dive Deep",
+        "purpose": "포기한 대안, 제약 조건, 리스크 감수 논리를 검증합니다.",
+    },
+    "xyz_quantification": {
+        "id": "xyz_quantification",
+        "label": "Google XYZ 정량화 프로빙",
+        "reference": "Google XYZ ([X] measured by [Y] by doing [Z])",
+        "purpose": "전후 비교 기준치·규모·객관적 변화 증거를 구체화합니다.",
+    },
+    "learning_transfer": {
+        "id": "learning_transfer",
+        "label": "회고 · 재발방지 일반화 프로빙",
+        "reference": "STAR-L / CARL Framework",
+        "purpose": "단순 소감을 넘어 다음 프로젝트에 재사용할 원칙·구조 개선을 도출합니다.",
+    },
+}
+
+
+def get_calibration_tier(score: int) -> dict[str, Any]:
+    """0~100 점수를 객관적 Calibration 등급(S/A/B/C/D)으로 매핑한다."""
+    s = max(0, min(100, int(score or 0)))
+    for tier in CALIBRATION_TIERS:
+        if s >= tier["min_score"]:
+            return dict(tier)
+    return dict(CALIBRATION_TIERS[-1])
+
+
+# ==============================================================================
+# 1. 5축 STAR-L BARS 루브릭 정의 (1~5 전 레벨 행동 앵커 완비)
 # ==============================================================================
 STAR_AXIS_ORDER = ["situation", "task", "action", "result", "learning"]
 
@@ -39,8 +124,10 @@ STAR_AXES: dict[str, dict[str, Any]] = {
         "description": "프로젝트 배경, 규모, 핵심 병목 및 제약조건이 군더더기 없이 명확한가",
         "bars": {
             "1": "배경이나 문제 정의가 추상적이거나 누락됨",
-            "3": "프로젝트 배경과 해결해야 할 문제가 드러남",
-            "5": "규모·제약조건·핵심 병목이 2~3문장으로 명료하게 제시됨",
+            "2": "단순 배경만 나열되고 왜 해결해야 했는지 병목이 불분명함",
+            "3": "프로젝트 배경과 해결해야 할 핵심 문제가 드러남",
+            "4": "문제 배경과 함께 팀 규모·기간 등 핵심 제약조건이 구체화됨",
+            "5": "규모·제약조건·핵심 병목과 방치 시 리스크가 2~3문장으로 명료하게 제시됨",
         },
     },
     "task": {
@@ -53,8 +140,10 @@ STAR_AXES: dict[str, dict[str, Any]] = {
         "description": "팀 목표가 아닌 '내가' 직접 책임진 과제와 성공 기준이 선명하게 분리되어 있는가",
         "bars": {
             "1": "'우리가 했다' 식 서술로 본인 담당 과제 불명확",
-            "3": "본인의 담당 영역과 역할이 언급됨",
-            "5": "본인이 오너십을 갖고 책임진 목표와 성공 기준이 명확히 분리됨",
+            "2": "팀 내 포지션만 언급되고 본인이 책임진 목표가 흐림",
+            "3": "본인의 담당 영역과 맡은 과제가 구분되어 언급됨",
+            "4": "본인이 주도적으로 맡은 과제와 기대 결과물이 명확함",
+            "5": "본인이 오너십을 갖고 정의한 성공 기준(KPI/완료 조건)까지 명확히 분리됨",
         },
     },
     "action": {
@@ -67,8 +156,10 @@ STAR_AXES: dict[str, dict[str, Any]] = {
         "description": "단순 작업 나열이 아니라 대안 비교, 트레이드오프 근거, 본인만의 문제 해결 논리가 드러나는가",
         "bars": {
             "1": "단순 나열 수준('기능을 개발했다', '기획했다')",
-            "3": "구체적 실행 절차와 사용 도구/방법론이 서술됨",
-            "5": "대안 비교·트레이드오프·트러블슈팅/조율 의사결정 논리가 선명함",
+            "2": "사용한 도구나 작업 목록은 있으나 어떻게 문제를 풀었는지 과정이 생략됨",
+            "3": "구체적 실행 절차와 사용 도구/방법론이 단계적으로 서술됨",
+            "4": "병목 원인 분석과 본인이 직접 내린 핵심 의사결정 근거가 드러남",
+            "5": "대안 비교·트레이드오프·트러블슈팅/이해관계자 조율 논리가 미세 행동 수준으로 선명함",
         },
     },
     "result": {
@@ -81,8 +172,10 @@ STAR_AXES: dict[str, dict[str, Any]] = {
         "description": "전/후 비교 수치(Y), 배포·사용자 반응·비용/시간 절감 등 객관적 검증 결과가 있는가",
         "bars": {
             "1": "'잘 마무리했다', '성공적이었다' 등 정성적 느낌만 존재",
-            "3": "관찰 가능한 결과물이나 단일 지표가 제시됨",
-            "5": "전/후 비교 수치 또는 객관적 외부 검증(배포·사용자·수상·절감)이 명확함",
+            "2": "결과물 완성 사실만 있고 효과나 검증 근거가 없음",
+            "3": "관찰 가능한 배포/산출물 또는 단일 지표·외부 피드백이 제시됨",
+            "4": "정량 지표 또는 구체적 전후 변화와 본인 기여 연결이 명확함",
+            "5": "전/후 비교 수치(XYZ)와 객관적 외부 검증(운영 지표·수상·비용/시간 절감)이 완벽히 입증됨",
         },
     },
     "learning": {
@@ -95,8 +188,10 @@ STAR_AXES: dict[str, dict[str, Any]] = {
         "description": "경험에서 도출한 재발 방지 설계, 일반화한 원칙, 다음 직무 적용점이 드러나는가",
         "bars": {
             "1": "회고나 배운 점 언급 없음",
-            "3": "단순 소감이나 느낀 점 수준으로 언급됨",
-            "5": "재발 방지 구조·일반화한 업무 원칙·다음 프로젝트 적용점까지 연결됨",
+            "2": "'소통이 중요했다' 등 뻔하고 추상적인 감상 수준",
+            "3": "구체적 시행착오와 그로부터 얻은 교훈이 서술됨",
+            "4": "시행착오의 근본 원인을 분석하고 재발 방지 기준을 도출함",
+            "5": "재발 방지 구조·일반화한 업무 원칙·다음 프로젝트/직무 적용점까지 연결됨",
         },
     },
 }
@@ -217,10 +312,13 @@ def normalize_star_scores(raw: dict[str, Any] | None) -> dict[str, Any]:
         }
 
     weighted = compute_weighted_star_score(axes)
+    tier = get_calibration_tier(weighted)
     return {
         "framework": str(raw.get("framework") or "DDI BARS × Amazon Bar Raiser × Google XYZ"),
         "axes": axes,
         "weighted_score": weighted,
+        "grade": tier["grade"],
+        "tier_label": tier["label"],
     }
 
 
@@ -285,23 +383,25 @@ def compute_portfolio_overall_score(axes: dict[str, dict[str, Any]]) -> dict[str
 def get_rubric_reference_payload() -> dict[str, Any]:
     """프론트엔드 평가 기준 레퍼런스 모달 및 그래프 렌더링용 메타데이터."""
     return {
+        "calibration_tiers": CALIBRATION_TIERS,
+        "probing_techniques": list(PROBING_TECHNIQUES.values()),
         "star_rubric": {
-            "name": "5축 STAR-L BARS 루브릭",
+            "name": "5축 STAR-L BARS 루브릭 (1~5 전 레벨 행동 앵커)",
             "frameworks": [
                 {
-                    "name": "DDI Targeted Selection (BARS)",
-                    "role": "STAR 원조 기관의 Level 1~5 행동 기준 평가 척도",
+                    "name": "DDI Targeted Selection (BARS & Funnel Probing)",
+                    "role": "STAR 원조 기관의 Level 1~5 행동 기준 척도 및 3단계 드릴다운 역질문 기법",
                 },
                 {
                     "name": "Amazon Bar Raiser Rubric",
-                    "role": "'우리가' 아닌 '내가' 한 Action(35%) + Ownership(15%) 중시 원칙",
+                    "role": "'우리가' 아닌 '내가' 한 Action(35%) + Ownership(15%) 중시 · 관대화 편향 차단",
                 },
                 {
                     "name": "Google XYZ Formula & GCA",
-                    "role": "Accomplished [X] as measured by [Y] by doing [Z] 정량 검증 & 문제 분해 논리",
+                    "role": "Accomplished [X] as measured by [Y] by doing [Z] 정량 검증 & 대안 비교 논리",
                 },
             ],
-            "formula": "종합 점수 = 0.15×S + 0.15×T + 0.35×A + 0.25×R + 0.10×L",
+            "formula": "종합 점수 = 0.15×S + 0.15×T + 0.35×A + 0.25×R + 0.10×L (정량·회고 미기재 시 하드 캡 적용)",
             "axes": [STAR_AXES[k] for k in STAR_AXIS_ORDER],
         },
         "portfolio_rubric": {
@@ -399,17 +499,49 @@ async def evaluate_star_experience_rubric(
         max_retries=2,
     )
 
-    axes = {
-        axis_id: getattr(evaluated, axis_id).model_dump()
-        for axis_id in STAR_AXIS_ORDER
-    }
+    axes: dict[str, dict[str, Any]] = {}
+    for axis_id in STAR_AXIS_ORDER:
+        item = getattr(evaluated, axis_id).model_dump()
+        lvl = max(1, min(5, int(item.get("level") or 1)))
+        # BARS Level-Score 정합성 보정 (level*20 ± 8 범위 내로 관대화 편향 차단)
+        raw_sc = int(item.get("score") or lvl * 20)
+        sc = max(max(0, lvl * 20 - 8), min(min(100, lvl * 20 + 8), raw_sc))
+        item["level"] = lvl
+        item["score"] = sc
+        axes[axis_id] = item
+
+    # 결정론적 Calibration 하드 캡 (Leniency Bias 방지)
+    metrics_text = str(star.get("quantified_metrics") or "").strip()
+    result_text = str(star.get("result") or "").strip()
+    has_numeric_evidence = bool(re.search(r"\d", f"{metrics_text} {result_text}"))
+    if not has_numeric_evidence and axes["result"]["level"] > 3:
+        axes["result"]["level"] = 3
+        axes["result"]["score"] = min(axes["result"]["score"], 60)
+        if "정량" not in axes["result"].get("tip", ""):
+            axes["result"]["tip"] = (
+                "전후 비교 수치(시간·비용·정확도·사용자 수 등)를 보강하면 Lv.4 이상으로 상승합니다."
+            )
+
+    learning_text = str(star.get("learning") or "").strip()
+    if not learning_text and len(result_text) < 40 and axes["learning"]["level"] > 2:
+        axes["learning"]["level"] = 2
+        axes["learning"]["score"] = min(axes["learning"]["score"], 40)
+
     weighted_score = compute_weighted_star_score(axes)
+    tier = get_calibration_tier(weighted_score)
     star_scores = {
         "framework": "DDI BARS × Amazon Bar Raiser × Google XYZ",
         "axes": axes,
         "weighted_score": weighted_score,
+        "grade": tier["grade"],
+        "tier_label": tier["label"],
     }
-    is_sufficient = bool(evaluated.is_sufficient and weighted_score >= 80)
+    is_sufficient = bool(
+        evaluated.is_sufficient
+        and weighted_score >= 80
+        and axes["action"]["level"] >= 4
+        and axes["result"]["level"] >= 3
+    )
     return {
         "completeness_score": weighted_score,
         "is_sufficient": is_sufficient,

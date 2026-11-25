@@ -120,6 +120,7 @@ export const api = {
   // Projects, Modular Sections, Documents, Rubrics, STAR Onboarding & Diagnosis
   getProjectTemplates: () => apiRequest("/api/projects/templates"),
   getRubricReference: () => apiRequest("/api/projects/rubric-reference"),
+  getProjectsLearningLoop: () => apiRequest("/api/projects/learning-loop"),
   getPortfolioDiagnosis: () => apiRequest("/api/projects/portfolio-diagnosis"),
   runPortfolioDiagnosis: (externalNotes = null) =>
     apiRequest("/api/projects/portfolio-diagnosis", {
@@ -214,6 +215,16 @@ export const api = {
   evaluateProjectStars: (projectId) =>
     apiRequest(`/api/projects/${projectId}/evaluate-stars`, {
       method: "POST",
+    }),
+  getProjectRetroQuestions: (projectId, framework = "kpt") =>
+    apiRequest(`/api/projects/${projectId}/retrospective/questions`, {
+      method: "POST",
+      body: JSON.stringify({ framework }),
+    }),
+  applyProjectRetrospective: (projectId, data) =>
+    apiRequest(`/api/projects/${projectId}/retrospective/apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
     }),
   applyProjectUpdates: (projectId, data) =>
     apiRequest(`/api/projects/${projectId}/apply-updates`, {

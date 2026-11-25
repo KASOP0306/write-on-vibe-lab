@@ -13,9 +13,9 @@ const NAV_ITEMS = [
   { id: "portfolio", label: "2. 포트폴리오 & 캐릭터", icon: FolderKanban },
   { id: "experience", label: "3. 경험 채굴 (STAR-L)", icon: Sparkles },
   { id: "company", label: "4. 기업 리서치", icon: Building2 },
-  { id: "retro", label: "5. 지원 & 취준 회고", icon: ClipboardCheck },
-  { id: "copilot", label: "6. 새 프로젝트 코파일럿", icon: Rocket },
-  { id: "cover-letter", label: "7. 자소서 공방", icon: FileEdit },
+  { id: "cover-letter", label: "5. 자소서 공방", icon: FileEdit },
+  { id: "retro", label: "6. 지원 & 취준 회고", icon: ClipboardCheck },
+  { id: "copilot", label: "7. 새 프로젝트 코파일럿", icon: Rocket },
 ];
 
 export default function Sidebar({

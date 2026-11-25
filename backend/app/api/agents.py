@@ -109,7 +109,10 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                 elif node_name == "generate_questions":
                     yield sse_node_end(
                         "generate_questions",
-                        {"questions": update.get("questions", [])},
+                        {
+                            "questions": update.get("questions", []),
+                            "structured_questions": update.get("structured_questions", []),
+                        },
                     )
                 elif node_name == "save_experience":
                     yield sse_node_end(
@@ -136,6 +139,7 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                 thread_id,
                 {
                     "questions": final_state.get("questions", []),
+                    "structured_questions": final_state.get("structured_questions", []),
                     "completeness_score": final_state.get("completeness_score", 0),
                     "star_scores": final_state.get("star_scores", {}),
                     "missing_points": final_state.get("missing_points", []),

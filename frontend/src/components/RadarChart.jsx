@@ -161,6 +161,8 @@ export function RubricReferenceModal({ open, onClose, reference }) {
 
   const starRef = reference?.star_rubric;
   const pfRef = reference?.portfolio_rubric;
+  const tiers = reference?.calibration_tiers || [];
+  const probes = reference?.probing_techniques || [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
@@ -211,9 +213,11 @@ export function RubricReferenceModal({ open, onClose, reference }) {
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
                   <th className="px-3 py-2">축 (가중치)</th>
-                  <th className="px-3 py-2">Lv.1 (20점)</th>
-                  <th className="px-3 py-2">Lv.3 (60점)</th>
-                  <th className="px-3 py-2">Lv.5 (100점)</th>
+                  <th className="px-3 py-2">Lv.1 (20)</th>
+                  <th className="px-3 py-2">Lv.2 (40)</th>
+                  <th className="px-3 py-2">Lv.3 (60)</th>
+                  <th className="px-3 py-2">Lv.4 (80)</th>
+                  <th className="px-3 py-2">Lv.5 (100)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -225,14 +229,57 @@ export function RubricReferenceModal({ open, onClose, reference }) {
                         ({Math.round((ax.weight || 0) * 100)}%)
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-slate-600">{ax.bars?.["1"]}</td>
+                    <td className="px-3 py-2 text-slate-500">{ax.bars?.["1"]}</td>
+                    <td className="px-3 py-2 text-slate-500">{ax.bars?.["2"]}</td>
                     <td className="px-3 py-2 text-slate-600">{ax.bars?.["3"]}</td>
-                    <td className="px-3 py-2 text-slate-700 font-medium">{ax.bars?.["5"]}</td>
+                    <td className="px-3 py-2 text-slate-700">{ax.bars?.["4"]}</td>
+                    <td className="px-3 py-2 text-slate-900 font-medium">{ax.bars?.["5"]}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {tiers.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              {tiers.map((t) => (
+                <div
+                  key={t.grade}
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 space-y-0.5"
+                >
+                  <div className="text-xs font-extrabold text-slate-900">
+                    {t.grade}등급 ({t.min_score}+)
+                  </div>
+                  <div className="text-[11px] font-semibold text-indigo-700">{t.label}</div>
+                  <div className="text-[10px] text-slate-500 leading-snug">{t.description}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {probes.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <div className="text-xs font-bold text-slate-800">
+                고도화 역질문 기법 (DDI Funnel Probing × Amazon Bar Raiser Drill-Down)
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {probes.map((p) => (
+                  <div
+                    key={p.id}
+                    className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-[11px]"
+                  >
+                    <div className="font-bold text-indigo-900">
+                      {p.label}{" "}
+                      <span className="font-normal text-[10px] text-slate-500">
+                        ({p.reference})
+                      </span>
+                    </div>
+                    <div className="text-slate-600 mt-0.5">{p.purpose}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 2. 포트폴리오 6축 */}

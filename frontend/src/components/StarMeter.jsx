@@ -6,6 +6,34 @@ const AXIS_META = [
   { id: "learning", code: "L", label: "회고·확장성", weight: "10%" },
 ];
 
+function getTierBadge(score, gradeProp, labelProp) {
+  const s = Number(score) || 0;
+  const grade =
+    gradeProp || (s >= 90 ? "S" : s >= 80 ? "A" : s >= 65 ? "B" : s >= 45 ? "C" : "D");
+  const label =
+    labelProp ||
+    (grade === "S"
+      ? "Bar Raiser"
+      : grade === "A"
+        ? "Clear Signal"
+        : grade === "B"
+          ? "Mixed Signal"
+          : grade === "C"
+            ? "Below Bar"
+            : "근거 부족");
+  const cls =
+    grade === "S"
+      ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+      : grade === "A"
+        ? "bg-indigo-100 text-indigo-800 border-indigo-200"
+        : grade === "B"
+          ? "bg-amber-100 text-amber-800 border-amber-200"
+          : grade === "C"
+            ? "bg-orange-100 text-orange-800 border-orange-200"
+            : "bg-rose-100 text-rose-800 border-rose-200";
+  return { grade, label, cls };
+}
+
 export default function StarMeter({
   score = 0,
   missingPoints = [],
@@ -17,6 +45,7 @@ export default function StarMeter({
     0,
     Math.min(100, Number(starScores?.weighted_score ?? score) || 0)
   );
+  const tier = getTierBadge(clamped, starScores?.grade, starScores?.tier_label);
   const barColor =
     clamped >= 80
       ? "bg-emerald-500"
@@ -26,14 +55,14 @@ export default function StarMeter({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-semibold text-slate-700">
             5축 STAR-L 객관 완성도
           </span>
-          {axes && (
-            <span className="ml-2 text-[10px] text-slate-400">
-              DDI BARS × Amazon × Google XYZ
+          {clamped > 0 && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${tier.cls}`}>
+              {tier.grade}등급 · {tier.label}
             </span>
           )}
         </div>

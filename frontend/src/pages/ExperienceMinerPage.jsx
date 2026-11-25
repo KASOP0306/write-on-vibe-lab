@@ -61,6 +61,7 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
         {
           role: "assistant",
           questions: ev.data?.questions || [],
+          structured_questions: ev.data?.structured_questions || [],
         },
       ]);
     } else if (ev.event === "done") {
@@ -255,15 +256,43 @@ export default function ExperienceMinerPage({ projects, experiences, onRefresh }
                     </div>
                   ) : (
                     <div key={idx} className="flex justify-start">
-                      <div className="max-w-[90%] rounded-2xl bg-blue-50 border border-blue-200 px-4 py-3 space-y-1.5">
-                        <div className="text-xs font-bold text-blue-900">
-                          AI 인터뷰어 역질문
+                      <div className="max-w-[92%] rounded-2xl bg-indigo-50/70 border border-indigo-200 px-4 py-3 space-y-2.5">
+                        <div className="text-xs font-bold text-indigo-950 flex items-center justify-between gap-2">
+                          <span>AI 인터뷰어 드릴다운 역질문 (DDI Funnel × Bar Raiser)</span>
                         </div>
-                        <ul className="list-disc pl-4 space-y-1 text-sm text-slate-800">
-                          {(msg.questions || []).map((q, qIdx) => (
-                            <li key={qIdx}>{q}</li>
-                          ))}
-                        </ul>
+                        {(msg.structured_questions || []).length > 0 ? (
+                          <div className="space-y-2">
+                            {msg.structured_questions.map((sq, qIdx) => (
+                              <div
+                                key={qIdx}
+                                className="rounded-xl bg-white border border-indigo-100 p-3 space-y-1"
+                              >
+                                <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-bold text-indigo-800">
+                                    {sq.technique_label || sq.technique}
+                                  </span>
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold uppercase text-slate-700">
+                                    타깃 축: {sq.target_axis}
+                                  </span>
+                                </div>
+                                <div className="text-sm font-semibold text-slate-900">
+                                  Q{qIdx + 1}. {sq.question}
+                                </div>
+                                {sq.interviewer_intent && (
+                                  <div className="text-[11px] text-slate-500">
+                                    면접관 검증 의도: {sq.interviewer_intent}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <ul className="list-disc pl-4 space-y-1 text-sm text-slate-800">
+                            {(msg.questions || []).map((q, qIdx) => (
+                              <li key={qIdx}>{q}</li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                     </div>
                   )

@@ -55,6 +55,8 @@ from app.schemas.projects import (
     GitHubAnalyzeResponse,
     GitHubImportResponse,
     GitHubSyncRequest,
+    LearningLoopItem,
+    LearningLoopResponse,
     PortfolioDiagnosisRequest,
     PortfolioDiagnosisResponse,
     ProjectCreateRequest,
@@ -62,6 +64,10 @@ from app.schemas.projects import (
     ProjectDocumentResponse,
     ProjectRecapResponse,
     ProjectResponse,
+    ProjectRetroApplyRequest,
+    ProjectRetroApplyResponse,
+    ProjectRetroQuestionsRequest,
+    ProjectRetroQuestionsResponse,
     ProjectSectionDraft,
     ProjectSectionResponse,
     ProjectSectionUpdateRequest,
@@ -87,11 +93,13 @@ from app.tools.github_analyzer import (
 from app.tools.portfolio_manager import (
     analyze_document_to_portfolio,
     diagnose_portfolio_character,
+    generate_project_retro_questions,
     generate_star_onboarding_questions,
     propose_document_updates,
     propose_noise_pruning,
     propose_section_document_update,
     render_portfolio_markdown,
+    synthesize_project_retrospective,
     synthesize_star_onboarding_answers,
 )
 
@@ -256,6 +264,36 @@ async def get_rubric_reference() -> dict[str, Any]:
     return get_rubric_reference_payload()
 
 
+@router.get("/learning-loop", response_model=LearningLoopResponse)
+async def get_projects_learning_loop(
+    session: AsyncSession = Depends(get_db_session),
+) -> LearningLoopResponse:
+    """이전 프로젝트들의 회고에서 도출된 Try 규칙(프로젝트 간 학습 루프)을 모아 반환한다."""
+    projects = (
+        (await session.execute(select(Project).order_by(Project.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    items: list[LearningLoopItem] = []
+    total_try = 0
+    for p in projects:
+        retro = p.retrospective or {}
+        tries = [str(t).strip() for t in (retro.get("try_items") or []) if str(t).strip()]
+        if tries or retro.get("decision_revisit"):
+            items.append(
+                LearningLoopItem(
+                    project_id=p.id,
+                    project_name=p.name,
+                    framework=str(retro.get("framework") or "kpt"),
+                    try_items=tries,
+                    decision_revisit=str(retro.get("decision_revisit") or ""),
+                    updated_at=str(retro.get("updated_at") or ""),
+                )
+            )
+            total_try += len(tries)
+    return LearningLoopResponse(items=items, total_try_count=total_try)
+
+
 @router.get("/portfolio-diagnosis", response_model=PortfolioDiagnosisResponse)
 async def get_portfolio_diagnosis(
     session: AsyncSession = Depends(get_db_session),
@@ -315,6 +353,7 @@ async def run_portfolio_diagnosis(
     projects_payload = [
         {
             **_project_to_dict(p),
+            "retrospective": dict(p.retrospective or {}),
             "sections": [_section_to_dict(s) for s in p.sections],
             "experiences": [
                 {
@@ -841,6 +880,7 @@ async def get_project(
         documents=[ProjectDocumentResponse.model_validate(d) for d in documents],
         assembled_markdown=assembled_md,
         star_averages=star_avg,
+        retrospective=dict(project.retrospective or {}),
     )
 
 
@@ -1752,4 +1792,113 @@ async def evaluate_project_stars(
         star_averages=compute_average_star_axes(
             [{"star_scores": e.star_scores} for e in exps]
         ),
+    )
+
+
+# ==============================================================================
+# 8. 프로젝트 회고 인터뷰 (KPT / 4Ls / Post-Mortem) & 프로젝트 간 학습 루프 저장
+# ==============================================================================
+@router.post(
+    "/{project_id}/retrospective/questions",
+    response_model=ProjectRetroQuestionsResponse,
+)
+async def get_project_retro_questions(
+    project_id: int,
+    payload: ProjectRetroQuestionsRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> ProjectRetroQuestionsResponse:
+    """프로젝트 기록을 바탕으로 4관점 회고 인터뷰 질문을 생성한다."""
+    project = await _load_project_full(session, project_id)
+    exps_payload = [
+        {
+            "title": e.title,
+            "action": e.action,
+            "result": e.result,
+            "learning": e.learning,
+        }
+        for e in project.experiences
+    ]
+    try:
+        res = await generate_project_retro_questions(
+            project=_project_to_dict(project),
+            sections=[_section_to_dict(s) for s in project.sections],
+            experiences=exps_payload,
+            framework=payload.framework,
+        )
+    except Exception as exc:
+        logger.exception("Project retro questions failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"프로젝트 회고 인터뷰 질문 생성 실패: {exc}",
+        )
+    return ProjectRetroQuestionsResponse(**res)
+
+
+@router.post(
+    "/{project_id}/retrospective/apply",
+    response_model=ProjectRetroApplyResponse,
+)
+async def apply_project_retrospective(
+    project_id: int,
+    payload: ProjectRetroApplyRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> ProjectRetroApplyResponse:
+    """회고 인터뷰 답변을 구조화해 저장하고, outcomes 섹션 반영 및 코파일럿 학습 루프에 연결한다."""
+    project = await _load_project_full(session, project_id)
+    answered = [a.model_dump() for a in payload.answers if a.answer.strip()]
+    if not answered:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="최소 1개 이상의 회고 질문에 답변을 입력해 주세요.",
+        )
+
+    try:
+        retro = await synthesize_project_retrospective(
+            project=_project_to_dict(project),
+            sections=[_section_to_dict(s) for s in project.sections],
+            qa_pairs=answered,
+            framework=payload.framework,
+        )
+    except Exception as exc:
+        logger.exception("Project retrospective synthesis failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"프로젝트 회고 정리 중 오류가 발생했습니다: {exc}",
+        )
+
+    project.retrospective = retro
+    outcomes_synced = False
+    vector_synced = False
+
+    outcomes_addition = (retro.get("outcomes_markdown_addition") or "").strip()
+    if payload.sync_to_outcomes_section and outcomes_addition:
+        outcomes_sec = next(
+            (s for s in project.sections if s.section_type == "outcomes"), None
+        )
+        if outcomes_sec is not None:
+            existing = (outcomes_sec.content or "").strip()
+            marker = "### 프로젝트 회고"
+            if marker in existing:
+                existing = existing.split(marker)[0].strip()
+            outcomes_sec.content = (
+                f"{existing}\n\n{marker} ({retro.get('framework', 'kpt').upper()})\n{outcomes_addition}".strip()
+                if existing
+                else f"{marker} ({retro.get('framework', 'kpt').upper()})\n{outcomes_addition}"
+            )
+            outcomes_synced = True
+
+    await session.commit()
+
+    if outcomes_synced:
+        project = await _load_project_full(session, project_id)
+        outcomes_sec = next(
+            (s for s in project.sections if s.section_type == "outcomes"), None
+        )
+        if outcomes_sec is not None:
+            vector_synced = await _sync_section_vector(session, project, outcomes_sec)
+
+    return ProjectRetroApplyResponse(
+        retrospective=retro,
+        outcomes_synced=outcomes_synced,
+        vector_synced=vector_synced,
     )

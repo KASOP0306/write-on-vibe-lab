@@ -125,6 +125,7 @@ class ProjectDetailResponse(ProjectResponse):
     documents: list[ProjectDocumentResponse] = Field(default_factory=list)
     assembled_markdown: str = ""
     star_averages: dict[str, Any] = Field(default_factory=dict)
+    retrospective: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectRecapResponse(BaseModel):
@@ -363,3 +364,61 @@ class PortfolioDiagnosisResponse(BaseModel):
     external_notes: dict[str, str] = Field(default_factory=dict)
     overall_star_averages: dict[str, Any] = Field(default_factory=dict)
     project_count: int = 0
+
+
+# ==============================================================================
+# 프로젝트 회고 인터뷰 & 프로젝트 간 학습 루프 (Try 인계)
+# ==============================================================================
+class ProjectRetroQuestionsRequest(BaseModel):
+    framework: str = Field(
+        default="kpt", description="kpt | 4ls | postmortem"
+    )
+
+
+class ProjectRetroQuestion(BaseModel):
+    id: str
+    dimension: str
+    question: str
+    why_ask: str = ""
+    example_hint: str = ""
+
+
+class ProjectRetroQuestionsResponse(BaseModel):
+    framework: str = "kpt"
+    opening_note: str = ""
+    questions: list[ProjectRetroQuestion] = Field(default_factory=list)
+
+
+class ProjectRetroAnswerItem(BaseModel):
+    dimension: str = ""
+    question: str
+    answer: str = ""
+
+
+class ProjectRetroApplyRequest(BaseModel):
+    framework: str = Field(default="kpt")
+    answers: list[ProjectRetroAnswerItem] = Field(default_factory=list)
+    sync_to_outcomes_section: bool = Field(
+        default=True,
+        description="정리된 회고 요약을 프로젝트의 '성과, 지표 & 회고(outcomes)' 섹션에도 자동 반영",
+    )
+
+
+class ProjectRetroApplyResponse(BaseModel):
+    retrospective: dict[str, Any] = Field(default_factory=dict)
+    outcomes_synced: bool = False
+    vector_synced: bool = False
+
+
+class LearningLoopItem(BaseModel):
+    project_id: int
+    project_name: str
+    framework: str = "kpt"
+    try_items: list[str] = Field(default_factory=list)
+    decision_revisit: str = ""
+    updated_at: str = ""
+
+
+class LearningLoopResponse(BaseModel):
+    items: list[LearningLoopItem] = Field(default_factory=list)
+    total_try_count: int = 0

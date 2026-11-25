@@ -144,8 +144,20 @@ async def _load_copilot_rich_context(
         )
         or "(등록된 프로젝트 없음)"
     )
+    loop_lines: list[str] = []
+    for p in projects:
+        retro = p.retrospective or {}
+        tries = [str(t).strip() for t in (retro.get("try_items") or []) if str(t).strip()]
+        if tries:
+            loop_lines.append(
+                f"- [{p.name} 회고 Try 규칙] " + " / ".join(tries)
+            )
+    learning_loop_context = (
+        "\n".join(loop_lines)
+        or "(아직 이전 프로젝트 회고에서 인계된 Try 규칙 없음)"
+    )
     exp_docs = [
-        f"[경험] {e.title} ({e.completeness_score}점)\nAction: {e.action}\nResult: {e.result}\n지표: {e.quantified_metrics}"
+        f"[경험] {e.title} ({e.completeness_score}점)\nAction: {e.action}\nResult: {e.result}\nLearning: {e.learning}\n지표: {e.quantified_metrics}"
         for e in experiences
     ]
 
@@ -155,6 +167,7 @@ async def _load_copilot_rich_context(
         "belief_notes_context": belief_notes_context,
         "company_context": company_context,
         "existing_projects_context": existing_projects_context,
+        "learning_loop_context": learning_loop_context,
         "experience_docs": exp_docs,
         "target_roles": profile.target_roles if profile else "",
         "company_names": [c.company_name for c in company_profiles],
@@ -285,7 +298,8 @@ async def propose_new_project_blueprints(
         f"=== 2. 나의 커리어 신념 & 최근 생각 노트 ===\n{ctx['profile_summary']}\n{ctx['belief_notes_context']}\n\n"
         f"=== 3. 리서치해둔 목표 기업 동향 ===\n{ctx['company_context'][:3000]}\n\n"
         f"=== 4. 기존 보유 프로젝트 (중복 방지용) ===\n{ctx['existing_projects_context'][:2500]}\n\n"
-        f"=== 5. 최신 웹 검색 레퍼런스 ===\n{web_dump[:4000]}"
+        f"=== 5. 이전 프로젝트 회고에서 인계된 Try 규칙 (프로젝트 간 학습 루프 — 반드시 새 프로젝트 실행 로드맵에 반영!) ===\n{ctx['learning_loop_context']}\n\n"
+        f"=== 6. 최신 웹 검색 레퍼런스 ===\n{web_dump[:4000]}"
     )
 
     llm = get_smart_llm(temperature=0.35, max_tokens=5000)
@@ -342,6 +356,7 @@ class CopilotChatState(TypedDict, total=False):
     company_context: str
     belief_notes_context: str
     existing_projects_context: str
+    learning_loop_context: str
     profile_summary: str
 
     is_sufficient: bool
@@ -382,6 +397,7 @@ async def copilot_retriever(state: CopilotChatState) -> dict[str, Any]:
         "company_context": rich["company_context"],
         "belief_notes_context": rich["belief_notes_context"],
         "existing_projects_context": rich["existing_projects_context"],
+        "learning_loop_context": rich["learning_loop_context"],
         "profile_summary": rich["profile_summary"],
         "web_search_count": 0,
         "web_sources": [],
@@ -473,6 +489,7 @@ async def copilot_answer(state: CopilotChatState) -> dict[str, Any]:
                 f"[사용자가 선택한 집중 약점] {state.get('focus_weakness') or '(전체 약점 참고)'}\n\n"
                 f"[리서치된 목표 기업 정보]\n{(state.get('company_context') or '(없음)')[:2500]}\n\n"
                 f"[기존 보유 프로젝트]\n{(state.get('existing_projects_context') or '(없음)')[:1800]}\n\n"
+                f"[이전 프로젝트 회고 Try 학습 루프 (새 프로젝트에 꼭 적용할 개선 규칙)]\n{state.get('learning_loop_context') or '(없음)'}\n\n"
                 f"[최근 대화]\n{history_text}\n\n"
                 f"[현재 질문]\n{state['message']}\n\n"
                 f"[웹 검색 보강 자료]\n{web_text}"

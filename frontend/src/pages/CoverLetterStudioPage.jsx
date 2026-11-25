@@ -276,7 +276,7 @@ export default function CoverLetterStudioPage() {
     <div className="space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">
-          7. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
+          5. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
         </h2>
         <p className="text-sm text-slate-600 mt-1">
           <strong>1단계</strong>로 기업이 제시한 문항의 숨은 평가 의도를 해부해 내 포트폴리오 중 최적{" "}

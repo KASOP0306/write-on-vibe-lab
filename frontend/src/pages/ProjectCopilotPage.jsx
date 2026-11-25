@@ -35,6 +35,7 @@ export default function ProjectCopilotPage({
   const [modeTab, setModeTab] = useState("blueprint"); // "blueprint" | "chat"
   const [diagnosisData, setDiagnosisData] = useState(null);
   const [companies, setCompanies] = useState([]);
+  const [learningLoop, setLearningLoop] = useState(null);
 
   // Shared Planning Context
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
@@ -58,12 +59,14 @@ export default function ProjectCopilotPage({
   useEffect(() => {
     const loadContext = async () => {
       try {
-        const [diag, comps] = await Promise.all([
+        const [diag, comps, loop] = await Promise.all([
           api.getPortfolioDiagnosis().catch(() => null),
           api.listCompanies().catch(() => []),
+          api.getProjectsLearningLoop().catch(() => null),
         ]);
         setDiagnosisData(diag);
         setCompanies(comps || []);
+        setLearningLoop(loop);
       } catch (err) {
         console.warn(err);
       }
@@ -233,7 +236,7 @@ export default function ProjectCopilotPage({
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <Rocket className="w-6 h-6 text-indigo-600" />
-          <span>6. 새 프로젝트 코파일럿</span>
+          <span>7. 새 프로젝트 코파일럿</span>
         </h2>
         <p className="text-sm text-slate-600 mt-1">
           <strong>나의 포트폴리오 캐릭터 약점</strong>, <strong>리서치해둔 목표 기업 동향</strong>, 그리고{" "}
@@ -306,6 +309,31 @@ export default function ProjectCopilotPage({
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Cross-Project Learning Loop: Try Rules Inherited from Prior Retrospectives */}
+        {(learningLoop?.items || []).length > 0 && (
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="text-[11px] font-bold text-emerald-800 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>
+                이전 프로젝트 회고에서 인계된 Try 학습 루프 ({learningLoop.total_try_count}건 자동 반영)
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {learningLoop.items.flatMap((it) =>
+                (it.try_items || []).map((t, ti) => (
+                  <span
+                    key={`${it.project_id}-${ti}`}
+                    className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-[11px] text-emerald-950"
+                  >
+                    <strong className="text-emerald-700 mr-1">[{it.project_name}]</strong>
+                    {t}
+                  </span>
+                ))
+              )}
             </div>
           </div>
         )}

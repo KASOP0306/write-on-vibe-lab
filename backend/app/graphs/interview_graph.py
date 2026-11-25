@@ -11,7 +11,11 @@ from pydantic import BaseModel, Field
 
 from app.core.bedrock import ainvoke_structured, get_fast_llm
 from app.core.database import Experience, get_psycopg_conninfo, get_session_factory
-from app.core.star_rubric import evaluate_star_experience_rubric
+from app.core.star_rubric import (
+    PROBING_TECHNIQUES,
+    STAR_AXIS_ORDER,
+    evaluate_star_experience_rubric,
+)
 from app.core.vector_store import DocType, try_upsert_document
 
 logger = logging.getLogger(__name__)
@@ -46,10 +50,28 @@ class GapGradeSchema(BaseModel):
     )
 
 
+class StructuredProbeQuestion(BaseModel):
+    technique: str = Field(
+        default="micro_behavioral",
+        description="ownership_drilldown | micro_behavioral | counter_factual | xyz_quantification | learning_transfer",
+    )
+    target_axis: str = Field(
+        default="action",
+        description="보강할 STAR-L 핵심 축 (situation | task | action | result | learning)",
+    )
+    question: str = Field(
+        description="모호한 표현을 파고드는 짧고 날카로운 한국어 역질문 1문장"
+    )
+    interviewer_intent: str = Field(
+        default="",
+        description="면접관이 이 역질문으로 무엇을 검증하려는지 1줄 설명",
+    )
+
+
 class FollowupQuestionsSchema(BaseModel):
-    questions: list[str] = Field(
+    questions: list[StructuredProbeQuestion] = Field(
         default_factory=list,
-        description="빈틈을 채우기 위해 사용자에게 던질 날카롭고 구체적인 역질문 1~2개",
+        description="가장 점수가 낮은 축을 집중 공략하는 DDI Funnel / Bar Raiser 드릴다운 역질문 2개",
     )
 
 
@@ -66,6 +88,7 @@ class InterviewState(TypedDict, total=False):
     is_sufficient: bool
     missing_points: list[str]
     questions: list[str]
+    structured_questions: list[dict[str, str]]
     saved_experience_id: int | None
     vector_synced: bool
 
@@ -151,33 +174,97 @@ def route_after_grade(state: InterviewState) -> str:
 
 
 async def generate_questions(state: InterviewState) -> dict[str, Any]:
-    """부족한 빈틈을 메우기 위한 핵심 역질문 1~2개를 생성한다."""
-    llm = get_fast_llm(temperature=0.3)
+    """DDI Funnel Probing × Amazon Bar Raiser 드릴다운 기법으로 가장 약한 STAR-L 축을 공략하는 역질문 2개를 생성한다."""
+    llm = get_fast_llm(temperature=0.3, max_tokens=1500)
     star = state.get("star") or {}
+    star_scores = state.get("star_scores") or {}
+    axes = star_scores.get("axes") or {}
     missing_points = state.get("missing_points") or []
     qa_history = state.get("qa_history") or []
+    turn_idx = len(qa_history)
+
+    # 현재 가장 점수가 낮은 축 2개를 객관적으로 식별
+    sorted_axes = sorted(
+        STAR_AXIS_ORDER,
+        key=lambda ax: int((axes.get(ax) or {}).get("score") or 0),
+    )
+    weakest_summary = "\n".join(
+        f"- {ax}: Lv.{(axes.get(ax) or {}).get('level', 1)} ({(axes.get(ax) or {}).get('score', 0)}점) — {(axes.get(ax) or {}).get('tip', '')}"
+        for ax in sorted_axes
+    )
+    depth_guide = (
+        "1단계(Directed Probe): '우리가 했다'를 '내가 했다'로 분리(ownership_drilldown)하고, 가장 약한 축의 핵심 사실부터 명확히 끌어내세요."
+        if turn_idx == 0
+        else "2단계 이상(Micro-Behavioral & Counter-Factual Drill-Down): 직전 답변에서 아직 모호한 지점을 파고들어 대안 비교·트레이드오프(counter_factual), 구체적 행동(micro_behavioral), 전후 정량 지표(xyz_quantification), 재발 방지 원칙(learning_transfer)을 검증하세요."
+    )
+    prev_qs = [
+        q for turn in qa_history for q in (turn.get("questions") or [])
+    ]
 
     messages = [
         SystemMessage(
             content=(
-                "당신은 지원자의 경험 밀도를 끌어올리는 능동적 커리어 인터뷰어입니다.\n"
-                "이미 물어본 질문을 반복하지 말고, 빠진 정량 지표·트러블슈팅 원인·본인 기여도 중 "
-                "가장 중요한 빈틈을 찌르는 짧고 답변하기 쉬운 역질문 1~2개만 한국어로 작성하세요."
+                "당신은 DDI Funnel Probing과 Amazon Bar Raiser Drill-Down 기법을 구사하는 시니어 커리어 인터뷰어입니다.\n"
+                f"[현재 프로빙 단계] {depth_guide}\n\n"
+                "사용 가능한 프로빙 기법(`technique`):\n"
+                "- `ownership_drilldown`: 팀이 아닌 본인의 고유 의사결정·실행 경계 확인 ('I' Rule)\n"
+                "- `micro_behavioral`: 추상적 요약 대신 실제 취한 구체 행동·데이터·소통 장면 확인\n"
+                "- `counter_factual`: 포기한 대안, 제약조건, 리스크 트레이드오프 근거 검증\n"
+                "- `xyz_quantification`: Google XYZ 전후 비교 수치·규모·객관 검증 근거 확인\n"
+                "- `learning_transfer`: 단순 소감 대신 재발 방지 설계·다음 프로젝트 적용 원칙 확인\n\n"
+                "규칙:\n"
+                "1. 이전에 물어본 질문은 절대 반복하지 마세요.\n"
+                "2. 가장 점수가 낮은 축 2개를 서로 다른 기법으로 공략하는 짧고 답변하기 쉬운 역질문 2개를 만드세요."
             )
         ),
         HumanMessage(
             content=(
-                f"[현재 STAR 요약]\n{star}\n\n"
+                f"[현재 STAR-L 요약]\n{star}\n\n"
+                f"[현재 5축 점수 (낮은 순)]\n{weakest_summary}\n\n"
                 f"[탐지된 빈틈]\n{missing_points}\n\n"
-                f"[이전 질문 횟수]\n{len(qa_history)}회"
+                f"[이미 물어본 질문 (반복 금지)]\n{prev_qs or '(없음)'}"
             )
         ),
     ]
-    followup = await ainvoke_structured(llm, FollowupQuestionsSchema, messages, max_retries=1)
-    questions = [q.strip() for q in followup.questions if q.strip()][:2] or [
-        "이 경험에서 본인이 직접 해결한 핵심 기술적 과제와 정량적 성과(전후 비교 등)를 조금 더 구체적으로 알려주시겠어요?"
-    ]
-    return {"questions": questions}
+    followup = await ainvoke_structured(llm, FollowupQuestionsSchema, messages, max_retries=2)
+    structured: list[dict[str, str]] = []
+    for item in (followup.questions or [])[:2]:
+        q_text = item.question.strip()
+        if not q_text:
+            continue
+        tech_key = (
+            item.technique
+            if item.technique in PROBING_TECHNIQUES
+            else "micro_behavioral"
+        )
+        tech_meta = PROBING_TECHNIQUES[tech_key]
+        structured.append(
+            {
+                "technique": tech_key,
+                "technique_label": tech_meta["label"],
+                "target_axis": item.target_axis,
+                "question": q_text,
+                "interviewer_intent": item.interviewer_intent.strip()
+                or tech_meta["purpose"],
+            }
+        )
+
+    if not structured:
+        fallback_q = "이 경험에서 팀이 아니라 본인이 직접 내린 핵심 의사결정과, 적용 전/후로 확인된 구체적 변화(수치 또는 검증 결과)를 알려주시겠어요?"
+        structured = [
+            {
+                "technique": "ownership_drilldown",
+                "technique_label": PROBING_TECHNIQUES["ownership_drilldown"]["label"],
+                "target_axis": sorted_axes[0] if sorted_axes else "action",
+                "question": fallback_q,
+                "interviewer_intent": PROBING_TECHNIQUES["ownership_drilldown"]["purpose"],
+            }
+        ]
+
+    return {
+        "questions": [s["question"] for s in structured],
+        "structured_questions": structured,
+    }
 
 
 async def save_experience(state: InterviewState) -> dict[str, Any]:

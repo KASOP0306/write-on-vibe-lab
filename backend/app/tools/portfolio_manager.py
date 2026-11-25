@@ -845,13 +845,28 @@ async def diagnose_portfolio_character(
             f"A={(e.get('action') or '')[:160]} / R={(e.get('result') or '')[:140]} / 지표={e.get('quantified_metrics', '')}"
             for e in (p.get("experiences") or [])
         )
+        retro = p.get("retrospective") or {}
+        retro_line = ""
+        if retro.get("summary") or retro.get("try_items"):
+            ext_ops = retro.get("external_ops_lessons") or {}
+            retro_line = (
+                f"\n[프로젝트 회고 ({retro.get('framework', 'kpt').upper()})]\n"
+                f"  요약: {retro.get('summary', '')}\n"
+                f"  Keep: {', '.join(retro.get('keep') or [])}\n"
+                f"  Problem: {', '.join(retro.get('problem') or [])}\n"
+                f"  Try(다음 적용 규칙): {', '.join(retro.get('try_items') or [])}\n"
+                f"  외적 운영 회고 — 시간/일정: {ext_ops.get('time_execution', '')} | "
+                f"인적/협업: {ext_ops.get('people_collaboration', '')} | "
+                f"적응/회복: {ext_ops.get('adaptability_growth', '')}"
+            )
         project_blocks.append(
             f"## 프로젝트: {p.get('name')} | 기간: {p.get('period') or '미입력'} | 역할: {p.get('role') or '미입력'}\n"
             f"유형: {types} | 기술·역량: {', '.join(p.get('tech_stack') or [])}\n"
             f"GitHub: {p.get('repo_url') or '없음'} | 참고 링크: {links or '없음'}\n"
             f"요약: {p.get('summary') or '(없음)'}\n"
             f"[주요 섹션]\n{secs or '  (작성된 섹션 없음)'}\n"
-            f"[STAR 경험]\n{exps or '  (등록된 STAR 없음)'}"
+            f"[STAR-L 경험]\n{exps or '  (등록된 STAR-L 없음)'}"
+            f"{retro_line}"
         )
 
     ext_notes = external_notes or {}
@@ -912,4 +927,184 @@ async def diagnose_portfolio_character(
         "strengths": [s.model_dump() for s in diagnosed.strengths[:3]],
         "weaknesses": [w.model_dump() for w in diagnosed.weaknesses[:3]],
         "growth_actions": [g.model_dump() for g in diagnosed.growth_actions[:3]],
+    }
+
+
+# ==============================================================================
+# 7. 프로젝트 회고 인터뷰 & 프로젝트 간 학습 루프 (KPT / 4Ls / Post-Mortem)
+# ==============================================================================
+RETRO_FRAMEWORKS = {
+    "kpt": "KPT (Keep 유지할 강점 · Problem 객관적 문제 · Try 다음 프로젝트 적용 규칙)",
+    "4ls": "4Ls (Liked 좋았던 점 · Learned 배운 점 · Lacked 부족했던 점 · Longed for 아쉬웠던 점)",
+    "postmortem": "의사결정 Post-Mortem (가설 vs 실제 · 트레이드오프 복기 · 다시 돌아간다면 · 재발 방지 규칙)",
+}
+
+
+class ProjectRetroQuestionItem(BaseModel):
+    id: str = Field(description="질문 식별자 (rq1~rq4)")
+    dimension: Literal["decision", "time_ops", "people_collab", "next_try"] = Field(
+        description="decision(의사결정/기술·기획 복기), time_ops(시간·일정·우선순위), people_collab(인적·협업·소통), next_try(재발방지·다음 Try 규칙)"
+    )
+    question: str = Field(description="이 프로젝트의 실제 맥락을 반영한 날카로운 회고 질문")
+    why_ask: str = Field(description="이 회고 질문이 면접·포트폴리오·외적 역량 증명에 왜 중요한지 1문장")
+    example_hint: str = Field(default="", description="답변 방향 예시 1줄")
+
+
+class ProjectRetroQuestionsSchema(BaseModel):
+    opening_note: str = Field(
+        description="이 프로젝트 기록을 읽고 어떤 회고 포인트를 파고들지 1~2문장 안내"
+    )
+    questions: list[ProjectRetroQuestionItem] = Field(
+        default_factory=list, description="4관점 맞춤 프로젝트 회고 질문 4개"
+    )
+
+
+class ExternalOpsLessonsSchema(BaseModel):
+    time_execution: str = Field(
+        default="", description="시간·일정·우선순위 관리 측면의 구체적 교훈 (근거 없으면 빈 문자열)"
+    )
+    people_collaboration: str = Field(
+        default="", description="인적·이해관계자 협업·소통 측면의 구체적 교훈 (근거 없으면 빈 문자열)"
+    )
+    adaptability_growth: str = Field(
+        default="", description="변경·장애·실패 대응 및 회복탄력성 교훈 (근거 없으면 빈 문자열)"
+    )
+
+
+class ProjectRetroSynthesisSchema(BaseModel):
+    summary: str = Field(description="프로젝트 회고 핵심 요약 (2~3문장, 뻔한 감상 금지)")
+    keep: list[str] = Field(
+        default_factory=list,
+        description="유지할 강점 / 좋았던 점 (Keep / Liked) 2~3개",
+    )
+    problem: list[str] = Field(
+        default_factory=list,
+        description="객관적 문제 / 부족·아쉬웠던 점 (Problem / Lacked) 2~3개",
+    )
+    try_items: list[str] = Field(
+        default_factory=list,
+        description="다음 프로젝트에 반드시 적용할 구체적 행동 규칙 (Try — 새 프로젝트 코파일럿으로 인계됨) 2~3개",
+    )
+    decision_revisit: str = Field(
+        default="",
+        description="가장 중요했던 의사결정 복기 및 '다시 돌아간다면 바꿀 선택' 2문장",
+    )
+    external_ops_lessons: ExternalOpsLessonsSchema = Field(
+        default_factory=ExternalOpsLessonsSchema
+    )
+    outcomes_markdown_addition: str = Field(
+        default="",
+        description="프로젝트의 '성과, 지표 & 회고(outcomes)' 섹션 하단에 깔끔히 덧붙일 회고 Markdown 블록",
+    )
+
+
+async def generate_project_retro_questions(
+    *,
+    project: dict[str, Any],
+    sections: list[dict[str, Any]],
+    experiences: list[dict[str, Any]],
+    framework: str = "kpt",
+) -> dict[str, Any]:
+    """프로젝트 실제 섹션·STAR-L 기록을 바탕으로 4관점 프로젝트 회고 인터뷰 질문을 생성한다."""
+    project_types = normalize_project_types(project.get("project_types"))
+    guidance = get_combined_ai_guidance(project_types)
+    fw_key = framework if framework in RETRO_FRAMEWORKS else "kpt"
+
+    sec_dump = "\n\n".join(
+        f"### [{s['section_type']}] {s['title']}\n{(s.get('content') or '').strip()[:500]}"
+        for s in sections
+        if (s.get("content") or "").strip()
+    ) or "(작성된 섹션 없음)"
+    exp_dump = "\n".join(
+        f"- {e.get('title')}: A={(e.get('action') or '')[:150]} / R={(e.get('result') or '')[:120]}"
+        for e in experiences
+    ) or "(STAR-L 없음)"
+
+    system_prompt = (
+        f"당신은 {guidance['persona']} 관점의 프로젝트 포스트모템(회고) 퍼실리테이터입니다.\n"
+        f"선택된 회고 프레임워크는 [{RETRO_FRAMEWORKS[fw_key]}]입니다.\n"
+        "뻔한 소감('소통이 중요했다')이 아니라, 면접 꼬리질문과 다음 프로젝트 실행에 진짜 무기가 되는 "
+        "**4가지 관점의 맞춤 회고 인터뷰 질문 4개**를 만드세요:\n"
+        "1. `decision`: 이 프로젝트의 실제 기술/기획 선택 중 다시 돌아간다면 다르게 결정할 트레이드오프\n"
+        "2. `time_ops`: 기간·일정·우선순위(MVP 스코프 절단) 측면에서 발생한 병목과 개선 기준\n"
+        "3. `people_collab`: 팀원·유관 직군·사용자(또는 혼자였다면 자기 객관화/피드백 루프)와의 소통·조율 회고\n"
+        "4. `next_try`: 이 프로젝트에서 일반화해 **다음 프로젝트에 반드시 적용할 구체적 Try 규칙 1가지**\n"
+        "반드시 프로젝트의 실제 이름·섹션 내용을 구체적으로 언급하며 질문하세요."
+    )
+
+    user_prompt = (
+        f"[프로젝트] {project.get('name')} ({project.get('period') or '기간 미입력'} / {project.get('role') or '역할 미입력'})\n"
+        f"[유형] {guidance['labels']}\n"
+        f"[요약] {project.get('summary') or '(없음)'}\n\n"
+        f"[작성된 섹션]\n{sec_dump[:8000]}\n\n"
+        f"[연결 STAR-L]\n{exp_dump[:2500]}"
+    )
+
+    llm = get_fast_llm(temperature=0.25, max_tokens=2048)
+    res = await ainvoke_structured(
+        llm,
+        ProjectRetroQuestionsSchema,
+        [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+        max_retries=2,
+    )
+    return {
+        "framework": fw_key,
+        "opening_note": res.opening_note.strip(),
+        "questions": [q.model_dump() for q in res.questions[:4]],
+    }
+
+
+async def synthesize_project_retrospective(
+    *,
+    project: dict[str, Any],
+    sections: list[dict[str, Any]],
+    qa_pairs: list[dict[str, str]],
+    framework: str = "kpt",
+) -> dict[str, Any]:
+    """회고 인터뷰 답변을 구조화된 프로젝트 회고(KPT/4Ls/Post-Mortem + 외적 운영 교훈 + 다음 Try 규칙)로 정리한다."""
+    project_types = normalize_project_types(project.get("project_types"))
+    guidance = get_combined_ai_guidance(project_types)
+    fw_key = framework if framework in RETRO_FRAMEWORKS else "kpt"
+
+    qa_text = "\n\n".join(
+        f"[{item.get('dimension', '')}] Q: {item.get('question', '')}\nA: {item.get('answer', '')}"
+        for item in qa_pairs
+        if (item.get("answer") or "").strip()
+    )
+
+    system_prompt = (
+        f"당신은 {guidance['persona']} 관점의 시니어 회고 에디터입니다.\n"
+        f"회고 프레임워크 [{RETRO_FRAMEWORKS[fw_key]}] 기준으로 지원자의 프로젝트 회고 인터뷰 답변을 "
+        "실무 포트폴리오 및 다음 프로젝트 학습 루프에 바로 쓸 수 있도록 구조화하세요.\n"
+        "규칙:\n"
+        "1. '소통이 중요했다', '열심히 하겠다' 같은 추상적 감상을 배제하고, 관찰된 사실 → 원인 → 구체적 재발 방지/Try 행동으로 정리하세요.\n"
+        "2. `try_items`는 다음 새 프로젝트를 시작할 때 체크리스트로 바로 적용할 수 있게 실행 가능한 문장으로 작성하세요.\n"
+        "3. `external_ops_lessons`에는 답변에서 확인된 시간·일정 / 인적·협업 / 적응·회복 교훈만 정확히 기재하고, 답변에 없는 항목은 빈 문자열로 두세요(날조 금지)."
+    )
+
+    user_prompt = (
+        f"[프로젝트] {project.get('name')} ({project.get('role') or '역할 미입력'})\n"
+        f"[유형] {guidance['labels']}\n"
+        f"[요약] {project.get('summary') or '(없음)'}\n\n"
+        f"[프로젝트 회고 인터뷰 답변]\n{qa_text[:7000]}"
+    )
+
+    llm = get_smart_llm(temperature=0.25, max_tokens=3500)
+    syn = await ainvoke_structured(
+        llm,
+        ProjectRetroSynthesisSchema,
+        [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+        max_retries=2,
+    )
+
+    return {
+        "framework": fw_key,
+        "summary": syn.summary.strip(),
+        "keep": [x.strip() for x in syn.keep if x.strip()][:4],
+        "problem": [x.strip() for x in syn.problem if x.strip()][:4],
+        "try_items": [x.strip() for x in syn.try_items if x.strip()][:4],
+        "decision_revisit": syn.decision_revisit.strip(),
+        "external_ops_lessons": syn.external_ops_lessons.model_dump(),
+        "outcomes_markdown_addition": syn.outcomes_markdown_addition.strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }

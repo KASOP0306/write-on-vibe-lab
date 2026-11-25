@@ -122,6 +122,15 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [rubricRef, setRubricRef] = useState(null);
   const [showRubricModal, setShowRubricModal] = useState(false);
 
+  // Project Retrospective Interview & Cross-Project Learning Loop State
+  const [retroFramework, setRetroFramework] = useState("kpt");
+  const [retroQs, setRetroQs] = useState(null);
+  const [retroAnswers, setRetroAnswers] = useState({});
+  const [loadingRetroQs, setLoadingRetroQs] = useState(false);
+  const [submittingRetro, setSubmittingRetro] = useState(false);
+  const [syncRetroToOutcomes, setSyncRetroToOutcomes] = useState(true);
+  const [retroError, setRetroError] = useState("");
+
   const loadProject = async (keepActiveKey = true) => {
     setLoading(true);
     setError("");
@@ -656,6 +665,60 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
     }
   };
 
+  const handleStartProjectRetro = async (fw = retroFramework) => {
+    if (loadingRetroQs) return;
+    setLoadingRetroQs(true);
+    setRetroError("");
+    try {
+      const data = await api.getProjectRetroQuestions(projectId, fw);
+      setRetroQs(data);
+      const init = {};
+      (data.questions || []).forEach((q) => {
+        init[q.id] = "";
+      });
+      setRetroAnswers(init);
+    } catch (err) {
+      setRetroError(err.message);
+    } finally {
+      setLoadingRetroQs(false);
+    }
+  };
+
+  const handleApplyProjectRetro = async (e) => {
+    e.preventDefault();
+    if (!retroQs || submittingRetro) return;
+    const answers = (retroQs.questions || [])
+      .map((q) => ({
+        dimension: q.dimension,
+        question: q.question,
+        answer: (retroAnswers[q.id] || "").trim(),
+      }))
+      .filter((a) => a.answer);
+
+    if (answers.length === 0) {
+      setRetroError("최소 1개 이상의 회고 질문에 답변을 입력해 주세요.");
+      return;
+    }
+
+    setSubmittingRetro(true);
+    setRetroError("");
+    try {
+      await api.applyProjectRetrospective(projectId, {
+        framework: retroQs.framework || retroFramework,
+        answers,
+        sync_to_outcomes_section: syncRetroToOutcomes,
+      });
+      setRetroQs(null);
+      setRetroAnswers({});
+      await loadProject(true);
+      onGlobalRefresh?.();
+    } catch (err) {
+      setRetroError(err.message);
+    } finally {
+      setSubmittingRetro(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-12 flex items-center justify-center gap-2 text-sm text-slate-600">
@@ -1064,6 +1127,26 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 <span>연결된 STAR-L 경험</span>
               </span>
               <span>{project.experiences?.length || 0}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveKey("retro")}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold ${
+                activeKey === "retro"
+                  ? "bg-indigo-600 text-white"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>프로젝트 회고 (학습 루프)</span>
+              </span>
+              <span className="text-[10px]">
+                {(project.retrospective?.try_items || []).length > 0
+                  ? `Try ${project.retrospective.try_items.length}`
+                  : "미작성"}
+              </span>
             </button>
 
             <button
@@ -1522,6 +1605,258 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   ))}
                 </div>
               )}
+            </div>
+          ) : activeKey === "retro" ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    프로젝트 회고 인터뷰 &amp; 다음 프로젝트 학습 루프
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    인터뷰 답변으로 KPT / 4Ls / 의사결정 포스트모템을 구조화하면, 도출된{" "}
+                    <strong>Try 규칙</strong>이 <strong>7. 새 프로젝트 코파일럿</strong>과{" "}
+                    <strong>6축 캐릭터 외적 축</strong>에 자동 연동됩니다.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    { id: "kpt", label: "KPT" },
+                    { id: "4ls", label: "4Ls" },
+                    { id: "postmortem", label: "의사결정 Post-Mortem" },
+                  ].map((fw) => (
+                    <button
+                      key={fw.id}
+                      type="button"
+                      onClick={() => setRetroFramework(fw.id)}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-semibold border ${
+                        retroFramework === fw.id
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {fw.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={loadingRetroQs}
+                    onClick={() => handleStartProjectRetro(retroFramework)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {loadingRetroQs ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {loadingRetroQs
+                        ? "맞춤 회고 질문 생성 중..."
+                        : project.retrospective?.summary
+                          ? "회고 인터뷰 다시 진행"
+                          : "AI 회고 인터뷰 시작"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {retroError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-700">
+                  {retroError}
+                </div>
+              )}
+
+              {/* Active Retrospective Interview Form */}
+              {retroQs && (
+                <form
+                  onSubmit={handleApplyProjectRetro}
+                  className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4 text-xs"
+                >
+                  {retroQs.opening_note && (
+                    <div className="rounded-xl bg-white border border-indigo-100 p-3 text-indigo-950">
+                      <strong>인터뷰 가이드 ({(retroQs.framework || "kpt").toUpperCase()}):</strong>{" "}
+                      {retroQs.opening_note}
+                    </div>
+                  )}
+
+                  {(retroQs.questions || []).map((q, idx) => {
+                    const dimLabels = {
+                      decision: "의사결정 · 트레이드오프 복기",
+                      time_ops: "외적 축 · 시간/일정/우선순위",
+                      people_collab: "외적 축 · 인적/협업/소통",
+                      next_try: "학습 루프 · 다음 프로젝트 Try 규칙",
+                    };
+                    return (
+                      <div
+                        key={q.id || idx}
+                        className="rounded-xl bg-white border border-slate-200 p-4 space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                            {dimLabels[q.dimension] || q.dimension}
+                          </span>
+                          {q.why_ask && (
+                            <span className="text-[11px] text-slate-500">{q.why_ask}</span>
+                          )}
+                        </div>
+                        <div className="text-sm font-bold text-slate-900">
+                          Q{idx + 1}. {q.question}
+                        </div>
+                        {q.example_hint && (
+                          <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5">
+                            힌트: {q.example_hint}
+                          </div>
+                        )}
+                        <textarea
+                          rows={3}
+                          value={retroAnswers[q.id] || ""}
+                          onChange={(e) =>
+                            setRetroAnswers((prev) => ({
+                              ...prev,
+                              [q.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="솔직한 시행착오와 다음에 바꿀 구체 기준을 적어주세요 (건너뛰기 가능)"
+                          className="w-full rounded-lg border border-slate-200 p-2.5 text-xs"
+                        />
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={syncRetroToOutcomes}
+                        onChange={(e) => setSyncRetroToOutcomes(e.target.checked)}
+                      />
+                      <span>정리된 회고를 &apos;성과, 지표 &amp; 회고&apos; 섹션에도 자동 반영</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRetroQs(null)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-600"
+                      >
+                        취소
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={submittingRetro}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {submittingRetro ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5" />
+                        )}
+                        <span>{submittingRetro ? "회고 구조화 & 저장 중..." : "회고 저장 & 학습 루프 연결"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Saved Structured Retrospective View */}
+              {project.retrospective?.summary ? (
+                <div className="space-y-4 text-xs">
+                  <div className="rounded-xl bg-slate-900 text-white p-4 space-y-1.5">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                      저장된 프로젝트 회고 ({(project.retrospective.framework || "kpt").toUpperCase()})
+                    </div>
+                    <p className="text-sm leading-relaxed text-slate-100">
+                      {project.retrospective.summary}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-1.5">
+                      <div className="font-bold text-emerald-900">Keep (유지할 강점)</div>
+                      <ul className="space-y-1 text-slate-700">
+                        {(project.retrospective.keep || []).map((k, i) => (
+                          <li key={i}>• {k}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3.5 space-y-1.5">
+                      <div className="font-bold text-rose-900">Problem (객관적 문제)</div>
+                      <ul className="space-y-1 text-slate-700">
+                        {(project.retrospective.problem || []).map((p, i) => (
+                          <li key={i}>• {p}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3.5 space-y-1.5">
+                      <div className="font-bold text-indigo-900">
+                        Try (다음 프로젝트 학습 루프 인계)
+                      </div>
+                      <ul className="space-y-1 text-indigo-950 font-medium">
+                        {(project.retrospective.try_items || []).map((t, i) => (
+                          <li key={i}>→ {t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {project.retrospective.decision_revisit && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-1">
+                      <div className="font-bold text-slate-800">핵심 의사결정 복기</div>
+                      <p className="text-slate-700 leading-relaxed">
+                        {project.retrospective.decision_revisit}
+                      </p>
+                    </div>
+                  )}
+
+                  {project.retrospective.external_ops_lessons &&
+                    Object.values(project.retrospective.external_ops_lessons).some(Boolean) && (
+                      <div className="rounded-xl border border-violet-200 bg-violet-50/30 p-3.5 space-y-1.5">
+                        <div className="font-bold text-violet-950">
+                          외적 운영 역량 교훈 (포트폴리오 캐릭터 외적 3축 자동 반영)
+                        </div>
+                        {project.retrospective.external_ops_lessons.time_execution && (
+                          <p className="text-slate-700">
+                            <strong>시간·일정:</strong>{" "}
+                            {project.retrospective.external_ops_lessons.time_execution}
+                          </p>
+                        )}
+                        {project.retrospective.external_ops_lessons.people_collaboration && (
+                          <p className="text-slate-700">
+                            <strong>인적·협업:</strong>{" "}
+                            {project.retrospective.external_ops_lessons.people_collaboration}
+                          </p>
+                        )}
+                        {project.retrospective.external_ops_lessons.adaptability_growth && (
+                          <p className="text-slate-700">
+                            <strong>적응·회복:</strong>{" "}
+                            {project.retrospective.external_ops_lessons.adaptability_growth}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                </div>
+              ) : !retroQs ? (
+                <div className="rounded-xl border border-dashed border-slate-200 py-10 px-4 text-center space-y-2.5">
+                  <p className="text-sm font-semibold text-slate-700">
+                    아직 이 프로젝트의 구조화된 회고가 작성되지 않았습니다.
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    프레임워크(KPT / 4Ls / 의사결정 Post-Mortem)를 고르고 AI 회고 인터뷰 4문항에 답하면,
+                    면접 꼬리질문 방어용 회고와 다음 프로젝트용 Try 규칙이 자동 정리됩니다.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={loadingRetroQs}
+                    onClick={() => handleStartProjectRetro(retroFramework)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AI 프로젝트 회고 인터뷰 시작</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="space-y-4">

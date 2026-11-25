@@ -18,6 +18,7 @@ from app.core.star_rubric import (
     compute_average_star_axes,
     compute_portfolio_overall_score,
     compute_weighted_star_score,
+    get_calibration_tier,
     get_rubric_reference_payload,
     normalize_star_scores,
 )
@@ -199,6 +200,16 @@ class TestPortfolioWorkspace(unittest.TestCase):
         ref = get_rubric_reference_payload()
         self.assertEqual(len(ref["star_rubric"]["axes"]), 5)
         self.assertEqual(len(ref["portfolio_rubric"]["axes"]), 6)
+        self.assertEqual(len(ref["calibration_tiers"]), 5)
+        self.assertEqual(len(ref["probing_techniques"]), 5)
+        # 모든 STAR-L 축이 1~5 전 레벨 앵커 보유 확인
+        for ax in ref["star_rubric"]["axes"]:
+            self.assertEqual(set(ax["bars"].keys()), {"1", "2", "3", "4", "5"})
+        self.assertEqual(get_calibration_tier(92)["grade"], "S")
+        self.assertEqual(get_calibration_tier(82)["grade"], "A")
+        self.assertEqual(get_calibration_tier(70)["grade"], "B")
+        self.assertEqual(get_calibration_tier(50)["grade"], "C")
+        self.assertEqual(get_calibration_tier(30)["grade"], "D")
         internal = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "internal"]
         external = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "external"]
         self.assertEqual(len(internal), 3)
