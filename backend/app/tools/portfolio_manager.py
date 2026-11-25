@@ -174,12 +174,12 @@ async def analyze_document_to_portfolio(
         f"[문서 파일명: {filename}]\n{doc_text[:19000]}"
     )
 
-    llm = get_smart_llm(temperature=0.25)
+    llm = get_smart_llm(temperature=0.25, max_tokens=5000)
     synthesized = await ainvoke_structured(
         llm,
         DocumentToPortfolioSchema,
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
-        max_retries=1,
+        max_retries=2,
     )
 
     gen_by_type = {s.section_type.strip(): s for s in synthesized.sections if s.content.strip()}

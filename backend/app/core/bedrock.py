@@ -28,23 +28,28 @@ def _create_boto_session() -> boto3.Session:
     return boto3.Session(region_name=settings.aws_region)
 
 
-def get_fast_llm(temperature: float = 0.2) -> ChatBedrockConverse:
+def get_fast_llm(temperature: float = 0.2, max_tokens: int = 2048) -> ChatBedrockConverse:
     """라우팅, STAR 추출, 완성도 평가, 관련성 평가용 Fast Tier LLM."""
     client = _create_boto_session().client("bedrock-runtime")
     return ChatBedrockConverse(
         model=settings.bedrock_fast_model_id,
         client=client,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
-def get_smart_llm(temperature: float = 0.4) -> ChatBedrockConverse:
-    """기업 3각 매칭, 자소서 초안/비평/퇴고, De-AI, 회고 분석용 Smart Tier LLM."""
+def get_smart_llm(temperature: float = 0.4, max_tokens: int = 5000) -> ChatBedrockConverse:
+    """기업 3각 매칭, 자소서 초안/비평/퇴고, De-AI, 회고 분석용 Smart Tier LLM.
+
+    Amazon Nova Pro의 최대 출력 토큰(5,120) 범위 내에서 넉넉하게 5,000을 기본 확보한다.
+    """
     client = _create_boto_session().client("bedrock-runtime")
     return ChatBedrockConverse(
         model=settings.bedrock_smart_model_id,
         client=client,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
@@ -83,23 +88,72 @@ def _extract_json_object(raw_text: str) -> str:
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if fenced:
         return fenced.group(1).strip()
+    # 닫는 ``` 없이 잘린 코드블록도 시작 '{'부터 끝까지 살려낸다.
     start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return text[start : end + 1]
+    if start != -1:
+        end = text.rfind("}")
+        if end > start:
+            # 뒷부분에 닫히지 않은 괄호가 남아있으면 전체 tail을 보존해 복구 로직이 처리하도록 함
+            tail = text[end + 1 :].strip()
+            if tail and not tail.startswith("```"):
+                return text[start:].strip()
+            return text[start : end + 1]
+        return text[start:].strip()
     return text
+
+
+def _repair_truncated_json(raw_json: str) -> str:
+    """max_tokens로 끝부분이 살짝 잘린 JSON의 미닫힘 문자열/배열/객체를 안전하게 닫아 복구를 시도한다."""
+    s = raw_json.strip()
+    if not s.startswith("{"):
+        return s
+
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    for ch in s:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                stack.append("}")
+            elif ch == "[":
+                stack.append("]")
+            elif ch in ("}", "]") and stack and stack[-1] == ch:
+                stack.pop()
+
+    if not in_string and not stack:
+        return s
+
+    repaired = s
+    if in_string:
+        if escape:
+            repaired = repaired[:-1]
+        repaired += '"'
+    # 끝이 쉼표나 콜론으로 끝나면 제거
+    repaired = re.sub(r",\s*$", "", repaired)
+    repaired = re.sub(r":\s*$", ": null", repaired)
+    repaired += "".join(reversed(stack))
+    return repaired
 
 
 async def ainvoke_structured(
     llm: ChatBedrockConverse,
     schema: type[T],
     messages: list[Any],
-    max_retries: int = 1,
+    max_retries: int = 2,
 ) -> T:
     """Structured Output 안정성 래퍼 (agents_md.md 3.3).
 
     1차: Bedrock Converse Tool-Calling 기반 with_structured_output 시도
-    2차(폴백): Nova 등 모델에서 중첩 스키마 누락 시 명시적 JSON Schema 프롬프트로 재시도
+    2차(폴백): Nova 등 모델에서 중첩 스키마 누락/ToolUse 오류 시 명시적 JSON Schema 프롬프트로 재시도
     """
     structured_llm = llm.with_structured_output(schema)
     last_error: Exception | None = None
@@ -124,10 +178,16 @@ async def ainvoke_structured(
     schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False)
     for attempt in range(max(1, max_retries)):
         try:
+            brevity_hint = (
+                "응답이 너무 길어 중간에 잘리지 않도록 각 항목 본문을 핵심 불릿 3~4줄로 간결하게 압축해 완전한 JSON으로 닫아 출력하세요.\n"
+                if attempt > 0 or "EOF" in str(last_error) or "ToolUse" in str(last_error)
+                else ""
+            )
             fallback_instruction = HumanMessage(
                 content=(
                     "이전 응답에서 JSON 스키마 검증 오류가 발생했습니다. "
-                    "설명 문장 없이 반드시 아래 JSON Schema에 정확히 일치하는 단일 JSON 객체만 출력하세요.\n"
+                    "설명 문장이나 마크다운 코드펜스 없이 반드시 아래 JSON Schema에 정확히 일치하는 단일 JSON 객체만 출력하세요.\n"
+                    f"{brevity_hint}"
                     f"이전 오류: {last_error}\n"
                     f"JSON Schema:\n{schema_json}"
                 )
@@ -137,7 +197,16 @@ async def ainvoke_structured(
                 ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
             )
             json_str = _extract_json_object(raw_content)
-            return schema.model_validate_json(json_str)
+            try:
+                return schema.model_validate_json(json_str)
+            except Exception as parse_exc:
+                repaired = _repair_truncated_json(json_str)
+                if repaired != json_str:
+                    logger.info(
+                        "Attempting truncated JSON auto-repair for %s", schema.__name__
+                    )
+                    return schema.model_validate_json(repaired)
+                raise parse_exc
         except Exception as exc:
             last_error = exc
             logger.warning(

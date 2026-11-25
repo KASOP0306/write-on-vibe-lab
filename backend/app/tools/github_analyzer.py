@@ -487,7 +487,7 @@ async def synthesize_portfolio_from_context(
         f"[작성할 목표 섹션(`sections`) 키]\n{section_spec_lines}\n\n"
         "엄격한 규칙:\n"
         "1. 저장소에 없는 수치(예: 속도 50% 향상, MAU 등)는 절대 지어내지 마세요. 정량 수치가 없으면 `quantified_metrics`는 빈 문자열로 두세요.\n"
-        "2. 각 섹션 `content`는 불릿 포인트 위주의 간결한 한국어 Markdown으로 작성하세요.\n"
+        "2. 각 섹션 `content`는 핵심 불릿 3~5개(섹션당 250~400자 이내)의 간결하고 밀도 높은 한국어 Markdown으로 작성하고, 저장소에 근거가 전혀 없는 섹션은 빈 문자열로 두세요.\n"
         "3. `tech_stack`은 실제 코드/의존성에서 확인된 핵심 기술·도구만 최대 12개로 추리세요."
     )
 
@@ -499,12 +499,12 @@ async def synthesize_portfolio_from_context(
         f"{repo_doc[:19000]}"
     )
 
-    llm = get_smart_llm(temperature=0.25)
+    llm = get_smart_llm(temperature=0.25, max_tokens=5000)
     synthesized = await ainvoke_structured(
         llm,
         GitHubStructuredPortfolioSchema,
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
-        max_retries=1,
+        max_retries=2,
     )
 
     gen_by_type = {s.section_type.strip(): s for s in synthesized.sections if s.content.strip()}

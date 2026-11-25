@@ -7,6 +7,7 @@
 import json
 import unittest
 
+from app.core.bedrock import _repair_truncated_json
 from app.core.project_templates import (
     compose_sections_for_types,
     get_templates_payload,
@@ -145,6 +146,13 @@ class TestPortfolioWorkspace(unittest.TestCase):
         self.assertIn("## 개요 & 문제 정의", md)
         self.assertIn("## [기획·PM] 리서치 & 고객·시장 인사이트", md)
         self.assertNotIn("시스템 아키텍처", md)
+
+    def test_repair_truncated_json(self) -> None:
+        truncated = '{"name": "demo", "items": [{"title": "a", "metrics": ""}'
+        repaired = _repair_truncated_json(truncated)
+        parsed = json.loads(repaired)
+        self.assertEqual(parsed["name"], "demo")
+        self.assertEqual(len(parsed["items"]), 1)
 
 
 if __name__ == "__main__":
