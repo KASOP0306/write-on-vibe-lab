@@ -198,22 +198,20 @@ class TestPortfolioWorkspace(unittest.TestCase):
         self.assertEqual(scores["overall_score"], 65)
 
         ref = get_rubric_reference_payload()
+        self.assertEqual(ref["rubric_version"], "v2.0")
         self.assertEqual(len(ref["star_rubric"]["axes"]), 5)
-        self.assertEqual(len(ref["portfolio_rubric"]["axes"]), 6)
+        self.assertEqual(len(ref["star_rubric"]["checkpoints"]), 21)
+        self.assertEqual(ref["portfolio_xp"]["max_total_xp"], 600)
+        self.assertEqual(ref["portfolio_xp"]["project_cap"], 150)
+        self.assertEqual(ref["portfolio_xp"]["max_selected_projects"], 4)
         self.assertEqual(len(ref["calibration_tiers"]), 5)
         self.assertEqual(len(ref["probing_techniques"]), 5)
-        # 모든 STAR-L 축이 1~5 전 레벨 앵커 보유 확인
-        for ax in ref["star_rubric"]["axes"]:
-            self.assertEqual(set(ax["bars"].keys()), {"1", "2", "3", "4", "5"})
-        self.assertEqual(get_calibration_tier(92)["grade"], "S")
-        self.assertEqual(get_calibration_tier(82)["grade"], "A")
-        self.assertEqual(get_calibration_tier(70)["grade"], "B")
-        self.assertEqual(get_calibration_tier(50)["grade"], "C")
-        self.assertEqual(get_calibration_tier(30)["grade"], "D")
-        internal = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "internal"]
-        external = [a for a in ref["portfolio_rubric"]["axes"] if a["domain"] == "external"]
-        self.assertEqual(len(internal), 3)
-        self.assertEqual(len(external), 3)
+        # v2.0 보수적 등급 경계 (S:85+, A:70+, B:50+, C:30+, D:<30)
+        self.assertEqual(get_calibration_tier(88)["grade"], "S")
+        self.assertEqual(get_calibration_tier(74)["grade"], "A")
+        self.assertEqual(get_calibration_tier(55)["grade"], "B")
+        self.assertEqual(get_calibration_tier(35)["grade"], "C")
+        self.assertEqual(get_calibration_tier(20)["grade"], "D")
 
 
 if __name__ == "__main__":
