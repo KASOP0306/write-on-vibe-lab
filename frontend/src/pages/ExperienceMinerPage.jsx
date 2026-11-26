@@ -5,7 +5,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Eye,
   FolderOpen,
+  FolderSync,
   Loader2,
   RotateCcw,
   Save,
@@ -17,6 +19,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import ExperienceDetailModal from "../components/ExperienceDetailModal.jsx";
+import ExperienceProjectSyncModal from "../components/ExperienceProjectSyncModal.jsx";
 import StarMeter from "../components/StarMeter.jsx";
 import StepIndicator from "../components/StepIndicator.jsx";
 
@@ -74,6 +78,10 @@ export default function ExperienceMinerPage({
   const [showMetrics, setShowMetrics] = useState(false);
   const [metricsData, setMetricsData] = useState(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
+
+  // Detail viewer & Reverse-sync to project modals
+  const [detailExp, setDetailExp] = useState(null);
+  const [syncExp, setSyncExp] = useState(null);
 
   useEffect(() => {
     if (initialPrefill) {
@@ -807,7 +815,7 @@ export default function ExperienceMinerPage({
               {/* Completion Summary + Experience Satisfaction & Calibration Feedback */}
               {savedResult && (
                 <div className="space-y-3">
-                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex flex-wrap items-center justify-between gap-2 text-sm text-emerald-900">
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex flex-wrap items-center justify-between gap-2.5 text-sm text-emerald-900">
                     <div className="flex items-center gap-2.5">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                       <div>
@@ -820,6 +828,24 @@ export default function ExperienceMinerPage({
                         </span>
                       </div>
                     </div>
+                    {projects.length > 0 && savedResult.experience_id && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSyncExp({
+                            id: savedResult.experience_id,
+                            project_id:
+                              savedResult.project_id ??
+                              (selectedProjectId ? Number(selectedProjectId) : null),
+                            title: savedResult.star?.title || draftStar?.title || `경험 #${savedResult.experience_id}`,
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shrink-0"
+                      >
+                        <FolderSync className="w-3.5 h-3.5" />
+                        <span>역질문 내용으로 프로젝트 다시 정리</span>
+                      </button>
+                    )}
                   </div>
 
                   {expFbSaved ? (
@@ -963,8 +989,14 @@ export default function ExperienceMinerPage({
                 className="rounded-xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">{exp.title}</h4>
+                  <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setDetailExp(exp)}
+                      className="text-left text-sm font-bold text-slate-900 hover:text-indigo-700"
+                    >
+                      {exp.title}
+                    </button>
                     <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-slate-500">
                       <span>
                         {exp.project_id
@@ -987,14 +1019,36 @@ export default function ExperienceMinerPage({
                       )}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteExperience(exp)}
-                    className="p-1 rounded text-slate-400 hover:text-red-600"
-                    title="경험 삭제"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setDetailExp(exp)}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                      title="STAR-L 전문 및 21지표 상세 보기"
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>상세</span>
+                    </button>
+                    {projects.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSyncExp(exp)}
+                        className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-100"
+                        title="이 경험·역질문 내용으로 프로젝트 섹션 다시 정리"
+                      >
+                        <FolderSync className="w-3 h-3" />
+                        <span>프로젝트 정리</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteExperience(exp)}
+                      className="p-1 rounded text-slate-400 hover:text-red-600"
+                      title="경험 삭제"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-700 line-clamp-2">
                   <strong>Action:</strong> {exp.action}
@@ -1017,6 +1071,32 @@ export default function ExperienceMinerPage({
           </div>
         )}
       </div>
+
+      {/* Experience Full Detail Modal */}
+      <ExperienceDetailModal
+        experience={detailExp}
+        projectName={detailExp?.project_id ? projectNameById[detailExp.project_id] : ""}
+        onClose={() => setDetailExp(null)}
+        onOpenProjectSync={
+          projects.length > 0
+            ? (exp) => {
+                setDetailExp(null);
+                setSyncExp(exp);
+              }
+            : null
+        }
+      />
+
+      {/* Reverse-Sync Experience & Q&A -> Project Sections Modal */}
+      <ExperienceProjectSyncModal
+        experience={syncExp}
+        projects={projects}
+        defaultProjectId={syncExp?.project_id ?? (selectedProjectId ? Number(selectedProjectId) : null)}
+        onClose={() => setSyncExp(null)}
+        onSynced={async () => {
+          await onRefresh();
+        }}
+      />
     </div>
   );
 }

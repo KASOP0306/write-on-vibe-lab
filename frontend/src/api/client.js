@@ -237,6 +237,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  syncProjectFromExperience: (projectId, experienceId, instruction = "") =>
+    apiRequest(`/api/projects/${projectId}/sync-from-experience/${experienceId}`, {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
+    }),
   deleteProjectDocument: (projectId, docId) =>
     apiRequest(`/api/projects/${projectId}/documents/${docId}`, {
       method: "DELETE",

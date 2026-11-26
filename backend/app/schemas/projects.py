@@ -23,6 +23,7 @@ class ExperienceSummary(BaseModel):
     quantified_metrics: str
     completeness_score: int
     star_scores: dict[str, Any] = Field(default_factory=dict)
+    raw_notes: str = ""
     created_at: datetime
 
 
@@ -244,6 +245,13 @@ class SectionUpdateApplyItem(BaseModel):
     content: str
 
 
+class SyncFromExperienceRequest(BaseModel):
+    instruction: str = Field(
+        default="",
+        description="선택: 경험 채굴·역질문 내용을 프로젝트 섹션에 정리할 때 강조할 지시사항",
+    )
+
+
 class ApplyProjectUpdatesRequest(BaseModel):
     filename: str = Field(default="manual-update.md")
     source_type: str = Field(default="file_upload")
@@ -254,6 +262,10 @@ class ApplyProjectUpdatesRequest(BaseModel):
     tech_stack_additions: list[str] = Field(default_factory=list)
     section_updates: list[SectionUpdateApplyItem] = Field(default_factory=list)
     experiences: list[SuggestedExperienceDraft] = Field(default_factory=list)
+    link_experience_id: int | None = Field(
+        default=None,
+        description="선택: 반영 시 해당 경험을 이 프로젝트에 연결(project_id 지정)",
+    )
 
 
 class ApplyProjectUpdatesResponse(BaseModel):

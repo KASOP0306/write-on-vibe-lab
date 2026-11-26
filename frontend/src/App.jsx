@@ -60,6 +60,10 @@ export default function App() {
     setActiveTab("portfolio");
   };
 
+  const experienceSignature = experiences
+    .map((e) => `${e.id}:${e.completeness_score}:${e.project_id ?? ""}`)
+    .join("|");
+
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
       <Sidebar
@@ -96,6 +100,7 @@ export default function App() {
           <IdentityPortfolioPage
             profile={profile}
             projects={projects}
+            experienceSignature={experienceSignature}
             onRefresh={refreshSharedData}
             onJumpToMiner={handleJumpToMiner}
           />

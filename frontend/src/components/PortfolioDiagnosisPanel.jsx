@@ -32,6 +32,7 @@ const LEVEL_BADGE_CLASSES = {
 
 export default function PortfolioDiagnosisPanel({
   projectCount = 0,
+  experienceSignature = "",
   onJumpToMiner = null,
   onOpenProject = null,
 }) {
@@ -71,7 +72,7 @@ export default function PortfolioDiagnosisPanel({
 
   useEffect(() => {
     loadMastery();
-  }, [projectCount]);
+  }, [projectCount, experienceSignature]);
 
   const handleOpenRubric = async () => {
     setShowRubricModal(true);

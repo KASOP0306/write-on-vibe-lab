@@ -41,7 +41,13 @@ const EMPTY_PROJECT_FORM = {
   artifact_links: [],
 };
 
-export default function IdentityPortfolioPage({ profile, projects, onRefresh, onJumpToMiner }) {
+export default function IdentityPortfolioPage({
+  profile,
+  projects,
+  experienceSignature = "",
+  onRefresh,
+  onJumpToMiner,
+}) {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [tracks, setTracks] = useState(DEFAULT_TRACKS);
   const [filterTrack, setFilterTrack] = useState("all");
@@ -451,6 +457,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh, on
       {/* 6-Axis Portfolio Character & Dual Radar Diagnosis Dashboard */}
       <PortfolioDiagnosisPanel
         projectCount={projects.length}
+        experienceSignature={experienceSignature}
         onJumpToMiner={onJumpToMiner}
         onOpenProject={(pid) => setActiveProjectId(pid)}
       />

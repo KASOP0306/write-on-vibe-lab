@@ -13,6 +13,7 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  FolderSync,
   Github,
   HelpCircle,
   Layers,
@@ -28,6 +29,8 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import ExperienceDetailModal from "./ExperienceDetailModal.jsx";
+import ExperienceProjectSyncModal from "./ExperienceProjectSyncModal.jsx";
 import RadarChart, { RubricReferenceModal } from "./RadarChart.jsx";
 import StarMeter from "./StarMeter.jsx";
 import {
@@ -148,6 +151,8 @@ export default function ProjectWorkspaceView({
   const [submittingStarOnboarding, setSubmittingStarOnboarding] = useState(false);
   const [onboardingError, setOnboardingError] = useState("");
   const [evaluatingStars, setEvaluatingStars] = useState(false);
+  const [detailExp, setDetailExp] = useState(null);
+  const [syncExp, setSyncExp] = useState(null);
   const [rubricRef, setRubricRef] = useState(null);
   const [showRubricModal, setShowRubricModal] = useState(false);
 
@@ -1802,17 +1807,41 @@ export default function ProjectWorkspaceView({
                       className="rounded-xl border border-slate-200 p-4 space-y-3 text-xs"
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="font-bold text-sm text-slate-900">
-                          {exp.title}
-                        </div>
                         <button
                           type="button"
-                          onClick={() => handleDeleteExperience(exp)}
-                          className="p-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          title="STAR 경험 삭제"
+                          onClick={() => setDetailExp(exp)}
+                          className="text-left font-bold text-sm text-slate-900 hover:text-indigo-700"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {exp.title}
                         </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setDetailExp(exp)}
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                            title="경험 전문 및 역질문 Q&A 보기"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>상세 · Q&amp;A</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSyncExp(exp)}
+                            className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-100"
+                            title="이 경험·역질문 내용을 프로젝트 섹션에 다시 정리"
+                          >
+                            <FolderSync className="w-3 h-3" />
+                            <span>프로젝트에 정리</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteExperience(exp)}
+                            className="p-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            title="STAR 경험 삭제"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1 text-slate-700">
                         <p>
@@ -2785,6 +2814,27 @@ export default function ProjectWorkspaceView({
           </form>
         </div>
       )}
+
+      <ExperienceDetailModal
+        experience={detailExp}
+        projectName={project?.name || ""}
+        onClose={() => setDetailExp(null)}
+        onOpenProjectSync={(exp) => {
+          setDetailExp(null);
+          setSyncExp(exp);
+        }}
+      />
+
+      <ExperienceProjectSyncModal
+        experience={syncExp}
+        projects={project ? [{ id: project.id, name: project.name }] : []}
+        defaultProjectId={project?.id ?? null}
+        onClose={() => setSyncExp(null)}
+        onSynced={async () => {
+          await loadProject(true);
+          await onGlobalRefresh();
+        }}
+      />
 
       <RubricReferenceModal
         open={showRubricModal}

@@ -85,6 +85,7 @@ from app.schemas.projects import (
     StarOnboardingApplyResponse,
     StarOnboardingQuestionsResponse,
     StructuredProjectImportRequest,
+    SyncFromExperienceRequest,
 )
 from app.tools.document_parser import DocumentParseError, parse_uploaded_file
 from app.tools.github_analyzer import (
@@ -1292,6 +1293,76 @@ async def sync_project_github(
 
 
 @router.post(
+    "/{project_id}/sync-from-experience/{experience_id}",
+    response_model=DocumentIngestProposalResponse,
+)
+async def propose_project_sync_from_experience(
+    project_id: int,
+    experience_id: int,
+    payload: SyncFromExperienceRequest | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> DocumentIngestProposalResponse:
+    """채굴된 STAR-L 경험 및 역질문 Q&A 내용을 바탕으로 연결 프로젝트의 섹션·요약 정리안을 제안한다."""
+    project = await _load_project_full(session, project_id)
+    exp = await session.get(Experience, experience_id)
+    if exp is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experience {experience_id} not found.",
+        )
+
+    doc_parts = [
+        f"# 경험 채굴 결과: {exp.title}",
+        f"- STAR-L 완성도: {exp.completeness_score}점",
+        f"\n## Situation (상황·맥락)\n{exp.situation}",
+        f"\n## Task (과제·책임)\n{exp.task}",
+        f"\n## Action (행동·의사결정·실행)\n{exp.action}",
+        f"\n## Result (결과·검증)\n{exp.result}",
+    ]
+    if (exp.learning or "").strip():
+        doc_parts.append(f"\n## Learning (회고·원칙·적용)\n{exp.learning}")
+    if (exp.quantified_metrics or "").strip():
+        doc_parts.append(f"\n## 확인된 정량 지표\n{exp.quantified_metrics}")
+    if (exp.raw_notes or "").strip():
+        doc_parts.append(f"\n## 역질문 Q&A 및 원본 메모 이력\n{exp.raw_notes[:5000]}")
+
+    exp_doc = "\n".join(doc_parts)
+    custom_inst = (payload.instruction.strip() if payload and payload.instruction else "")
+    default_inst = (
+        "경험 채굴과 역질문 답변에서 새로 밝혀진 본인의 핵심 의사결정, 대안 비교(트레이드오프), "
+        "트러블슈팅 과정, 정량 성과(Before/After), 회고 원칙을 기존 프로젝트 요약과 알맞은 섹션에 "
+        "중복 없이 깔끔하게 통합·재정리해 주세요. 기존 섹션의 검증된 사실은 유지하고 새로 채굴된 사실을 녹여내세요."
+    )
+
+    try:
+        proposal = await propose_document_updates(
+            project=_project_to_dict(project),
+            existing_sections=[_section_to_dict(s) for s in project.sections],
+            doc_text=exp_doc,
+            filename=f"경험채굴 #{exp.id} — {exp.title}",
+            user_instruction=custom_inst or default_inst,
+        )
+    except Exception as exc:
+        logger.exception("Sync from experience failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"경험 채굴 내용으로 프로젝트 정리안 생성 중 오류가 발생했습니다: {exc}",
+        )
+
+    # 이미 저장된 경험이므로 중복 STAR 생성 제안은 비움
+    proposal["suggested_experiences"] = []
+
+    return DocumentIngestProposalResponse(
+        filename=f"경험채굴 #{exp.id}: {exp.title}",
+        source_type="experience_mining",
+        file_format="star-l",
+        raw_char_count=len(exp_doc),
+        parse_info=f"STAR-L {exp.completeness_score}점 · 역질문 채굴 역반영",
+        **proposal,
+    )
+
+
+@router.post(
     "/{project_id}/apply-updates",
     response_model=ApplyProjectUpdatesResponse,
 )
@@ -1349,6 +1420,11 @@ async def apply_project_updates(
             session.add(new_sec)
             updated_sections.append(new_sec)
         updated_types.append(item.section_type.strip())
+
+    if payload.link_experience_id is not None:
+        linked_exp = await session.get(Experience, payload.link_experience_id)
+        if linked_exp is not None and linked_exp.project_id != project.id:
+            linked_exp.project_id = project.id
 
     doc_record = ProjectDocument(
         project_id=project.id,
