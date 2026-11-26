@@ -88,6 +88,34 @@ flowchart TB
 
 ---
 
-## 4. 정량 평가 비교 기록 (Baseline vs. Upgraded)
+## 4. 정량 평가 비교 기록 (EC2 실측: Baseline vs. Upgraded)
 
-*(Phase 2~3 실행 완료 후 실측 숫자가 아래에 기록됩니다.)*
+> **측정 환경:** AWS EC2 (`amazon.titan-embed-text-v2:0` + `amazon.nova-lite-v1:0` 생성 + `amazon.nova-pro-v1:0` LLM-as-a-Judge)  
+> **단위 테스트:** `38 / 38 OK` (`0.011s`) · **기존 DB 재색인 완료:** `project_sections 6`, `experiences 2`, `belief_notes 1`, `jasoseo_samples 49`
+
+### 4.1 RAG 검색 7종 전략 비교 (`eval.run_eval --mode retrieval`, 15문항 골든셋)
+
+| 검색 설정 | 청킹 | 전략 | `ParentHit@3` | `KeywordHit@3` | `MRR` | `OOS_Clean` (거절 정확도) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `baseline_unchunked_basic` (기존) | X | `basic` | 1.000 | 1.000 | 0.962 | 1.000 |
+| `chunked_basic` | O | `basic` | 1.000 | 1.000 | 0.962 | 1.000 |
+| `chunked_threshold` (`0.72`) | O | `basic` | 0.923 | 0.923 | 0.923 | 1.000 |
+| **`chunked_hybrid`** | **O** | **`hybrid` (2-gram BM25+RRF)** | **1.000** | **1.000** | **1.000** | **1.000** |
+| **`chunked_hybrid_mmr`** | **O** | **`hybrid` + MMR** | **1.000** | **1.000** | **1.000** | **1.000** |
+| `chunked_rewrite` | O | `rewrite` | 0.923 | 0.923 | 0.923 | 0.500 |
+| **`chunked_hyde`** | **O** | **`hyde`** | **1.000** | **1.000** | **1.000** | **1.000** |
+
+> **데이터 기반 인사이트:** `chunked_hybrid` / `chunked_hybrid_mmr`가 `MRR 1.000`(전 문항 1위 적중)과 `OOS_Clean 1.000`을 동시 달성했습니다. `rewrite`는 문서에 없는 질문(OOS)을 코퍼스 용어에 가깝게 변형해 거절 정확도가 떨어질 수 있으므로, **기본은 `hybrid + MMR`을 쓰고 검색 결과가 비었을 때만 `rewrite → hyde`로 에스컬레이션**하는 Agentic RAG 설계가 최적임을 수치로 입증했습니다.
+
+### 4.2 종단간 LLM-as-a-Judge 6지표 & 토큰 비용 비교 (`Nova Lite` 생성 → `Nova Pro` 채점)
+
+| 설정 | Context Relevance | Context Coverage | Correctness | Completeness | Faithfulness | Helpfulness | 입력 토큰 (비용) | 잘림(`max_tokens`) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `baseline_unchunked_basic` | 0.677 | 0.753 | 0.967 | 0.967 | 0.967 | 0.933 | 82,643 | `none` |
+| **`chunked_hybrid_mmr`** | **0.739 (+9.2%)** | **0.827 (+9.8%)** | 0.933 | 0.933 | 0.933 | 0.913 | **53,724 (-35.0%)** | **`none`** |
+
+### 4.3 Agentic RAG 코파일럿 라이브 E2E 검증 결과
+- **인사말 직접 응답:** `tool_count = 0` (불필요한 DB/RAG/LLM 호출 0회)
+- **단기 기억 (`AsyncPostgresSaver`):** `GET /api/agents/copilot/history/{thread_id}`로 4개 메시지 영속 저장 확인
+- **장기 기억 (`AsyncPostgresStore`):** `thread 1`에서 시간 제약(`주 10시간`)·선호 스택(`Python + PostgreSQL`) 자동 저장 → **완전히 새로운 `thread 2`**에서 `recall_career_memory`로 자동 인출 확인
+- **2중 상한 안전장치:** `tool_count == 4` 도달 시 `stop` Node로 안전 분기해 수집된 근거만으로 최종 답변 생성 완료

@@ -139,17 +139,20 @@ flowchart LR
 | **Step 3: 루프 B (최대 2회)** | `backend/app/core/summary_verifier.py`<br>`backend/app/prompts/evidence_extract.txt`, `summary_verifier.txt`, `summary_repair.txt`<br>`backend/app/tools/portfolio_manager.py` | Evidence Map(청크별 검증 팩트 카드 추출) → 트랙별 합성(Reduce) → 3축 Critic-Repair(최대 2회, 코드 미확인 수치 탐지 + 섹션 간 2-gram 중복률 `< 0.42`) |
 | **단위 테스트** | `backend/tests/test_quality_loops.py` | `MAX_QUESTION_REVISIONS == 2`, `MAX_SUMMARY_REVISIONS == 2`, 프롬프트 5종, 골든셋 2종, 코드 린터, 환각 수치/중복률 검사 검증 |
 
-### EC2 준비 시 실행할 전/후 실측 벤치마크 명령어
-```bash
-# 1. 배포 및 전체 단위 테스트
-bash scripts/deploy_ec2.sh
-docker compose exec -T backend python -m unittest discover -s tests -v
+### EC2 전/후 실측 벤치마크 결과 (`eval.run_quality_eval --mode all`)
 
-# 2. 기존 벡터 Parent/Child 재색인
-docker compose exec -T backend python -m app.scripts.reindex_vectors
+#### 루프 A: 질문 퀄리티 비교 (10종 골든셋 · Nova Pro Judge)
+| 모드 | `specificity` | `answerability` | `non_redundancy` | `axis_alignment` | 코드 린트 결함 | 호출 수 / 토큰 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `Baseline (loop=False)` | **0.74** | **0.88** | **0.89** | **0.75** | 1건 | 40회 / 95,504 |
+| `Loop A (loop=True, max 2)` | 0.56 | 0.85 | 0.69 | 0.57 | **0건** | 58회 / 125,596 |
 
-# 3. RAG 검색/생성 전후 비교 + 루프 A/B 전후 비교 실측
-docker compose exec -T backend python -m eval.run_eval --mode retrieval
-docker compose exec -T backend python -m eval.run_eval --mode judge
-docker compose exec -T backend python -m eval.run_quality_eval --mode all
-```
+> **핵심 발견 (숫자가 알려준 개선점):** 루프 A의 코드 린터는 결함을 `1 → 0건`으로 완벽히 제거했으나, `Fast LLM(Nova Lite)` Critic이 이미 잘 작성된 1차 질문까지 과도하게 리라이트하면서(`40 → 58회`) 오히려 날카로움(`0.74 → 0.56`)이 하락했습니다. **다음 튜닝 방향:** 코드 린트 결함이 발생했거나 치명적 결함(`score < 70`)일 때만 **결함 질문 1개만 핀포인트 리라이트**하도록 조건을 보수화하면 린트 0건과 높은 날카로움을 동시 달성할 수 있습니다.
+
+#### 루프 B: 프로젝트 정리·요약 비교 (6종 골든셋 · Nova Pro Judge)
+| 모드 | `faithfulness` | `coverage` | `signal_density` | `track_fit` | **코드 팩트 보존율(`code_cov`)** | **환각 수치** | 섹션 중복률 | 호출 수 / 토큰 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `Baseline (loop=False)` | 0.950 | 0.900 | 0.783 | 0.950 | 0.774 (77.4%) | **0건** | 0.273 | 12회 / 41,344 |
+| **`Loop B (loop=True, max 2)`** | 0.933 | 0.883 | 0.750 | 0.933 | **0.931 (93.1%, +15.7%p)** | **0건** | 0.323 | 36회 / 125,022 |
+
+> **핵심 발견:** Stage 1 Evidence Map + 3축 Verifier/Repair(최대 2회) 적용 후 **원문 핵심 팩트 보존율이 `77.4% → 93.1%` (+15.7%p)로 대폭 상승**했고, 미확인 환각 수치는 **0건**을 유지했습니다. 단문(< 1,500자) 입력에서는 Evidence Map을 선택 생략하도록 분기하면 토큰 비용도 크게 절감할 수 있습니다.
