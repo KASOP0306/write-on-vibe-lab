@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
+  Archive,
   BookOpen,
   Check,
   CheckCircle2,
@@ -10,6 +11,7 @@ import {
   Layers,
   Loader2,
   Plus,
+  Save,
   Sparkles,
   Target,
   Trash2,
@@ -39,11 +41,21 @@ export default function CoverLetterStudioPage() {
   const [selectedExperienceIds, setSelectedExperienceIds] = useState([]);
   const [fusionAngle, setFusionAngle] = useState("");
 
-  // Step 2: Cover Letter Generation SSE State
+  // Step 2: Cover Letter Generation SSE State + Archive Editor
   const [steps, setSteps] = useState([]);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
+  const [editableText, setEditableText] = useState("");
+  const [archiveMemo, setArchiveMemo] = useState("");
+  const [activeArchiveId, setActiveArchiveId] = useState(null);
+  const [savingArchive, setSavingArchive] = useState(false);
+  const [archiveStatus, setArchiveStatus] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Saved Cover Letter Archive (QA #2)
+  const [archivedLetters, setArchivedLetters] = useState([]);
+  const [archiveFilter, setArchiveFilter] = useState("");
+  const [copiedArchiveId, setCopiedArchiveId] = useState(null);
 
   // User's own cover letter reference manager
   const [samples, setSamples] = useState([]);
@@ -56,18 +68,29 @@ export default function CoverLetterStudioPage() {
   });
   const [savingSample, setSavingSample] = useState(false);
 
+  const loadArchive = async () => {
+    try {
+      const list = await api.listCoverLetters();
+      setArchivedLetters(list || []);
+    } catch (err) {
+      console.warn(err);
+    }
+  };
+
   const loadInitial = async () => {
     try {
-      const [comps, smps, projs, exps] = await Promise.all([
+      const [comps, smps, projs, exps, savedCls] = await Promise.all([
         api.listCompanies(),
         api.listSamples(),
         api.listProjects(),
         api.listExperiences(),
+        api.listCoverLetters().catch(() => []),
       ]);
       setCompanies(comps || []);
       setSamples(smps || []);
       setProjects(projs || []);
       setExperiences(exps || []);
+      setArchivedLetters(savedCls || []);
     } catch (err) {
       console.warn(err);
     }
@@ -201,6 +224,15 @@ export default function CoverLetterStudioPage() {
             });
           } else if (ev.event === "done") {
             setResult(ev.data);
+            setEditableText(ev.data?.final_text || "");
+            setArchiveMemo("");
+            setActiveArchiveId(ev.data?.saved_cover_letter_id || null);
+            setArchiveStatus(
+              ev.data?.saved_cover_letter_id
+                ? `보관함에 자동 저장됨 (#${ev.data.saved_cover_letter_id})`
+                : ""
+            );
+            loadArchive();
           } else if (ev.event === "error") {
             setSteps((prev) => [
               ...prev,
@@ -220,10 +252,94 @@ export default function CoverLetterStudioPage() {
   };
 
   const handleCopy = async () => {
-    if (!result?.final_text) return;
-    await navigator.clipboard.writeText(result.final_text);
+    const text = editableText || result?.final_text || "";
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSaveArchive = async (asNew = false) => {
+    const textToSave = (editableText || result?.final_text || "").trim();
+    if (!textToSave || savingArchive) return;
+    setSavingArchive(true);
+    setArchiveStatus("");
+    try {
+      if (!asNew && activeArchiveId) {
+        await api.updateCoverLetter(activeArchiveId, {
+          company_name: companyName.trim() || "기업 미지정",
+          target_role: targetRole.trim(),
+          question: question.trim(),
+          final_text: textToSave,
+          memo: archiveMemo.trim(),
+        });
+        setArchiveStatus(`보관함 수정본 저장 완료 (#${activeArchiveId})`);
+      } else {
+        const created = await api.createCoverLetter({
+          company_name: companyName.trim() || "기업 미지정",
+          target_role: targetRole.trim(),
+          question: question.trim() || "(문항 미입력)",
+          char_limit: Number(charLimit) || 800,
+          final_text: textToSave,
+          critic_score: Number(result?.critic_score || 0),
+          revision_count: Number(result?.revision_count || 0),
+          used_projects: result?.used_projects || [],
+          used_experiences: result?.used_experiences || [],
+          diff_summary: result?.diff_summary || [],
+          checkpoint_checks: result?.checkpoint_checks || [],
+          memo: archiveMemo.trim(),
+        });
+        setActiveArchiveId(created.id);
+        setArchiveStatus(`새 버전으로 보관함 저장 완료 (#${created.id})`);
+      }
+      await loadArchive();
+    } catch (err) {
+      setArchiveStatus(`보관함 저장 실패: ${err.message}`);
+    } finally {
+      setSavingArchive(false);
+    }
+  };
+
+  const handleLoadArchived = (cl) => {
+    setCompanyName(cl.company_name || "");
+    setTargetRole(cl.target_role || "");
+    setQuestion(cl.question || "");
+    setCharLimit(cl.char_limit || 800);
+    setActiveArchiveId(cl.id);
+    setEditableText(cl.final_text || "");
+    setArchiveMemo(cl.memo || "");
+    setArchiveStatus(`보관함 #${cl.id} 불러옴`);
+    setResult({
+      saved_cover_letter_id: cl.id,
+      final_text: cl.final_text || "",
+      critic_score: cl.critic_score || 0,
+      revision_count: cl.revision_count || 0,
+      used_projects: cl.used_projects || [],
+      used_experiences: cl.used_experiences || [],
+      diff_summary: cl.diff_summary || [],
+      checkpoint_checks: cl.checkpoint_checks || [],
+    });
+    window.scrollTo({ top: 380, behavior: "smooth" });
+  };
+
+  const handleDeleteArchived = async (id) => {
+    if (!window.confirm("이 보관 자소서를 삭제할까요?")) return;
+    try {
+      await api.deleteCoverLetter(id);
+      setArchivedLetters((prev) => prev.filter((item) => item.id !== id));
+      if (activeArchiveId === id) {
+        setActiveArchiveId(null);
+        setArchiveStatus("보관함에서 삭제됨");
+      }
+    } catch (err) {
+      alert(`삭제 실패: ${err.message}`);
+    }
+  };
+
+  const handleCopyArchived = async (cl) => {
+    await navigator.clipboard.writeText(cl.final_text || "");
+    setCopiedArchiveId(cl.id);
+    setTimeout(() => setCopiedArchiveId(null), 1800);
   };
 
   const handleAddSample = async (e) => {
@@ -269,8 +385,18 @@ export default function CoverLetterStudioPage() {
     (recommendation?.recommended_experiences || []).map((e) => [e.experience_id, e])
   );
   const qa = recommendation?.question_analysis || null;
-  const finalLenWithSpace = (result?.final_text || "").length;
-  const finalLenNoSpace = (result?.final_text || "").replace(/\s/g, "").length;
+  const finalLenWithSpace = (editableText || result?.final_text || "").length;
+  const finalLenNoSpace = (editableText || result?.final_text || "").replace(/\s/g, "").length;
+  const filteredArchived = archivedLetters.filter((cl) => {
+    const q = archiveFilter.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (cl.company_name || "").toLowerCase().includes(q) ||
+      (cl.target_role || "").toLowerCase().includes(q) ||
+      (cl.question || "").toLowerCase().includes(q) ||
+      (cl.memo || "").toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="space-y-8">
@@ -776,9 +902,53 @@ export default function CoverLetterStudioPage() {
               </div>
             )}
 
-            <div className="rounded-xl bg-slate-50 p-5 text-sm text-slate-800 leading-7 whitespace-pre-wrap">
-              {result.final_text}
+            <textarea
+              rows={13}
+              value={editableText}
+              onChange={(e) => setEditableText(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-800 leading-7 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+              <input
+                type="text"
+                value={archiveMemo}
+                onChange={(e) => setArchiveMemo(e.target.value)}
+                placeholder="보관함 메모 (예: 최종 제출본 / 2차 수정 / 상반기 공채용)"
+                className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-1.5 text-xs"
+              />
+              <button
+                type="button"
+                disabled={savingArchive}
+                onClick={() => handleSaveArchive(false)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>
+                  {savingArchive
+                    ? "저장 중..."
+                    : activeArchiveId
+                    ? "수정본 저장"
+                    : "보관함에 저장"}
+                </span>
+              </button>
+              {activeArchiveId && (
+                <button
+                  type="button"
+                  disabled={savingArchive}
+                  onClick={() => handleSaveArchive(true)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>새 버전으로 보관</span>
+                </button>
+              )}
             </div>
+            {archiveStatus && (
+              <div className="text-xs font-medium text-emerald-700">
+                {archiveStatus}
+              </div>
+            )}
           </div>
 
           <div className="space-y-4">
@@ -830,6 +1000,130 @@ export default function CoverLetterStudioPage() {
           </div>
         </div>
       )}
+
+      {/* Saved Cover Letter Archive (QA #2) */}
+      <section className="rounded-2xl border border-indigo-200/80 bg-white p-6 space-y-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Archive className="w-4 h-4 text-indigo-600" />
+              <span>생성 자소서 보관함 ({archivedLetters.length})</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              생성된 자소서는 자동으로 보관함에 저장됩니다. 언제든 불러와 다듬고 수정본이나 새 버전으로 보관할 수 있습니다.
+            </p>
+          </div>
+          <input
+            type="text"
+            value={archiveFilter}
+            onChange={(e) => setArchiveFilter(e.target.value)}
+            placeholder="기업명·직무·문항·메모 검색..."
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs w-60"
+          />
+        </div>
+
+        {filteredArchived.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center text-xs text-slate-400">
+            {archivedLetters.length === 0
+              ? "아직 보관된 자소서가 없습니다. 위에서 자소서를 생성하면 자동으로 보관됩니다."
+              : "검색 조건에 맞는 보관 자소서가 없습니다."}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredArchived.map((cl) => {
+              const isCurrent = activeArchiveId === cl.id;
+              return (
+                <div
+                  key={cl.id}
+                  className={`rounded-xl border p-4 space-y-2 text-xs transition-colors ${
+                    isCurrent
+                      ? "border-indigo-400 bg-indigo-50/30"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-bold text-slate-900">
+                          {cl.company_name}
+                        </span>
+                        {cl.target_role && (
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                            {cl.target_role}
+                          </span>
+                        )}
+                        <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                          {cl.critic_score}점 · {(cl.final_text || "").length}자
+                        </span>
+                      </div>
+                      <p className="font-medium text-slate-700 line-clamp-1">
+                        Q. {cl.question}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteArchived(cl.id)}
+                      className="text-slate-400 hover:text-rose-600 shrink-0"
+                      title="보관함에서 삭제"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {cl.memo && (
+                    <div className="rounded-md bg-amber-50 border border-amber-200/70 px-2 py-1 text-[11px] text-amber-900">
+                      메모: {cl.memo}
+                    </div>
+                  )}
+
+                  <p className="text-slate-600 line-clamp-3 leading-relaxed">
+                    {cl.final_text}
+                  </p>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
+                    <span className="text-slate-400">
+                      {cl.updated_at
+                        ? new Date(cl.updated_at).toLocaleString("ko-KR", {
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : ""}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyArchived(cl)}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50"
+                      >
+                        {copiedArchiveId === cl.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            <span>복사됨</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>복사</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleLoadArchived(cl)}
+                        className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white hover:bg-indigo-700"
+                      >
+                        <span>불러오기 · 편집</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* User's Own Jasoseo Reference Manager */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">

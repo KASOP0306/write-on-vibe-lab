@@ -22,10 +22,12 @@ from app.core.bedrock import ainvoke_structured, get_fast_llm, llm_telemetry_sco
 from app.core.database import (
     ApplicationLog,
     CompanyProfile,
+    CoverLetter,
     Experience,
     QuestionFeedbackLog,
     VectorDocument,
     get_db_session,
+    get_session_factory,
 )
 from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
@@ -51,6 +53,9 @@ from app.schemas.agents import (
     CopilotChatRequest,
     CoverLetterGenerateRequest,
     CoverLetterRecommendRequest,
+    CoverLetterResponse,
+    CoverLetterSaveRequest,
+    CoverLetterUpdateRequest,
     InterestClipResponse,
     InterestClipSaveRequest,
     InterestSearchRequest,
@@ -589,9 +594,37 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                             },
                         )
 
+            # 생성 완료된 자소서를 보관함(cover_letters)에 자동 영속 저장 (QA #2)
+            saved_cover_letter_id: int | None = None
+            final_text_clean = str(accumulated.get("final_text") or "").strip()
+            if final_text_clean:
+                try:
+                    async with get_session_factory()() as save_session:
+                        cl = CoverLetter(
+                            company_name=payload.company_name.strip(),
+                            target_role=payload.target_role.strip(),
+                            question=payload.question.strip(),
+                            char_limit=int(payload.char_limit or 800),
+                            final_text=final_text_clean,
+                            critic_score=int(accumulated.get("critic_score") or 0),
+                            revision_count=int(accumulated.get("revision_count") or 0),
+                            used_projects=list(accumulated.get("used_projects") or []),
+                            used_experiences=list(accumulated.get("used_experiences") or []),
+                            diff_summary=list(accumulated.get("humanizer_changes") or []),
+                            checkpoint_checks=list(accumulated.get("checkpoint_checks") or []),
+                            memo="",
+                        )
+                        save_session.add(cl)
+                        await save_session.commit()
+                        await save_session.refresh(cl)
+                        saved_cover_letter_id = cl.id
+                except Exception as save_exc:
+                    logger.warning("Auto-save cover letter archive failed: %s", save_exc)
+
             yield sse_done(
                 {
-                    "final_text": accumulated.get("final_text", ""),
+                    "saved_cover_letter_id": saved_cover_letter_id,
+                    "final_text": final_text_clean,
                     "diff_summary": accumulated.get("humanizer_changes", []),
                     "post_check_warnings": accumulated.get("post_check_warnings", []),
                     "critic_score": accumulated.get("critic_score", 0),
@@ -608,6 +641,96 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
             yield sse_error(f"자소서 공방 에이전트 실행 중 오류가 발생했습니다: {exc}")
 
     return create_sse_response(event_stream())
+
+
+# ==============================================================================
+# 생성 자소서 보관함 CRUD (REST — QA #2)
+# ==============================================================================
+@router.get("/cover-letters", response_model=list[CoverLetterResponse])
+async def list_cover_letters(
+    company_name: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[CoverLetterResponse]:
+    stmt = select(CoverLetter).order_by(
+        CoverLetter.updated_at.desc(), CoverLetter.id.desc()
+    )
+    if company_name and company_name.strip():
+        stmt = stmt.where(CoverLetter.company_name.ilike(f"%{company_name.strip()}%"))
+    rows = (await session.execute(stmt)).scalars().all()
+    return [CoverLetterResponse.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/cover-letters",
+    response_model=CoverLetterResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_cover_letter(
+    payload: CoverLetterSaveRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> CoverLetterResponse:
+    cl = CoverLetter(
+        company_name=payload.company_name.strip(),
+        target_role=payload.target_role.strip(),
+        question=payload.question.strip(),
+        char_limit=payload.char_limit,
+        final_text=payload.final_text.strip(),
+        critic_score=payload.critic_score,
+        revision_count=payload.revision_count,
+        used_projects=list(payload.used_projects),
+        used_experiences=list(payload.used_experiences),
+        diff_summary=list(payload.diff_summary),
+        checkpoint_checks=list(payload.checkpoint_checks),
+        memo=payload.memo.strip(),
+    )
+    session.add(cl)
+    await session.commit()
+    await session.refresh(cl)
+    return CoverLetterResponse.model_validate(cl)
+
+
+@router.put("/cover-letters/{cover_letter_id}", response_model=CoverLetterResponse)
+async def update_cover_letter(
+    cover_letter_id: int,
+    payload: CoverLetterUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> CoverLetterResponse:
+    cl = await session.get(CoverLetter, cover_letter_id)
+    if cl is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cover letter {cover_letter_id} not found.",
+        )
+    if payload.company_name is not None:
+        cl.company_name = payload.company_name.strip()
+    if payload.target_role is not None:
+        cl.target_role = payload.target_role.strip()
+    if payload.question is not None:
+        cl.question = payload.question.strip()
+    if payload.final_text is not None:
+        cl.final_text = payload.final_text.strip()
+    if payload.memo is not None:
+        cl.memo = payload.memo.strip()
+    await session.commit()
+    await session.refresh(cl)
+    return CoverLetterResponse.model_validate(cl)
+
+
+@router.delete(
+    "/cover-letters/{cover_letter_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_cover_letter(
+    cover_letter_id: int,
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    cl = await session.get(CoverLetter, cover_letter_id)
+    if cl is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cover letter {cover_letter_id} not found.",
+        )
+    await session.delete(cl)
+    await session.commit()
 
 
 # ==============================================================================

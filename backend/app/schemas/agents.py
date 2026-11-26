@@ -114,6 +114,49 @@ class CoverLetterGenerateRequest(BaseModel):
     )
 
 
+class CoverLetterSaveRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    target_role: str = Field(default="", max_length=200)
+    question: str = Field(..., min_length=1)
+    char_limit: int = Field(default=800, ge=100, le=5000)
+    final_text: str = Field(..., min_length=1)
+    critic_score: int = Field(default=0, ge=0, le=100)
+    revision_count: int = Field(default=0, ge=0)
+    used_projects: list[dict[str, Any]] = Field(default_factory=list)
+    used_experiences: list[dict[str, Any]] = Field(default_factory=list)
+    diff_summary: list[str] = Field(default_factory=list)
+    checkpoint_checks: list[str] = Field(default_factory=list)
+    memo: str = Field(default="")
+
+
+class CoverLetterUpdateRequest(BaseModel):
+    company_name: str | None = Field(default=None, max_length=200)
+    target_role: str | None = Field(default=None, max_length=200)
+    question: str | None = None
+    final_text: str | None = None
+    memo: str | None = None
+
+
+class CoverLetterResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_name: str
+    target_role: str
+    question: str
+    char_limit: int
+    final_text: str
+    critic_score: int
+    revision_count: int
+    used_projects: list[dict[str, Any]]
+    used_experiences: list[dict[str, Any]]
+    diff_summary: list[str]
+    checkpoint_checks: list[str]
+    memo: str
+    created_at: datetime
+    updated_at: datetime
+
+
 # --- 워크플로우 ④: 새 프로젝트 코파일럿 & 지원·취준 회고 ---
 class NewProjectBlueprintsRequest(BaseModel):
     company_profile_id: int | None = Field(

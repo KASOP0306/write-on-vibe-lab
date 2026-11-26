@@ -2,6 +2,11 @@
 
 import unittest
 
+from app.core.project_templates import (
+    SECTION_NAMING_RULES,
+    is_vague_section_title,
+    resolve_section_title,
+)
 from app.core.question_critic import (
     MAX_QUESTION_REVISIONS,
     code_lint_questions,
@@ -130,6 +135,40 @@ class QualityLoopsUnitTests(unittest.TestCase):
         )
         self.assertIn("★핵심", ev_block)
         self.assertIn("185ms", ev_block)
+
+    def test_section_naming_policy_and_resolution(self):
+        self.assertIn("섹션 제목 생성 기준", SECTION_NAMING_RULES)
+        self.assertTrue(is_vague_section_title("요약", "overview"))
+        self.assertTrue(is_vague_section_title("섹션 1", "architecture"))
+        self.assertTrue(is_vague_section_title("overview", "overview"))
+        self.assertFalse(is_vague_section_title("Redis 분산 락 장애 대응", "custom-1"))
+
+        # 표준 섹션에 모호한 제목이 오면 표준 제목으로 자동 교정
+        self.assertEqual(
+            resolve_section_title("troubleshooting", "섹션 3"),
+            "트러블슈팅 & 성능 개선",
+        )
+        self.assertEqual(
+            resolve_section_title("architecture", "임의의 이상한 제목"),
+            "시스템 아키텍처 & 기술 스택",
+        )
+        # 표준 제목 + 구체 소주제는 허용
+        self.assertEqual(
+            resolve_section_title(
+                "troubleshooting",
+                "트러블슈팅 & 성능 개선 — Redis Lua 락 적용",
+            ),
+            "트러블슈팅 & 성능 개선 — Redis Lua 락 적용",
+        )
+        # 커스텀 섹션은 구체 제목 보존, 모호하면 fallback
+        self.assertEqual(
+            resolve_section_title("custom-1", "사용자 인터뷰 핵심 발견", fallback_title="기본"),
+            "사용자 인터뷰 핵심 발견",
+        )
+        self.assertEqual(
+            resolve_section_title("custom-1", "기타 정리", fallback_title="사용자 인터뷰 요약"),
+            "사용자 인터뷰 요약",
+        )
 
 
 if __name__ == "__main__":

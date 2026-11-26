@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 CORE_TOP_SECTIONS: list[dict[str, Any]] = [
@@ -288,3 +289,112 @@ def get_templates_payload() -> dict[str, Any]:
         "core_sections": CORE_TOP_SECTIONS + CORE_BOTTOM_SECTIONS,
         "tracks": [TRACK_PACKS[t] for t in TRACK_ORDER],
     }
+
+
+# ==============================================================================
+# 섹션 제목 생성 기준 (Section Naming Policy — QA #1)
+# ==============================================================================
+SECTION_NAMING_RULES = (
+    "[섹션 제목 생성 기준 (필수 준수)]\n"
+    "1. 표준 섹션(`overview`, `architecture`, `decisions`, `implementation`, `troubleshooting`, `outcomes` 등)은 "
+    "반드시 제공된 표준 제목을 그대로 사용하거나, 구체 핵심 주제를 덧붙일 때만 '표준 제목 — 핵심 주제(10자 내외)' 형식으로 작성하세요.\n"
+    "2. 무의미하거나 모호한 추상 제목('요약', '내용', '정리', '기타', '섹션 1', '추가 사항', '본문', 'Overview', 'Summary') 단독 사용을 엄격히 금지합니다.\n"
+    "3. 커스텀 섹션이나 리캡 소제목(`##`)은 '[관점/역할]: [구체 대상·해결 과제]' 명사구 구조(8~28자)로 작성해 제목만 보고도 어떤 내용인지 즉시 파악되게 하세요.\n"
+    "   - 좋은 예: '트러블슈팅 & 성능 개선 — Redis 분산 락과 P99 지연 단축', '1. 문제 정의: 새벽 정산 배치 지연과 CS 병목'\n"
+    "   - 나쁜 예: '섹션 1', '프로젝트 내용', '기타 정리', 'overview'"
+)
+
+_VAGUE_SECTION_TITLES = {
+    "요약",
+    "내용",
+    "정리",
+    "기타",
+    "본문",
+    "개요",
+    "추가",
+    "추가 내용",
+    "추가 사항",
+    "기타 내용",
+    "기타 정리",
+    "프로젝트 내용",
+    "프로젝트 요약",
+    "프로젝트 정리",
+    "상세 내용",
+    "핵심 내용",
+    "핵심",
+    "설명",
+    "참고",
+    "메모",
+    "결과",
+    "summary",
+    "overview",
+    "content",
+    "section",
+    "details",
+    "notes",
+    "misc",
+    "other",
+    "untitled",
+    "conclusion",
+    "introduction",
+}
+_GENERIC_NUMBERED_RE = re.compile(r"^(?:섹션|section|part|파트|항목|chapter|챕터)\s*\d*$", re.IGNORECASE)
+_LEADING_DECOR_RE = re.compile(r"^[#\-\*\d\.\)\s]+")
+
+
+def is_vague_section_title(title: str, section_type: str = "") -> bool:
+    """제목이 비어 있거나, 영문 raw key이거나, 의미를 알 수 없는 추상어인지 판별한다."""
+    clean = _LEADING_DECOR_RE.sub("", (title or "").strip()).strip()
+    if len(clean) < 3:
+        return True
+    low = clean.lower()
+    if section_type and low == section_type.strip().lower():
+        return True
+    if low in _VAGUE_SECTION_TITLES:
+        return True
+    if _GENERIC_NUMBERED_RE.match(clean):
+        return True
+    return False
+
+
+def resolve_section_title(
+    section_type: str,
+    proposed_title: str = "",
+    *,
+    fallback_title: str = "",
+    preserve_canonical: bool = True,
+) -> str:
+    """섹션 이름 생성 기준에 따라 모호·무의미한 AI 제목을 표준 제목으로 안전하게 정규화한다.
+
+    - 표준 섹션(`ALL_KNOWN_SECTIONS` 등록 키):
+      - 모호한 제목/raw key/과도한 길이(>36자)면 표준 제목(`canonical`) 반환
+      - `preserve_canonical=True`일 때 표준 제목과 무관한 임의 제목 대신
+        표준 제목 또는 `'표준 제목 — 구체 핵심 주제'` 형식만 허용
+    - 커스텀 섹션:
+      - 모호한 제목이면 `fallback_title` 사용, 아니면 정제된 제목(최대 40자) 반환
+    """
+    st = (section_type or "").strip()
+    known = ALL_KNOWN_SECTIONS.get(st)
+    canonical = str(known["title"]) if known else ""
+    base_fallback = canonical or (fallback_title or "").strip() or st or "상세 내용 정리"
+
+    cleaned = _LEADING_DECOR_RE.sub("", (proposed_title or "").strip()).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    if not cleaned or is_vague_section_title(cleaned, st):
+        return base_fallback
+
+    if known and preserve_canonical:
+        if cleaned == canonical:
+            return canonical
+        # "표준 제목 — 구체 주제" / "표준 제목: 구체 주제" 형태는 소주제가 구체적일 때만 허용
+        for sep in (" — ", " - ", ": ", " | "):
+            if cleaned.startswith(canonical + sep):
+                sub = cleaned[len(canonical) + len(sep) :].strip()
+                if 3 <= len(sub) <= 24 and not is_vague_section_title(sub, st):
+                    return f"{canonical} — {sub}"
+                return canonical
+        # 표준 섹션인데 LLM이 표준 제목을 임의로 갈아치운 경우 표준 제목 유지 (일관성 보장)
+        return canonical
+
+    return cleaned[:40]

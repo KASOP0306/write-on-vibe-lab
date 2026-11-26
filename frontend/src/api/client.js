@@ -264,6 +264,24 @@ export const api = {
     apiRequest("/api/samples", { method: "POST", body: JSON.stringify(data) }),
   deleteSample: (refId) =>
     apiRequest(`/api/samples/${encodeURIComponent(refId)}`, { method: "DELETE" }),
+  listCoverLetters: (companyName = "") =>
+    apiRequest(
+      companyName
+        ? `/api/cover-letters?company_name=${encodeURIComponent(companyName)}`
+        : "/api/cover-letters"
+    ),
+  createCoverLetter: (data) =>
+    apiRequest("/api/cover-letters", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateCoverLetter: (id, data) =>
+    apiRequest(`/api/cover-letters/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteCoverLetter: (id) =>
+    apiRequest(`/api/cover-letters/${id}`, { method: "DELETE" }),
   listApplications: () => apiRequest("/api/applications"),
   deleteApplication: (id) =>
     apiRequest(`/api/applications/${id}`, { method: "DELETE" }),

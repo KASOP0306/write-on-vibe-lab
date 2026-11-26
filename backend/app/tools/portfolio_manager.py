@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field
 from app.core.bedrock import ainvoke_structured, get_fast_llm, get_smart_llm
 from app.core.project_templates import (
     ALL_KNOWN_SECTIONS,
+    SECTION_NAMING_RULES,
     TRACK_PACKS,
     compose_sections_for_types,
     get_combined_ai_guidance,
     get_track_labels,
     infer_track_for_section_type,
     normalize_project_types,
+    resolve_section_title,
 )
 from app.core.question_critic import (
     MAX_QUESTION_REVISIONS,
@@ -198,6 +200,7 @@ async def analyze_document_to_portfolio(
         f"사용자가 업로드한 문서({filename})만을 근거로 [{guidance['labels']}] 성격의 "
         "체계적인 멀티트랙 포트폴리오 프로젝트 초안과 STAR-L 경험 1~3건을 한국어로 구조화하세요.\n\n"
         f"[작성할 목표 섹션 목록]\n{section_spec_lines}\n\n"
+        f"{SECTION_NAMING_RULES}\n\n"
         "엄격한 규칙:\n"
         "1. 문서에 없는 수치, 지표, 도구명, 성과는 절대 지어내지 마세요. 정량 수치가 없으면 `quantified_metrics`는 빈 문자열로 두세요.\n"
         "2. 각 섹션의 `section_type`은 위 목록의 키를 정확히 사용하고, 내용이 확인되는 섹션만 충실히 채우세요.\n"
@@ -231,7 +234,11 @@ async def analyze_document_to_portfolio(
             {
                 "section_type": st,
                 "track": tpl["track"],
-                "title": (gen.title.strip() if gen and gen.title.strip() else tpl["title"]),
+                "title": resolve_section_title(
+                    st,
+                    gen.title if gen else "",
+                    fallback_title=tpl["title"],
+                ),
                 "content": gen.content.strip() if gen else "",
                 "display_order": tpl["display_order"],
             }
@@ -390,8 +397,12 @@ async def propose_document_updates(
         st = item.section_type.strip() or "overview"
         cur = existing_map.get(st)
         known = ALL_KNOWN_SECTIONS.get(st)
-        title = item.title.strip() or (
-            cur["title"] if cur else (known["title"] if known else st)
+        title = resolve_section_title(
+            st,
+            item.title,
+            fallback_title=(
+                cur["title"] if cur else (known["title"] if known else st)
+            ),
         )
         track = (
             cur.get("track")
@@ -628,7 +639,11 @@ async def propose_section_document_update(
         "section_id": target_section["id"],
         "section_type": target_section["section_type"],
         "track": target_section.get("track") or infer_track_for_section_type(target_section["section_type"]),
-        "title": proposal.proposed_title.strip() or target_section["title"],
+        "title": resolve_section_title(
+            target_section["section_type"],
+            proposal.proposed_title,
+            fallback_title=target_section["title"],
+        ),
         "before_content": target_section.get("content") or "",
         "proposed_content": proposal.proposed_content.strip(),
         "document_summary": proposal.document_summary.strip(),

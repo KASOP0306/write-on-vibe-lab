@@ -24,9 +24,11 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.core.bedrock import ainvoke_structured, get_smart_llm
 from app.core.project_templates import (
+    SECTION_NAMING_RULES,
     compose_sections_for_types,
     get_combined_ai_guidance,
     normalize_project_types,
+    resolve_section_title,
 )
 from app.tools.portfolio_manager import render_portfolio_markdown
 
@@ -489,6 +491,7 @@ async def synthesize_portfolio_from_context(
         f"제공된 GitHub 저장소의 실제 코드 트리, README, 핵심 소스코드, 의존성, 커밋 이력만을 근거로 "
         f"[{guidance['labels']}] 포트폴리오 프로젝트 정보, 아래 목표 섹션, STAR 경험 초안 1~3건을 한국어로 구조화하세요.\n\n"
         f"[작성할 목표 섹션(`sections`) 키]\n{section_spec_lines}\n\n"
+        f"{SECTION_NAMING_RULES}\n\n"
         "엄격한 규칙:\n"
         "1. 저장소에 없는 수치(예: 속도 50% 향상, MAU 등)는 절대 지어내지 마세요. 정량 수치가 없으면 `quantified_metrics`는 빈 문자열로 두세요.\n"
         "2. 각 섹션 `content`는 핵심 불릿 3~5개(섹션당 250~400자 이내)의 간결하고 밀도 높은 한국어 Markdown으로 작성하고, 저장소에 근거가 전혀 없는 섹션은 빈 문자열로 두세요.\n"
@@ -520,7 +523,11 @@ async def synthesize_portfolio_from_context(
             {
                 "section_type": st,
                 "track": tpl["track"],
-                "title": (gen.title.strip() if gen and gen.title.strip() else tpl["title"]),
+                "title": resolve_section_title(
+                    st,
+                    gen.title if gen else "",
+                    fallback_title=tpl["title"],
+                ),
                 "content": gen.content.strip() if gen else "",
                 "display_order": tpl["display_order"],
             }

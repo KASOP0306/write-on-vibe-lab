@@ -45,18 +45,54 @@ const STAR_RADAR_LABELS = [
   { id: "learning", label: "L 회고" },
 ];
 
+const DEFAULT_SEC_AI = {
+  open: false,
+  mode: "file", // "file" | "text"
+  strategy: "merge", // "merge" | "replace" | "append"
+  file: null,
+  pastedText: "",
+  instruction: "",
+  ingesting: false,
+  error: "",
+  proposal: null,
+  applying: false,
+};
+
 export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefresh }) {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Active navigation inside workspace: "section:<id>" | "stars" | "docs"
+  // Active navigation inside workspace: "section:<id>" | "stars" | "retro" | "docs"
   const [activeKey, setActiveKey] = useState("");
-  const [editTitle, setEditTitle] = useState("");
-  const [editContent, setEditContent] = useState("");
+  const [sectionDrafts, setSectionDrafts] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(`proj_drafts_${projectId}`);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
   const [sectionViewMode, setSectionViewMode] = useState("edit");
   const [savingSection, setSavingSection] = useState(false);
-  const [sectionStatus, setSectionStatus] = useState("");
+  const [savingAllDirty, setSavingAllDirty] = useState(false);
+  const [sectionStatusById, setSectionStatusById] = useState({});
+
+  // Section-Scoped Document AI Update State Map keyed by section.id (QA #3)
+  const [secAiStates, setSecAiStates] = useState(() => {
+    try {
+      const raw = window.sessionStorage.getItem(`proj_sec_ai_${projectId}`);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      const hydrated = {};
+      Object.entries(parsed).forEach(([k, v]) => {
+        hydrated[k] = { ...DEFAULT_SEC_AI, ...v, file: null, ingesting: false, applying: false };
+      });
+      return hydrated;
+    } catch {
+      return {};
+    }
+  });
 
   // Add custom section & Add Track Pack & Add Artifact Link
   const [showAddSection, setShowAddSection] = useState(false);
@@ -97,18 +133,6 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [recapLoading, setRecapLoading] = useState(false);
   const [copiedMd, setCopiedMd] = useState(false);
 
-  // Section-Scoped Document AI Update State
-  const [showSecAiBar, setShowSecAiBar] = useState(false);
-  const [secAiMode, setSecAiMode] = useState("file"); // "file" | "text"
-  const [secUpdateStrategy, setSecUpdateStrategy] = useState("merge"); // "merge" | "replace" | "append"
-  const [secFile, setSecFile] = useState(null);
-  const [secPastedText, setSecPastedText] = useState("");
-  const [secInstruction, setSecInstruction] = useState("");
-  const [secIngesting, setSecIngesting] = useState(false);
-  const [secIngestError, setSecIngestError] = useState("");
-  const [secProposal, setSecProposal] = useState(null);
-  const [applyingSecProposal, setApplyingSecProposal] = useState(false);
-
   // Opt-in STAR Deepening Interview & 5-Axis Evaluation State
   const [dismissedStarBanner, setDismissedStarBanner] = useState(false);
   const [showStarOnboarding, setShowStarOnboarding] = useState(false);
@@ -131,6 +155,45 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   const [syncRetroToOutcomes, setSyncRetroToOutcomes] = useState(true);
   const [retroError, setRetroError] = useState("");
 
+  // Persist per-section unsaved drafts & AI memo inputs across section/page switches (QA #3)
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`proj_drafts_${projectId}`, JSON.stringify(sectionDrafts));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [projectId, sectionDrafts]);
+
+  useEffect(() => {
+    try {
+      const serializable = {};
+      Object.entries(secAiStates).forEach(([sid, st]) => {
+        serializable[sid] = {
+          open: Boolean(st.open),
+          mode: st.mode || "file",
+          strategy: st.strategy || "merge",
+          pastedText: st.pastedText || "",
+          instruction: st.instruction || "",
+          proposal: st.proposal || null,
+        };
+      });
+      window.sessionStorage.setItem(`proj_sec_ai_${projectId}`, JSON.stringify(serializable));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [projectId, secAiStates]);
+
+  const updateSecAi = (secId, patch) => {
+    setSecAiStates((prev) => ({
+      ...prev,
+      [secId]: {
+        ...DEFAULT_SEC_AI,
+        ...(prev[secId] || {}),
+        ...(typeof patch === "function" ? patch(prev[secId] || DEFAULT_SEC_AI) : patch),
+      },
+    }));
+  };
+
   const loadProject = async (keepActiveKey = true) => {
     setLoading(true);
     setError("");
@@ -141,21 +204,14 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
       if (!keepActiveKey || !activeKey) {
         if (firstSec) {
           setActiveKey(`section:${firstSec.id}`);
-          setEditTitle(firstSec.title);
-          setEditContent(firstSec.content || "");
         } else {
           setActiveKey("stars");
         }
       } else if (activeKey.startsWith("section:")) {
         const curId = Number(activeKey.split(":")[1]);
         const found = detail.sections?.find((s) => s.id === curId);
-        if (found) {
-          setEditTitle(found.title);
-          setEditContent(found.content || "");
-        } else if (firstSec) {
+        if (!found && firstSec) {
           setActiveKey(`section:${firstSec.id}`);
-          setEditTitle(firstSec.title);
-          setEditContent(firstSec.content || "");
         }
       }
     } catch (err) {
@@ -166,14 +222,34 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
   };
 
   useEffect(() => {
+    // Load persisted drafts when switching to a different project
+    try {
+      const rawDrafts = window.localStorage.getItem(`proj_drafts_${projectId}`);
+      setSectionDrafts(rawDrafts ? JSON.parse(rawDrafts) : {});
+    } catch {
+      setSectionDrafts({});
+    }
+    try {
+      const rawAi = window.sessionStorage.getItem(`proj_sec_ai_${projectId}`);
+      if (rawAi) {
+        const parsed = JSON.parse(rawAi);
+        const hydrated = {};
+        Object.entries(parsed).forEach(([k, v]) => {
+          hydrated[k] = { ...DEFAULT_SEC_AI, ...v, file: null, ingesting: false, applying: false };
+        });
+        setSecAiStates(hydrated);
+      } else {
+        setSecAiStates({});
+      }
+    } catch {
+      setSecAiStates({});
+    }
     loadProject(false);
   }, [projectId]);
 
   const selectSection = (sec) => {
+    // Switching sections preserves all typed drafts and per-section AI update states (QA #3)
     setActiveKey(`section:${sec.id}`);
-    setEditTitle(sec.title);
-    setEditContent(sec.content || "");
-    setSectionStatus("");
   };
 
   const activeSection =
@@ -181,24 +257,114 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
       ? project.sections.find((s) => s.id === Number(activeKey.split(":")[1]))
       : null;
 
+  const isSectionDirty = (sec) => {
+    const d = sectionDrafts[sec.id];
+    if (!d) return false;
+    return (
+      (d.title !== undefined && d.title !== sec.title) ||
+      (d.content !== undefined && d.content !== (sec.content || ""))
+    );
+  };
+
+  const dirtySections = (project?.sections || []).filter((s) => isSectionDirty(s));
+
+  const activeDraft = activeSection ? sectionDrafts[activeSection.id] : null;
+  const editTitle = activeSection ? activeDraft?.title ?? activeSection.title : "";
+  const editContent = activeSection
+    ? activeDraft?.content ?? activeSection.content ?? ""
+    : "";
+  const sectionStatus = activeSection ? sectionStatusById[activeSection.id] || "" : "";
+
+  const setEditTitle = (val) => {
+    if (!activeSection) return;
+    setSectionDrafts((prev) => ({
+      ...prev,
+      [activeSection.id]: {
+        title: val,
+        content: prev[activeSection.id]?.content ?? activeSection.content ?? "",
+      },
+    }));
+  };
+
+  const setEditContent = (val) => {
+    if (!activeSection) return;
+    setSectionDrafts((prev) => ({
+      ...prev,
+      [activeSection.id]: {
+        title: prev[activeSection.id]?.title ?? activeSection.title,
+        content: val,
+      },
+    }));
+  };
+
+  const curSecAi = activeSection
+    ? { ...DEFAULT_SEC_AI, ...(secAiStates[activeSection.id] || {}) }
+    : DEFAULT_SEC_AI;
+
   const handleSaveSection = async () => {
     if (!activeSection || savingSection) return;
+    const targetId = activeSection.id;
+    const targetTitle = editTitle.trim() || activeSection.title;
+    const targetContent = editContent;
     setSavingSection(true);
-    setSectionStatus("");
+    setSectionStatusById((prev) => ({ ...prev, [targetId]: "" }));
     try {
-      const updated = await api.updateSection(project.id, activeSection.id, {
-        title: editTitle.trim() || activeSection.title,
-        content: editContent,
+      const updated = await api.updateSection(project.id, targetId, {
+        title: targetTitle,
+        content: targetContent,
       });
-      setSectionStatus(
-        updated.vector_synced ? "저장 및 벡터 동기화 완료" : "DB 저장 완료"
-      );
+      setSectionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[targetId];
+        return next;
+      });
+      setSectionStatusById((prev) => ({
+        ...prev,
+        [targetId]: updated.vector_synced ? "저장 및 벡터 동기화 완료" : "DB 저장 완료",
+      }));
       await loadProject(true);
       await onGlobalRefresh();
     } catch (err) {
-      setSectionStatus(`저장 실패: ${err.message}`);
+      setSectionStatusById((prev) => ({
+        ...prev,
+        [targetId]: `저장 실패: ${err.message}`,
+      }));
     } finally {
       setSavingSection(false);
+    }
+  };
+
+  const handleSaveAllDirtySections = async () => {
+    if (!project || dirtySections.length === 0 || savingAllDirty) return;
+    setSavingAllDirty(true);
+    try {
+      const savedIds = [];
+      for (const sec of dirtySections) {
+        const d = sectionDrafts[sec.id] || {};
+        await api.updateSection(project.id, sec.id, {
+          title: (d.title ?? sec.title).trim() || sec.title,
+          content: d.content ?? sec.content ?? "",
+        });
+        savedIds.push(sec.id);
+      }
+      setSectionDrafts((prev) => {
+        const next = { ...prev };
+        savedIds.forEach((id) => delete next[id]);
+        return next;
+      });
+      setSectionStatusById((prev) => {
+        const next = { ...prev };
+        savedIds.forEach((id) => {
+          next[id] = "일괄 저장 및 벡터 동기화 완료";
+        });
+        return next;
+      });
+      await loadProject(true);
+      await onGlobalRefresh();
+    } catch (err) {
+      alert(`일괄 저장 중 오류: ${err.message}`);
+    } finally {
+      setSavingAllDirty(false);
     }
   };
 
@@ -529,68 +695,75 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
 
   const handleRunSectionIngest = async (e) => {
     e.preventDefault();
-    if (!activeSection || secIngesting) return;
-    setSecIngestError("");
-    setSecProposal(null);
+    if (!activeSection) return;
+    const targetSecId = activeSection.id;
+    const st = { ...DEFAULT_SEC_AI, ...(secAiStates[targetSecId] || {}) };
+    if (st.ingesting) return;
 
     const formData = new FormData();
-    if (secAiMode === "file") {
-      if (!secFile) {
-        setSecIngestError("업로드할 파일을 선택해 주세요.");
+    if (st.mode === "file") {
+      if (!st.file) {
+        updateSecAi(targetSecId, { error: "업로드할 파일을 선택해 주세요." });
         return;
       }
-      formData.append("file", secFile);
+      formData.append("file", st.file);
     } else {
-      if (!secPastedText.trim()) {
-        setSecIngestError("이 섹션에 반영할 메모나 문서 내용을 입력해 주세요.");
+      if (!st.pastedText.trim()) {
+        updateSecAi(targetSecId, {
+          error: "이 섹션에 반영할 메모나 문서 내용을 입력해 주세요.",
+        });
         return;
       }
-      formData.append("pasted_text", secPastedText.trim());
+      formData.append("pasted_text", st.pastedText.trim());
     }
-    formData.append("instruction", secInstruction.trim());
-    formData.append("update_mode", secUpdateStrategy);
+    formData.append("instruction", st.instruction.trim());
+    formData.append("update_mode", st.strategy);
 
-    setSecIngesting(true);
+    updateSecAi(targetSecId, { error: "", proposal: null, ingesting: true });
     try {
       const proposal = await api.ingestSectionDocument(
         projectId,
-        activeSection.id,
+        targetSecId,
         formData
       );
-      setSecProposal(proposal);
+      updateSecAi(targetSecId, { proposal, ingesting: false });
     } catch (err) {
-      setSecIngestError(err.message);
-    } finally {
-      setSecIngesting(false);
+      updateSecAi(targetSecId, { error: err.message, ingesting: false });
     }
   };
 
   const handleApplySectionProposal = async () => {
-    if (!activeSection || !secProposal || applyingSecProposal) return;
-    setApplyingSecProposal(true);
+    if (!activeSection) return;
+    const targetSecId = activeSection.id;
+    const st = { ...DEFAULT_SEC_AI, ...(secAiStates[targetSecId] || {}) };
+    if (!st.proposal || st.applying) return;
+
+    updateSecAi(targetSecId, { applying: true });
     try {
-      const updated = await api.updateSection(projectId, activeSection.id, {
-        title: secProposal.title || editTitle,
-        content: secProposal.proposed_content,
+      const updated = await api.updateSection(projectId, targetSecId, {
+        title: st.proposal.title || editTitle,
+        content: st.proposal.proposed_content,
       });
-      setEditTitle(updated.title);
-      setEditContent(updated.content);
-      setSectionStatus(
-        updated.vector_synced
+      setSectionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[targetSecId];
+        return next;
+      });
+      setSectionStatusById((prev) => ({
+        ...prev,
+        [targetSecId]: updated.vector_synced
           ? "섹션 AI 업데이트 반영 및 벡터 동기화 완료"
-          : "섹션 AI 업데이트 반영 완료"
-      );
-      setSecProposal(null);
-      setSecFile(null);
-      setSecPastedText("");
-      setSecInstruction("");
-      setShowSecAiBar(false);
+          : "섹션 AI 업데이트 반영 완료",
+      }));
+      updateSecAi(targetSecId, {
+        ...DEFAULT_SEC_AI,
+        open: false,
+      });
       await loadProject(true);
       onGlobalRefresh?.();
     } catch (err) {
+      updateSecAi(targetSecId, { applying: false });
       alert(`섹션 반영 실패: ${err.message}`);
-    } finally {
-      setApplyingSecProposal(false);
     }
   };
 
@@ -1080,7 +1253,12 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 </div>
                 {grp.sections.map((sec) => {
                   const isSelected = activeKey === `section:${sec.id}`;
-                  const hasContent = Boolean((sec.content || "").trim());
+                  const secAi = secAiStates[sec.id];
+                  const dirty = isSectionDirty(sec);
+                  const draftContent = sectionDrafts[sec.id]?.content;
+                  const hasContent = Boolean(
+                    ((draftContent !== undefined ? draftContent : sec.content) || "").trim()
+                  );
                   return (
                     <button
                       key={sec.id}
@@ -1092,25 +1270,61 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                           : "text-slate-700 hover:bg-slate-100"
                       }`}
                     >
-                      <span className="truncate">{sec.title}</span>
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${
-                          hasContent
-                            ? isSelected
-                              ? "bg-emerald-400"
-                              : "bg-emerald-500"
-                            : isSelected
+                      <span className="truncate">
+                        {sectionDrafts[sec.id]?.title || sec.title}
+                      </span>
+                      <span className="flex items-center gap-1 shrink-0">
+                        {secAi?.ingesting && (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-indigo-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            AI
+                          </span>
+                        )}
+                        {!secAi?.ingesting && secAi?.proposal && (
+                          <span className="rounded bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">
+                            제안
+                          </span>
+                        )}
+                        {dirty && (
+                          <span className="rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[9px] font-bold">
+                            수정중
+                          </span>
+                        )}
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            hasContent
+                              ? isSelected
+                                ? "bg-emerald-400"
+                                : "bg-emerald-500"
+                              : isSelected
                               ? "bg-slate-600"
                               : "bg-slate-300"
-                        }`}
-                        title={hasContent ? "작성됨" : "비어 있음"}
-                      />
+                          }`}
+                          title={hasContent ? "작성됨" : "비어 있음"}
+                        />
+                      </span>
                     </button>
                   );
                 })}
               </div>
             ))}
           </div>
+
+          {dirtySections.length > 0 && (
+            <button
+              type="button"
+              disabled={savingAllDirty}
+              onClick={handleSaveAllDirtySections}
+              className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50 shadow-xs"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>
+                {savingAllDirty
+                  ? "일괄 저장 중..."
+                  : `변경된 섹션 모두 저장 (${dirtySections.length})`}
+              </span>
+            </button>
+          )}
 
           <div className="pt-3 border-t border-slate-100 space-y-1">
             <button
@@ -1189,19 +1403,27 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setSecIngestError("");
-                      setSecProposal(null);
-                      setShowSecAiBar((v) => !v);
-                    }}
+                    onClick={() =>
+                      updateSecAi(activeSection.id, (prev) => ({
+                        open: !prev.open,
+                        error: "",
+                      }))
+                    }
                     className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                      showSecAiBar
+                      curSecAi.open
                         ? "border-indigo-500 bg-indigo-600 text-white"
                         : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                     }`}
                   >
                     <Paperclip className="w-3.5 h-3.5" />
-                    <span>이 섹션 파일·AI 업데이트</span>
+                    <span>
+                      이 섹션 파일·AI 업데이트
+                      {curSecAi.ingesting
+                        ? " (진행중)"
+                        : curSecAi.proposal
+                        ? " (제안 대기)"
+                        : ""}
+                    </span>
                   </button>
 
                   <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
@@ -1242,14 +1464,14 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                 </div>
               </div>
 
-              {/* Section-Scoped File / Memo AI Update Bar */}
-              {showSecAiBar && (
+              {/* Section-Scoped File / Memo AI Update Bar (Per-Section State Preserved) */}
+              {curSecAi.open && (
                 <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                       <span>
-                        &apos;{activeSection.title}&apos; 섹션 전용 파일·메모 AI 자동 업데이트
+                        &apos;{editTitle || activeSection.title}&apos; 섹션 전용 파일·메모 AI 자동 업데이트
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px]">
@@ -1261,9 +1483,9 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                         <button
                           key={m.id}
                           type="button"
-                          onClick={() => setSecUpdateStrategy(m.id)}
+                          onClick={() => updateSecAi(activeSection.id, { strategy: m.id })}
                           className={`rounded-md px-2 py-0.5 font-semibold border ${
-                            secUpdateStrategy === m.id
+                            curSecAi.strategy === m.id
                               ? "border-indigo-600 bg-indigo-600 text-white"
                               : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                           }`}
@@ -1278,9 +1500,9 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                     <div className="flex items-center gap-2 text-xs">
                       <button
                         type="button"
-                        onClick={() => setSecAiMode("file")}
+                        onClick={() => updateSecAi(activeSection.id, { mode: "file" })}
                         className={`rounded-lg px-2.5 py-1 font-medium ${
-                          secAiMode === "file"
+                          curSecAi.mode === "file"
                             ? "bg-slate-900 text-white"
                             : "bg-white border border-slate-200 text-slate-600"
                         }`}
@@ -1289,9 +1511,9 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSecAiMode("text")}
+                        onClick={() => updateSecAi(activeSection.id, { mode: "text" })}
                         className={`rounded-lg px-2.5 py-1 font-medium ${
-                          secAiMode === "text"
+                          curSecAi.mode === "text"
                             ? "bg-slate-900 text-white"
                             : "bg-white border border-slate-200 text-slate-600"
                         }`}
@@ -1300,18 +1522,30 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                       </button>
                     </div>
 
-                    {secAiMode === "file" ? (
-                      <input
-                        type="file"
-                        accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.ipynb,.py,.js,.jsx,.ts,.tsx,.java,.go,.sql,.yaml,.yml,.json"
-                        onChange={(e) => setSecFile(e.target.files?.[0] || null)}
-                        className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
-                      />
+                    {curSecAi.mode === "file" ? (
+                      <div className="space-y-1">
+                        <input
+                          key={`sec-file-${activeSection.id}`}
+                          type="file"
+                          accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.ipynb,.py,.js,.jsx,.ts,.tsx,.java,.go,.sql,.yaml,.yml,.json"
+                          onChange={(e) =>
+                            updateSecAi(activeSection.id, { file: e.target.files?.[0] || null })
+                          }
+                          className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
+                        />
+                        {curSecAi.file && (
+                          <div className="text-[11px] text-indigo-700 font-medium">
+                            선택된 파일 유지됨: {curSecAi.file.name}
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <textarea
                         rows={4}
-                        value={secPastedText}
-                        onChange={(e) => setSecPastedText(e.target.value)}
+                        value={curSecAi.pastedText}
+                        onChange={(e) =>
+                          updateSecAi(activeSection.id, { pastedText: e.target.value })
+                        }
                         placeholder="이 섹션에 반영할 트러블슈팅 로그, 회의록, 벤치마크 수치, 인터뷰 메모 등을 붙여넣으세요..."
                         className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                       />
@@ -1320,69 +1554,71 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         type="text"
-                        value={secInstruction}
-                        onChange={(e) => setSecInstruction(e.target.value)}
+                        value={curSecAi.instruction}
+                        onChange={(e) =>
+                          updateSecAi(activeSection.id, { instruction: e.target.value })
+                        }
                         placeholder="선택 지시: 예) Latency 전/후 수치와 원인 중심으로 정리해줘"
                         className="flex-1 min-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
                       />
                       <button
                         type="submit"
-                        disabled={secIngesting}
+                        disabled={curSecAi.ingesting}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                       >
-                        {secIngesting ? (
+                        {curSecAi.ingesting ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Sparkles className="w-3.5 h-3.5" />
                         )}
-                        <span>{secIngesting ? "AI 분석 중..." : "이 섹션 Diff 생성"}</span>
+                        <span>{curSecAi.ingesting ? "AI 분석 중..." : "이 섹션 Diff 생성"}</span>
                       </button>
                     </div>
 
-                    {secIngestError && (
+                    {curSecAi.error && (
                       <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
-                        {secIngestError}
+                        {curSecAi.error}
                       </div>
                     )}
                   </form>
 
                   {/* Inline Section Before / After Diff Preview */}
-                  {secProposal && (
+                  {curSecAi.proposal && (
                     <div className="rounded-xl border border-emerald-200 bg-white p-4 space-y-3 text-xs">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <div className="font-bold text-slate-900">
-                            AI 섹션 업데이트 제안 ({secProposal.filename})
+                            AI 섹션 업데이트 제안 ({curSecAi.proposal.filename})
                           </div>
-                          {secProposal.change_summary && (
+                          {curSecAi.proposal.change_summary && (
                             <p className="text-indigo-700 mt-0.5">
-                              {secProposal.change_summary}
+                              {curSecAi.proposal.change_summary}
                             </p>
                           )}
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setSecProposal(null)}
+                            onClick={() => updateSecAi(activeSection.id, { proposal: null })}
                             className="rounded-lg border border-slate-200 px-2.5 py-1 text-slate-600 hover:bg-slate-50"
                           >
                             취소
                           </button>
                           <button
                             type="button"
-                            disabled={applyingSecProposal}
+                            disabled={curSecAi.applying}
                             onClick={handleApplySectionProposal}
                             className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                           >
                             <Check className="w-3.5 h-3.5" />
-                            <span>{applyingSecProposal ? "반영 중..." : "이 섹션에 반영"}</span>
+                            <span>{curSecAi.applying ? "반영 중..." : "이 섹션에 반영"}</span>
                           </button>
                         </div>
                       </div>
 
-                      {(secProposal.added_facts || []).length > 0 && (
+                      {(curSecAi.proposal.added_facts || []).length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                          {secProposal.added_facts.map((f, i) => (
+                          {curSecAi.proposal.added_facts.map((f, i) => (
                             <span
                               key={i}
                               className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] text-emerald-800"
@@ -1399,7 +1635,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                             변경 전 (Before)
                           </div>
                           <pre className="whitespace-pre-wrap font-sans text-slate-600 max-h-48 overflow-y-auto">
-                            {secProposal.before_content || "(비어 있음)"}
+                            {curSecAi.proposal.before_content || "(비어 있음)"}
                           </pre>
                         </div>
                         <div className="rounded-lg bg-emerald-50/50 border border-emerald-200 p-3">
@@ -1407,7 +1643,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                             업데이트 제안 (After)
                           </div>
                           <pre className="whitespace-pre-wrap font-sans text-slate-800 max-h-48 overflow-y-auto">
-                            {secProposal.proposed_content}
+                            {curSecAi.proposal.proposed_content}
                           </pre>
                         </div>
                       </div>

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.bedrock import ainvoke_structured, get_fast_llm, get_smart_llm
 from app.core.chunker import split_into_chunks
+from app.core.project_templates import resolve_section_title
 from app.core.vector_store import tokenize_korean_2gram
 from app.prompts import build_chat_prompt
 
@@ -348,7 +349,11 @@ async def verify_and_repair_sections(
                         updated_list.append(
                             {
                                 **sec,
-                                "title": rep_map[st].title.strip() or sec["title"],
+                                "title": resolve_section_title(
+                                    st,
+                                    rep_map[st].title,
+                                    fallback_title=sec["title"],
+                                ),
                                 "content": rep_map[st].content.strip(),
                             }
                         )

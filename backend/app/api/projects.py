@@ -30,11 +30,13 @@ from app.core.database import (
 )
 from app.core.project_templates import (
     ALL_KNOWN_SECTIONS,
+    SECTION_NAMING_RULES,
     compose_sections_for_types,
     get_combined_ai_guidance,
     get_templates_payload,
     infer_track_for_section_type,
     normalize_project_types,
+    resolve_section_title,
 )
 from app.core.star_rubric import (
     compute_average_star_axes,
@@ -1483,11 +1485,18 @@ async def generate_project_recap(
 
     system_prompt = (
         f"당신은 {guidance['persona']} 관점의 포트폴리오 에디터입니다.\n"
-        f"제공된 사실(멀티트랙 섹션, STAR 경험, 커리어 신념)만을 근거로 [{guidance['labels']}] 프로젝트에 "
-        "최적화된 한국어 Markdown 포트폴리오 리캡 문서를 작성하세요.\n"
+        f"제공된 사실(멀티트랙 섹션, STAR-L 경험, 커리어 신념)만을 근거로 [{guidance['labels']}] 프로젝트에 "
+        "최적화된 한국어 Markdown 포트폴리오 리캡 문서를 작성하세요.\n\n"
+        f"{SECTION_NAMING_RULES}\n\n"
         "규칙:\n"
         "1. 제공되지 않은 수치, 도구명, 성과를 임의로 지어내지 마세요(환각 엄금).\n"
-        "2. 프로젝트의 복수 유형이 자연스럽게 드러나도록 핵심 문제 정의 → 유형별 핵심 기여·의사결정·해결 → 정량/정성 성과 → 커리어 비전 연결 순으로 구성하세요.\n"
+        "2. 프로젝트의 복수 유형이 자연스럽게 드러나도록 아래 명확한 번호·관점 구조로 `##` 소제목을 작성하세요:\n"
+        "   - `## 1. 문제 정의 & 프로젝트 목표: [핵심 해결 과제]`\n"
+        "   - `## 2. 핵심 설계 & 기술/기획 의사결정: [핵심 선택지]`\n"
+        "   - `## 3. 담당 역할 & 주요 실행/트러블슈팅: [핵심 구현·돌파 포인트]`\n"
+        "   - `## 4. 정량·정성 성과 & 회고 (Learning): [핵심 결과]`\n"
+        "   - `## 5. 커리어 비전 연결: [직무·신념 연결점]`\n"
+        "   (각 소제목 뒤 콜론(`:`)에는 이 프로젝트만의 구체적 핵심 내용을 10~20자로 적고, '요약/내용/기타' 같은 추상 제목은 절대 쓰지 마세요.)\n"
         "3. 상투적인 AI 수식어를 배제하고 구체적 행동 동사와 근거 중심으로 간결하게 작성하세요."
     )
 

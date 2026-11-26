@@ -246,6 +246,35 @@ class QuestionFeedbackLog(Base):
     )
 
 
+class CoverLetter(Base):
+    """생성 자소서 보관함 테이블 (QA #2)."""
+
+    __tablename__ = "cover_letters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    target_role: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    char_limit: Mapped[int] = mapped_column(Integer, default=800, nullable=False)
+    final_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    critic_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    revision_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    used_projects: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    used_experiences: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    diff_summary: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    checkpoint_checks: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    memo: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class VectorDocument(Base):
     __tablename__ = "vector_documents"
     __table_args__ = (
