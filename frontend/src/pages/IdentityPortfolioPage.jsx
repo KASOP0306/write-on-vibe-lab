@@ -444,14 +444,10 @@ export default function IdentityPortfolioPage({
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">2. 포트폴리오 &amp; STAR-L 마스터리</h2>
-        <p className="text-sm text-slate-600 mt-1">
-          <strong>STAR-L 21지표 엄격 하이브리드 평가 · 대표 4프로젝트 1,000 XP 마스터리</strong>와{" "}
-          <strong>복수 유형 조합형 프로젝트 워크스페이스</strong>를 한곳에서 관리합니다.
-        </p>
+        <h2 className="text-2xl font-bold text-slate-900">2. 포트폴리오</h2>
       </div>
 
-      {/* 6-Axis Portfolio Character & Dual Radar Diagnosis Dashboard */}
+      {/* STAR-L Mastery Dashboard */}
       <PortfolioDiagnosisPanel
         projectCount={projects.length}
         experienceSignature={experienceSignature}
@@ -462,14 +458,9 @@ export default function IdentityPortfolioPage({
       {/* Registered Portfolio Projects Hub with Multi-Track Filter */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">
-              등록된 포트폴리오 프로젝트 ({filteredProjects.length})
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              프로젝트 카드를 클릭하면 <strong>트랙별 섹션 편집 · 문서 자동 업데이트 · AI 노이즈 정리</strong> 워크스페이스가 열립니다.
-            </p>
-          </div>
+          <h3 className="text-base font-bold text-slate-900">
+            포트폴리오 프로젝트 ({filteredProjects.length})
+          </h3>
 
           <div className="flex flex-wrap gap-1.5">
             <button
@@ -606,19 +597,12 @@ export default function IdentityPortfolioPage({
       {/* Unified Multi-Track Portfolio Creation Hub (3 Tabs) */}
       <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50/35 p-6 space-y-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-indigo-600" />
-              <span>
-                {editingProjectId
-                  ? "프로젝트 기본 정보 수정"
-                  : "새 포트폴리오 만들기 (복수 유형 조합 지원)"}
-              </span>
-            </h3>
-            <p className="text-xs text-slate-600 mt-0.5">
-              한 프로젝트에서 기획+개발, 데이터+개발 등 여러 역할을 했다면 <strong>유형을 여러 개 동시에 선택</strong>하세요. 공통 코어 + 선택한 트랙 섹션이 중복 없이 자동 조합됩니다.
-            </p>
-          </div>
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-indigo-600" />
+            <span>
+              {editingProjectId ? "프로젝트 수정" : "새 프로젝트 추가"}
+            </span>
+          </h3>
           {editingProjectId && (
             <button
               type="button"

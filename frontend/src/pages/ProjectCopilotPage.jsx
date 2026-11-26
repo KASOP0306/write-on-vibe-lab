@@ -341,12 +341,8 @@ export default function ProjectCopilotPage({
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <Rocket className="w-6 h-6 text-indigo-600" />
-          <span>7. 새 프로젝트 코파일럿 (STAR-L 21지표 × 신념 기반 설계)</span>
+          <span>7. 프로젝트 코파일럿</span>
         </h2>
-        <p className="text-sm text-slate-600 mt-1">
-          <strong>STAR-L 21지표 취약 체크포인트 · 대표 4슬롯(1,000 XP)</strong>, <strong>미증명 핵심 신념 카드</strong>,{" "}
-          <strong>목표 기업 동향</strong>, 그리고 <strong>실시간 웹 검색</strong>을 결합해 어떤 새 프로젝트를 어떻게 진행하면 가장 강력하게 보완할 수 있는지 설계합니다.
-        </p>
       </div>
 
       {/* Shared Context Bar: Live STAR-L 1,000 XP Mastery + Unproven Beliefs + Researched Company */}
@@ -497,7 +493,7 @@ export default function ProjectCopilotPage({
           }`}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>새 프로젝트 청사진 추천 (웹 검색 포함)</span>
+          <span>청사진 추천</span>
         </button>
         <button
           type="button"
@@ -509,7 +505,7 @@ export default function ProjectCopilotPage({
           }`}
         >
           <MessageSquare className="w-3.5 h-3.5" />
-          <span>새 프로젝트 설계 · 진행 코파일럿 채팅</span>
+          <span>코파일럿 채팅</span>
         </button>
       </div>
 
@@ -744,13 +740,8 @@ export default function ProjectCopilotPage({
           <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 flex flex-col justify-between min-h-[540px] shadow-sm">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                <div className="space-y-0.5">
-                  <div className="text-sm font-bold text-slate-900">
-                    새 프로젝트 Agentic RAG 코파일럿 (STAR-L · 신념 · 단기/장기 기억)
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    스레드 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">{threadId}</code> · 대화는 PostgreSQL 체크포인트에 자동 저장됩니다
-                  </div>
+                <div className="text-sm font-bold text-slate-900">
+                  코파일럿 채팅
                 </div>
                 <div className="flex items-center gap-2">
                   <select
@@ -758,7 +749,7 @@ export default function ProjectCopilotPage({
                     onChange={(e) => setSelectedProjectId(e.target.value)}
                     className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs bg-white"
                   >
-                    <option value="">참고 기존 프로젝트: 전체</option>
+                    <option value="">참고 프로젝트: 전체</option>
                     {projects.map((p) => (
                       <option key={p.id} value={p.id}>
                         참고: {p.name}
@@ -778,10 +769,7 @@ export default function ProjectCopilotPage({
               </div>
 
               {chatMessages.length === 0 ? (
-                <div className="py-6 space-y-3">
-                  <p className="text-xs text-slate-500 text-center">
-                    STAR-L 취약 지표 보완, 미증명 신념 증명 프로젝트, 아키텍처·트레이드오프·검증 지표 설계를 무엇이든 물어보세요. 필요하면 최신 웹 레퍼런스를 자동으로 검색해 제안합니다.
-                  </p>
+                <div className="py-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {QUICK_PROMPTS.map((qp, i) => (
                       <button
@@ -900,7 +888,7 @@ export default function ProjectCopilotPage({
               <div className="flex items-center justify-between">
                 <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <Brain className="w-4 h-4 text-violet-600" />
-                  <span>장기 기억 서랍 ({memories.length})</span>
+                  <span>장기 기억 · {memories.length}</span>
                 </div>
                 <button
                   type="button"
@@ -910,10 +898,6 @@ export default function ProjectCopilotPage({
                   새로고침
                 </button>
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                대화 중 시간 제약·선호 스택·목표 일정을 말하면 장기 기억에 저장되어{" "}
-                <strong>새 대화에서도 자동으로 꺼내 반영</strong>합니다.
-              </p>
               {memories.length === 0 ? (
                 <div className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-400">
                   예: &ldquo;나는 평일 저녁·주말 합쳐 주 12시간만 투자할 수 있고, Python+PostgreSQL 스택을 선호해&rdquo;

@@ -107,16 +107,12 @@ export default function ApplicationRetroPage({ onJumpToCopilot }) {
       : applications.filter((a) => a.status === filterStatus);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <ClipboardCheck className="w-6 h-6 text-indigo-600" />
-          <span>6. 지원 &amp; 취준 회고</span>
+          <span>6. 지원 회고</span>
         </h2>
-        <p className="text-sm text-slate-600 mt-1">
-          서류·과제·면접 결과를 기록하면 <strong>내 포트폴리오 캐릭터와 경험</strong> 대비 핵심 격차(Gap)를 진단하고,
-          보완이 필요한 주제를 <strong>새 프로젝트 코파일럿</strong>으로 바로 연결합니다.
-        </p>
       </div>
 
       {/* Summary Metrics */}

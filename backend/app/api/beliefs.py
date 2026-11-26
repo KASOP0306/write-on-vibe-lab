@@ -288,6 +288,28 @@ async def list_belief_pillars(
     return [_serialize_pillar(r) for r in rows]
 
 
+async def _auto_sync_pillars_to_profile(session: AsyncSession) -> None:
+    """BeliefPillar 변경 시 UserProfile.core_beliefs 요약을 자동 동기화해 단일 진실 공급원(SSOT)을 유지한다."""
+    pillars = (
+        (await session.execute(select(BeliefPillar).order_by(BeliefPillar.id.asc())))
+        .scalars()
+        .all()
+    )
+    profile = await session.get(UserProfile, 1)
+    if profile is None:
+        profile = UserProfile(id=1)
+        session.add(profile)
+    lines = []
+    for idx, p in enumerate(pillars, start=1):
+        cat = PILLAR_CATEGORY_LABELS.get(p.category, p.category)
+        line = f"{idx}. [{cat}] {p.title}"
+        if p.tradeoff_rule.strip():
+            line += f" (기준: {p.tradeoff_rule.strip()})"
+        lines.append(line)
+    profile.core_beliefs = "\n".join(lines)
+    await session.commit()
+
+
 @router.post(
     "/pillars", response_model=BeliefPillarResponse, status_code=status.HTTP_201_CREATED
 )
@@ -307,6 +329,7 @@ async def create_belief_pillar(
     session.add(pillar)
     await session.commit()
     await session.refresh(pillar)
+    await _auto_sync_pillars_to_profile(session)
     synced = await _sync_belief_pillar_vector(session, pillar)
     return _serialize_pillar(pillar, vector_synced=synced)
 
@@ -342,6 +365,7 @@ async def update_belief_pillar(
 
     await session.commit()
     await session.refresh(pillar)
+    await _auto_sync_pillars_to_profile(session)
     synced = await _sync_belief_pillar_vector(session, pillar)
     return _serialize_pillar(pillar, vector_synced=synced)
 
@@ -359,6 +383,7 @@ async def delete_belief_pillar(
         )
     await session.delete(pillar)
     await session.commit()
+    await _auto_sync_pillars_to_profile(session)
     await delete_document(
         session, doc_type=DocType.CAREER_IDENTITY, ref_id=f"belief-pillar-{pillar_id}"
     )

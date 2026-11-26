@@ -448,31 +448,23 @@ export default function IdentityBeliefsPage({
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <BookHeart className="w-6 h-6 text-indigo-600" />
-          <span>1. 나의 신념 카드 &amp; 일상 회고 저널</span>
+          <span>1. 나의 신념</span>
         </h2>
-        <p className="text-sm text-slate-600 mt-1">
-          추상적인 구호가 아니라 <strong>트레이드오프 판단 기준 + 실제 증명 경험</strong>이 연결된 <strong>핵심 신념 카드</strong>를 구축합니다. 등록된 신념 카드와 회고 노트는 <strong>기업 3각 매칭 · 자소서 공방 · 새 프로젝트 코파일럿</strong>에 1급 소재로 직접 연동됩니다.
-        </p>
       </div>
 
       {/* SECTION 1: Structured Core Belief Pillars Board */}
       <section className="rounded-2xl border border-indigo-200 bg-white p-6 space-y-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-indigo-600" />
-              <h3 className="text-base font-bold text-slate-900">
-                핵심 신념 카드 (Belief Pillars · {pillars.length}개)
-              </h3>
-              {pillars.length > 0 && (
-                <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
-                  경험 증명 완료 {provenCount}/{pillars.length}
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              자소서·면접에서 바로 설득력을 발휘하는 3~5개의 일하는 원칙을 관리합니다. 빈 화면이 막막하다면 <strong>포트폴리오·STAR에서 자동 역추출</strong>해 시작해 보세요.
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-indigo-600" />
+            <h3 className="text-base font-bold text-slate-900">
+              핵심 신념 카드 · {pillars.length}
+            </h3>
+            {pillars.length > 0 && (
+              <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                증명됨 {provenCount}/{pillars.length}
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -489,8 +481,8 @@ export default function IdentityBeliefsPage({
               )}
               <span>
                 {discovering
-                  ? "프로젝트·STAR 행동 패턴 분석 중..."
-                  : "내 프로젝트·경험에서 신념 자동 발굴"}
+                  ? "행동 패턴 분석 중..."
+                  : "프로젝트·경험에서 신념 발굴"}
               </span>
             </button>
 
@@ -500,21 +492,8 @@ export default function IdentityBeliefsPage({
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>신념 카드 직접 추가</span>
+              <span>신념 추가</span>
             </button>
-
-            {pillars.length > 0 && (
-              <button
-                type="button"
-                disabled={syncingPillars}
-                onClick={handleSyncPillarsToProfile}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
-                title="등록된 신념 카드를 아래 프로필 핵심 신념 요약에 자동 반영"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${syncingPillars ? "animate-spin" : ""}`} />
-                <span>프로필 요약 동기화</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -974,14 +953,9 @@ export default function IdentityBeliefsPage({
         className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">
-              커리어 비전 · 희망 직무 · 선호 문체 (De-AI 기준)
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              위 신념 카드들과 함께 자소서 공방·기업 3각 매칭의 뼈대로 쓰이는 전체 프로필 요약입니다.
-            </p>
-          </div>
+          <h3 className="text-base font-bold text-slate-900">
+            커리어 프로필
+          </h3>
           <div className="flex flex-wrap items-center gap-2">
             {profileStatus && (
               <span className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-0.5">
@@ -1008,12 +982,9 @@ export default function IdentityBeliefsPage({
         {synthesis && (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3 text-xs">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="font-bold text-indigo-950 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>신념 카드·회고 노트 {synthesis.note_count}건 기반 비전·신념 정제 제안</span>
-                </div>
-                <p className="text-slate-600 mt-0.5">{synthesis.synthesis_rationale}</p>
+              <div className="font-bold text-indigo-950 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>비전 정제 제안</span>
               </div>
               <button
                 type="button"
@@ -1037,15 +1008,9 @@ export default function IdentityBeliefsPage({
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="rounded-lg bg-white border border-indigo-100 p-3 space-y-1">
-                <div className="text-[11px] font-bold text-indigo-700">제안 커리어 비전</div>
-                <p className="text-slate-800 leading-relaxed">{synthesis.suggested_career_vision}</p>
-              </div>
-              <div className="rounded-lg bg-white border border-indigo-100 p-3 space-y-1">
-                <div className="text-[11px] font-bold text-indigo-700">제안 핵심 신념 요약</div>
-                <p className="text-slate-800 leading-relaxed">{synthesis.suggested_core_beliefs}</p>
-              </div>
+            <div className="rounded-lg bg-white border border-indigo-100 p-3 space-y-1">
+              <div className="text-[11px] font-bold text-indigo-700">제안 커리어 비전</div>
+              <p className="text-slate-800 leading-relaxed">{synthesis.suggested_career_vision}</p>
             </div>
 
             <div className="flex justify-end gap-2">
@@ -1068,62 +1033,47 @@ export default function IdentityBeliefsPage({
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <label className="block space-y-1">
             <span className="text-xs font-semibold text-slate-700">커리어 비전</span>
             <textarea
-              rows={3}
+              rows={2}
               value={profileForm.career_vision}
               onChange={(e) =>
                 setProfileForm({ ...profileForm, career_vision: e.target.value })
               }
-              placeholder="예: 복잡한 문제를 구조화하고, 기술과 기획의 경계에서 사용자가 실제로 체감하는 가치를 만드는 빌더"
+              placeholder="예: 복잡한 문제를 구조화하고, 사용자가 체감하는 가치를 만드는 빌더"
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
           </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs font-semibold text-slate-700">
-              핵심 신념 한눈에 요약 (위 신념 카드에서 자동 동기화 가능)
-            </span>
-            <textarea
-              rows={3}
-              value={profileForm.core_beliefs}
-              onChange={(e) =>
-                setProfileForm({ ...profileForm, core_beliefs: e.target.value })
-              }
-              placeholder="예: 측정할 수 없는 개선은 믿지 않는다 / 완벽한 설계보다 빠른 가설 검증과 투명한 회고를 중시한다"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold text-slate-700">희망 직무</span>
+              <input
+                type="text"
+                value={profileForm.target_roles}
+                onChange={(e) =>
+                  setProfileForm({ ...profileForm, target_roles: e.target.value })
+                }
+                placeholder="예: AI 에이전트 백엔드, 서비스 기획 PM"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+            </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs font-semibold text-slate-700">희망 직무</span>
-            <input
-              type="text"
-              value={profileForm.target_roles}
-              onChange={(e) =>
-                setProfileForm({ ...profileForm, target_roles: e.target.value })
-              }
-              placeholder="예: AI 에이전트 백엔드, 서비스 기획 PM, 데이터 프로덕트 매니저"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-xs font-semibold text-slate-700">
-              선호 문체 (De-AI 기준)
-            </span>
-            <input
-              type="text"
-              value={profileForm.preferred_tone}
-              onChange={(e) =>
-                setProfileForm({ ...profileForm, preferred_tone: e.target.value })
-              }
-              placeholder="예: 과장 없이 담백하게, 실제 근거와 행동 중심으로 또렷하게 쓰는 스타일"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold text-slate-700">선호 문체</span>
+              <input
+                type="text"
+                value={profileForm.preferred_tone}
+                onChange={(e) =>
+                  setProfileForm({ ...profileForm, preferred_tone: e.target.value })
+                }
+                placeholder="예: 과장 없이 담백하게, 실제 근거와 행동 중심"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
         </div>
 
         <div className="flex justify-end">
@@ -1133,7 +1083,7 @@ export default function IdentityBeliefsPage({
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
-            <span>{savingProfile ? "저장 중..." : "프로필 저장 & 벡터 동기화"}</span>
+            <span>{savingProfile ? "저장 중..." : "프로필 저장"}</span>
           </button>
         </div>
       </form>
@@ -1141,15 +1091,10 @@ export default function IdentityBeliefsPage({
       {/* SECTION 3: Quotes, Lectures & Daily Thought Reflection Journal */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Quote className="w-5 h-5 text-indigo-600" />
-              <span>일상 회고 저널 ({filteredNotes.length})</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              평소 생각과 책·강의 구절을 가볍게 기록해 두고, 자소서에 쓸 핵심 원칙은 <strong>[신념 카드로 승격]</strong>하거나 자소서 공방에서 직접 선택할 수 있습니다.
-            </p>
-          </div>
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <Quote className="w-5 h-5 text-indigo-600" />
+            <span>일상 회고 저널 · {filteredNotes.length}</span>
+          </h3>
 
           <button
             type="button"

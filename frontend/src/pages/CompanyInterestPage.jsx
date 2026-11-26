@@ -138,20 +138,13 @@ export default function CompanyInterestPage() {
   const researchSources = alignmentMap.sources || [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">4. 기업 리서치</h2>
-        <p className="text-sm text-slate-600 mt-1">
-          4관점 멀티소스 리서치(웹·Google News RSS·채용공고 JD·참고 URL)로 목표 기업을 심층 분석해 나의 신념·포트폴리오와 3각 매칭합니다. 리서치 결과는 자소서 공방과 새 프로젝트 코파일럿에 자동 연동됩니다.
-        </p>
       </div>
 
       {/* Section 1: Company Research */}
       <section className="space-y-4">
-        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-          <Building2 className="w-4 h-4" />
-          <span>목표 기업 멀티소스 리서치 &amp; 신념 3각 매칭</span>
-        </h3>
 
         <form
           onSubmit={handleResearchCompany}

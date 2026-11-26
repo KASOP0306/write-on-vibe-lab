@@ -651,17 +651,8 @@ export default function ExperienceMinerPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 mb-1">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>CORE ENGINE · LangGraph Conversational Active Interviewer v3.0 × 21-Checkpoint Evaluator (v2.1)</span>
-          </div>
-          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (멀티턴 대화형 AI 인터뷰어)</h2>
-          <p className="text-sm text-slate-600 mt-1">
-            GitHub PR·커밋 Diff나 메모를 바탕으로 <strong>멀티턴 채팅</strong>을 진행합니다. 답변뿐 아니라 질문 교체·초점 변경·부족한 점 상담도 자유롭게 요청하세요.
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴</h2>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -898,10 +889,6 @@ export default function ExperienceMinerPage({
                   onSubmit={handleCreateManual}
                   className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3.5 shadow-sm text-xs"
                 >
-                  <div className="text-xs text-slate-600">
-                    경험을 직접 작성해 등록하면 <strong>21지표 엄격 하이브리드 평가(v2.1)</strong>로 즉시 채점되어 저장됩니다. 저장 후 언제든 수정·재채점할 수 있습니다.
-                  </div>
-
                   {manualError && (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-rose-800">
                       {manualError}

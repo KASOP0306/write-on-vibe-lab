@@ -135,24 +135,16 @@ export default function PortfolioDiagnosisPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div
           onClick={() => setExpanded((v) => !v)}
-          className="cursor-pointer select-none min-w-0 flex-1"
+          className="cursor-pointer select-none min-w-0 flex-1 flex flex-wrap items-center gap-2"
         >
-          <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
-            <Award className="w-4 h-4" />
-            <span>STAR-L 누적 포트폴리오 마스터리 ({mastery?.rubric_version || "v2.1"})</span>
-            {mastery && !expanded && (
-              <span className="ml-1 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800">
-                {level.code} {level.name} · {totalXp} / {maxTotalXp} XP
-              </span>
-            )}
-          </div>
-          <h3 className="text-lg font-bold text-slate-900 mt-0.5">
-            대표 4개 프로젝트 누적 XP (프로젝트당 최대 {projectCap} XP · 만점 {maxTotalXp.toLocaleString()} XP)
+          <Award className="w-5 h-5 text-indigo-600 shrink-0" />
+          <h3 className="text-base font-bold text-slate-900">
+            STAR-L 마스터리
           </h3>
-          {expanded && (
-            <p className="text-xs text-slate-500 mt-0.5">
-              21지표 엄격 하이브리드 채점(v2.1) + 프로젝트당 상위 4개 경험 체감 합산(100%·80%·50%·20%)으로 거품 없는 진짜 실력을 측정합니다.
-            </p>
+          {mastery && !expanded && (
+            <span className="rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800">
+              {level.code} {level.name} · {totalXp} / {maxTotalXp} XP
+            </span>
           )}
         </div>
 

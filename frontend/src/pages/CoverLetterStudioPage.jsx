@@ -478,16 +478,9 @@ export default function CoverLetterStudioPage({
     Boolean((profile?.career_vision || "").trim());
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">
-          5. 자소서 공방 v2 (문항 심층 분석 · 소재·신념 추천 · 3축 융합)
-        </h2>
-        <p className="text-sm text-slate-600 mt-1">
-          <strong>1단계</strong>로 기업 문항의 숨은 평가 의도를 해부해 최적의{" "}
-          <strong>프로젝트 · STAR-L · 핵심 신념 카드 · 회고 노트</strong>를 추천받고,{" "}
-          <strong>2단계</strong>로 선택한 소재 × 나의 신념 × 기업 가치를 초안·비평·퇴고·De-AI 전 과정에 1급 근거로 유지하며 작성합니다.
-        </p>
+        <h2 className="text-2xl font-bold text-slate-900">5. 자소서 공방</h2>
       </div>
 
       {/* Connected Personal Beliefs Live Status Banner */}
@@ -665,14 +658,9 @@ export default function CoverLetterStudioPage({
       {/* STEP 2: Question Deconstruction + Project/STAR/Belief Pickers */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
-          <div>
-            <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-700">
-              <FolderKanban className="w-4 h-4" />
-              <span>STEP 2. 문항 의도 확인 &amp; 활용할 프로젝트 · STAR-L · 신념 선택</span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              선택한 <strong>프로젝트 원문 · STAR 경험 · 신념 카드 · 회고 노트</strong>가 1급 소재로 DB에서 직접 주입되며 퇴고(Refiner)까지 끝까지 보존됩니다.
-            </p>
+          <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-700">
+            <FolderKanban className="w-4 h-4" />
+            <span>STEP 2. 소재 및 신념 선택</span>
           </div>
           <span className="rounded-full bg-indigo-50 border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700">
             프로젝트 {selectedProjectIds.length} · STAR {selectedExperienceIds.length} · 신념 {selectedBeliefIds.length + selectedBeliefNoteIds.length}
@@ -1274,20 +1262,15 @@ export default function CoverLetterStudioPage({
       {/* Saved Cover Letter Archive */}
       <section className="rounded-2xl border border-indigo-200/80 bg-white p-6 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Archive className="w-4 h-4 text-indigo-600" />
-              <span>생성 자소서 보관함 ({archivedLetters.length})</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              생성된 자소서는 자동으로 보관함에 저장됩니다. 언제든 불러와 다듬고 수정본이나 새 버전으로 보관할 수 있습니다.
-            </p>
-          </div>
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Archive className="w-4 h-4 text-indigo-600" />
+            <span>자소서 보관함 · {archivedLetters.length}</span>
+          </h3>
           <input
             type="text"
             value={archiveFilter}
             onChange={(e) => setArchiveFilter(e.target.value)}
-            placeholder="기업명·직무·문항·메모 검색..."
+            placeholder="기업명·직무·문항 검색..."
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs w-60"
           />
         </div>
@@ -1411,22 +1394,17 @@ export default function CoverLetterStudioPage({
       {/* User's Own Jasoseo Reference Manager */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <BookOpen className="w-4 h-4" />
-              <span>내 합격 자소서 레퍼런스 ({samples.length})</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              직접 수집한 합격 자소서는 Git에 올라가지 않고 로컬/EC2 DB(doc_type=jasoseo_sample)에만 저장되어 전개 구조·설득 논리 참고용으로 사용됩니다.
-            </p>
-          </div>
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <BookOpen className="w-4 h-4" />
+            <span>자소서 레퍼런스 · {samples.length}</span>
+          </h3>
           <button
             type="button"
             onClick={() => setShowSampleForm((v) => !v)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>레퍼런스 직접 등록</span>
+            <span>레퍼런스 등록</span>
           </button>
         </div>
 
