@@ -604,6 +604,8 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                 "extra_instructions": payload.extra_instructions.strip(),
                 "selected_project_ids": list(payload.selected_project_ids or []),
                 "selected_experience_ids": list(payload.selected_experience_ids or []),
+                "selected_belief_ids": list(payload.selected_belief_ids or []),
+                "selected_belief_note_ids": list(payload.selected_belief_note_ids or []),
                 "question_analysis": dict(payload.question_analysis or {}),
                 "fusion_angle": payload.fusion_angle.strip(),
             }
@@ -611,7 +613,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
 
             yield sse_node_start(
                 "multi_source_retriever",
-                "선택한 프로젝트·STAR 원문과 신념·기업 리서치·레퍼런스를 격리 로드하는 중...",
+                "선택한 프로젝트·STAR 원문과 핵심 신념 카드·회고·기업 리서치를 1급 소재로 로드하는 중...",
             )
 
             async for chunk in graph.astream(initial_state, stream_mode="updates"):
@@ -623,6 +625,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                             "multi_source_retriever",
                             {
                                 "selected_project_count": len(update.get("used_projects") or []),
+                                "selected_belief_count": len(update.get("used_beliefs") or []),
                                 "experience_count": len(update.get("experience_docs") or []),
                                 "identity_count": len(update.get("identity_docs") or []),
                                 "company_count": len(update.get("company_docs") or []),
@@ -699,6 +702,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                             revision_count=int(accumulated.get("revision_count") or 0),
                             used_projects=list(accumulated.get("used_projects") or []),
                             used_experiences=list(accumulated.get("used_experiences") or []),
+                            used_beliefs=list(accumulated.get("used_beliefs") or []),
                             diff_summary=list(accumulated.get("humanizer_changes") or []),
                             checkpoint_checks=list(accumulated.get("checkpoint_checks") or []),
                             memo="",
@@ -722,6 +726,7 @@ async def generate_cover_letter(payload: CoverLetterGenerateRequest):
                     "checkpoint_checks": accumulated.get("checkpoint_checks", []),
                     "used_projects": accumulated.get("used_projects", []),
                     "used_experiences": accumulated.get("used_experiences", []),
+                    "used_beliefs": accumulated.get("used_beliefs", []),
                     "question_analysis": accumulated.get("question_analysis", {}),
                 }
             )
@@ -768,6 +773,7 @@ async def create_cover_letter(
         revision_count=payload.revision_count,
         used_projects=list(payload.used_projects),
         used_experiences=list(payload.used_experiences),
+        used_beliefs=list(payload.used_beliefs),
         diff_summary=list(payload.diff_summary),
         checkpoint_checks=list(payload.checkpoint_checks),
         memo=payload.memo.strip(),

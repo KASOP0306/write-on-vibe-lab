@@ -14,6 +14,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [projects, setProjects] = useState([]);
   const [experiences, setExperiences] = useState([]);
+  const [beliefPillars, setBeliefPillars] = useState([]);
   const [beliefNotes, setBeliefNotes] = useState([]);
   const [copilotPrefill, setCopilotPrefill] = useState("");
   const [minerPrefill, setMinerPrefill] = useState(null);
@@ -21,15 +22,17 @@ export default function App() {
 
   const refreshSharedData = async () => {
     try {
-      const [prof, projs, exps, notes] = await Promise.all([
+      const [prof, projs, exps, pillars, notes] = await Promise.all([
         api.getProfile(),
         api.listProjects(),
         api.listExperiences(),
+        api.listBeliefPillars().catch(() => []),
         api.listBeliefNotes().catch(() => []),
       ]);
       setProfile(prof);
       setProjects(projs || []);
       setExperiences(exps || []);
+      setBeliefPillars(pillars || []);
       setBeliefNotes(notes || []);
       setGlobalError("");
     } catch (err) {
@@ -72,7 +75,7 @@ export default function App() {
         profile={profile}
         projectCount={projects.length}
         experienceCount={experiences.length}
-        beliefNoteCount={beliefNotes.length}
+        beliefNoteCount={beliefPillars.length + beliefNotes.length}
       />
 
       <main className="flex-1 min-w-0 p-6 lg:p-8 max-w-6xl mx-auto w-full">
@@ -92,8 +95,12 @@ export default function App() {
         {activeTab === "beliefs" && (
           <IdentityBeliefsPage
             profile={profile}
+            pillars={beliefPillars}
             notes={beliefNotes}
+            projects={projects}
+            experiences={experiences}
             onRefresh={refreshSharedData}
+            onJumpToCopilot={handleJumpToCopilot}
           />
         )}
         {activeTab === "portfolio" && (
@@ -117,10 +124,18 @@ export default function App() {
         {activeTab === "company" && (
           <CompanyInterestPage onRefresh={refreshSharedData} />
         )}
-        {activeTab === "cover-letter" && <CoverLetterStudioPage />}
+        {activeTab === "cover-letter" && (
+          <CoverLetterStudioPage
+            profile={profile}
+            beliefPillars={beliefPillars}
+            beliefNotes={beliefNotes}
+            onJumpToBeliefs={() => setActiveTab("beliefs")}
+          />
+        )}
         {activeTab === "copilot" && (
           <ProjectCopilotPage
             projects={projects}
+            beliefPillars={beliefPillars}
             initialTopic={copilotPrefill}
             onConsumeInitialTopic={() => setCopilotPrefill("")}
             onProjectCreated={handleBlueprintCreated}

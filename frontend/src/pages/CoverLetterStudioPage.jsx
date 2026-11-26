@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Archive,
+  ArrowUpRight,
+  BookHeart,
   BookOpen,
   Check,
   CheckCircle2,
@@ -11,7 +13,9 @@ import {
   Layers,
   Loader2,
   Plus,
+  Quote,
   Save,
+  ShieldCheck,
   Sparkles,
   Target,
   Trash2,
@@ -21,10 +25,25 @@ import { api } from "../api/client.js";
 import StepIndicator from "../components/StepIndicator.jsx";
 import { TRACK_SHORT_LABELS, getTrackBadgeClass } from "../utils/projectTracks.js";
 
-export default function CoverLetterStudioPage() {
+const PILLAR_CAT_LABELS = {
+  work_principle: "일하는 원칙",
+  problem_lens: "문제 정의",
+  collaboration: "협업·소통",
+  career_direction: "커리어 방향",
+};
+
+export default function CoverLetterStudioPage({
+  profile: propProfile = null,
+  beliefPillars: propPillars = [],
+  beliefNotes: propNotes = [],
+  onJumpToBeliefs = null,
+}) {
   const [companies, setCompanies] = useState([]);
   const [projects, setProjects] = useState([]);
   const [experiences, setExperiences] = useState([]);
+  const [profile, setProfile] = useState(propProfile);
+  const [beliefPillars, setBeliefPillars] = useState(propPillars);
+  const [beliefNotes, setBeliefNotes] = useState(propNotes);
 
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [companyName, setCompanyName] = useState("");
@@ -39,6 +58,8 @@ export default function CoverLetterStudioPage() {
   const [recommendation, setRecommendation] = useState(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
   const [selectedExperienceIds, setSelectedExperienceIds] = useState([]);
+  const [selectedBeliefIds, setSelectedBeliefIds] = useState([]);
+  const [selectedBeliefNoteIds, setSelectedBeliefNoteIds] = useState([]);
   const [fusionAngle, setFusionAngle] = useState("");
 
   // Step 2: Cover Letter Generation SSE State + Archive Editor
@@ -52,7 +73,7 @@ export default function CoverLetterStudioPage() {
   const [archiveStatus, setArchiveStatus] = useState("");
   const [copied, setCopied] = useState(false);
 
-  // Saved Cover Letter Archive (QA #2)
+  // Saved Cover Letter Archive
   const [archivedLetters, setArchivedLetters] = useState([]);
   const [archiveFilter, setArchiveFilter] = useState("");
   const [copiedArchiveId, setCopiedArchiveId] = useState(null);
@@ -68,6 +89,18 @@ export default function CoverLetterStudioPage() {
   });
   const [savingSample, setSavingSample] = useState(false);
 
+  useEffect(() => {
+    if (propProfile) setProfile(propProfile);
+  }, [propProfile]);
+
+  useEffect(() => {
+    if (propPillars?.length) setBeliefPillars(propPillars);
+  }, [propPillars]);
+
+  useEffect(() => {
+    if (propNotes?.length) setBeliefNotes(propNotes);
+  }, [propNotes]);
+
   const loadArchive = async () => {
     try {
       const list = await api.listCoverLetters();
@@ -79,18 +112,24 @@ export default function CoverLetterStudioPage() {
 
   const loadInitial = async () => {
     try {
-      const [comps, smps, projs, exps, savedCls] = await Promise.all([
+      const [comps, smps, projs, exps, savedCls, prof, pillars, notes] = await Promise.all([
         api.listCompanies(),
         api.listSamples(),
         api.listProjects(),
         api.listExperiences(),
         api.listCoverLetters().catch(() => []),
+        api.getProfile().catch(() => null),
+        api.listBeliefPillars().catch(() => []),
+        api.listBeliefNotes().catch(() => []),
       ]);
       setCompanies(comps || []);
       setSamples(smps || []);
       setProjects(projs || []);
       setExperiences(exps || []);
       setArchivedLetters(savedCls || []);
+      if (prof) setProfile(prof);
+      setBeliefPillars(pillars || []);
+      setBeliefNotes(notes || []);
     } catch (err) {
       console.warn(err);
     }
@@ -121,7 +160,19 @@ export default function CoverLetterStudioPage() {
     );
   };
 
-  // Step 1: Analyze company's question & recommend 1~2 best projects + STARs
+  const toggleBeliefId = (bid) => {
+    setSelectedBeliefIds((prev) =>
+      prev.includes(bid) ? prev.filter((id) => id !== bid) : [...prev, bid]
+    );
+  };
+
+  const toggleBeliefNoteId = (nid) => {
+    setSelectedBeliefNoteIds((prev) =>
+      prev.includes(nid) ? prev.filter((id) => id !== nid) : [...prev, nid]
+    );
+  };
+
+  // Step 1: Analyze company's question & recommend best projects + STARs + Belief Pillars + Notes
   const handleRecommend = async () => {
     if (!companyName.trim() || !question.trim() || recommending) return;
     setRecommending(true);
@@ -136,7 +187,6 @@ export default function CoverLetterStudioPage() {
       });
       setRecommendation(data);
 
-      // Auto-select top recommended 1~2 primary projects
       const primaries = (data.recommended_projects || []).filter((p) => p.is_primary);
       const topIds = (primaries.length > 0 ? primaries : (data.recommended_projects || []).slice(0, 2)).map(
         (p) => p.project_id
@@ -148,11 +198,24 @@ export default function CoverLetterStudioPage() {
         .map((e) => e.experience_id);
       setSelectedExperienceIds(recExpIds);
 
+      const recBeliefIds = (data.recommended_belief_pillars || [])
+        .slice(0, 2)
+        .map((b) => b.belief_id);
+      setSelectedBeliefIds(recBeliefIds);
+
+      const recNoteIds = (data.recommended_belief_notes || [])
+        .slice(0, 2)
+        .map((n) => n.note_id);
+      setSelectedBeliefNoteIds(recNoteIds);
+
       const primaryAngles = (primaries.length > 0 ? primaries : (data.recommended_projects || []).slice(0, 2))
         .map((p) => `[${p.project_name}] ${p.fusion_angle}`)
         .join("\n");
+      const beliefBridges = (data.recommended_belief_pillars || [])
+        .map((b) => `[신념: ${b.title}] ${b.belief_to_company_bridge}`)
+        .join("\n");
       setFusionAngle(
-        [data.overall_strategy, primaryAngles].filter(Boolean).join("\n")
+        [data.overall_strategy, beliefBridges, primaryAngles].filter(Boolean).join("\n")
       );
     } catch (err) {
       setRecommendError(err.message);
@@ -182,6 +245,8 @@ export default function CoverLetterStudioPage() {
           extra_instructions: extraInstructions.trim(),
           selected_project_ids: selectedProjectIds,
           selected_experience_ids: selectedExperienceIds,
+          selected_belief_ids: selectedBeliefIds,
+          selected_belief_note_ids: selectedBeliefNoteIds,
           question_analysis: recommendation?.question_analysis || {},
           fusion_angle: fusionAngle.trim(),
         },
@@ -201,11 +266,10 @@ export default function CoverLetterStudioPage() {
                     badge = `${ev.data.score}점`;
                   } else if (ev.data?.char_count) {
                     badge = `${ev.data.char_count}자`;
-                  } else if (
-                    ev.node === "multi_source_retriever" &&
-                    ev.data?.selected_project_count
-                  ) {
-                    badge = `선택 프로젝트 ${ev.data.selected_project_count}개`;
+                  } else if (ev.node === "multi_source_retriever") {
+                    const pCnt = ev.data?.selected_project_count || 0;
+                    const bCnt = ev.data?.selected_belief_count || 0;
+                    badge = `프로젝트 ${pCnt} · 신념 ${bCnt}`;
                   }
                   next[i] = {
                     ...next[i],
@@ -285,6 +349,7 @@ export default function CoverLetterStudioPage() {
           revision_count: Number(result?.revision_count || 0),
           used_projects: result?.used_projects || [],
           used_experiences: result?.used_experiences || [],
+          used_beliefs: result?.used_beliefs || [],
           diff_summary: result?.diff_summary || [],
           checkpoint_checks: result?.checkpoint_checks || [],
           memo: archiveMemo.trim(),
@@ -316,6 +381,7 @@ export default function CoverLetterStudioPage() {
       revision_count: cl.revision_count || 0,
       used_projects: cl.used_projects || [],
       used_experiences: cl.used_experiences || [],
+      used_beliefs: cl.used_beliefs || [],
       diff_summary: cl.diff_summary || [],
       checkpoint_checks: cl.checkpoint_checks || [],
     });
@@ -384,6 +450,13 @@ export default function CoverLetterStudioPage() {
   const recExpById = Object.fromEntries(
     (recommendation?.recommended_experiences || []).map((e) => [e.experience_id, e])
   );
+  const recBeliefById = Object.fromEntries(
+    (recommendation?.recommended_belief_pillars || []).map((b) => [b.belief_id, b])
+  );
+  const recNoteById = Object.fromEntries(
+    (recommendation?.recommended_belief_notes || []).map((n) => [n.note_id, n])
+  );
+
   const qa = recommendation?.question_analysis || null;
   const finalLenWithSpace = (editableText || result?.final_text || "").length;
   const finalLenNoSpace = (editableText || result?.final_text || "").replace(/\s/g, "").length;
@@ -398,29 +471,77 @@ export default function CoverLetterStudioPage() {
     );
   });
 
+  const hasAnyBelief =
+    beliefPillars.length > 0 ||
+    beliefNotes.length > 0 ||
+    Boolean((profile?.core_beliefs || "").trim()) ||
+    Boolean((profile?.career_vision || "").trim());
+
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">
-          5. 자소서 공방 v2 (문항 심층 분석 · 소재 추천 · 3축 융합)
+          5. 자소서 공방 v2 (문항 심층 분석 · 소재·신념 추천 · 3축 융합)
         </h2>
         <p className="text-sm text-slate-600 mt-1">
-          <strong>1단계</strong>로 기업이 제시한 문항의 숨은 평가 의도를 해부해 내 포트폴리오 중 최적{" "}
-          <strong>1~2개 프로젝트 &amp; STAR-L</strong>을 추천받고,{" "}
-          <strong>2단계</strong>로 선택한 소재 × 기업 신념 × 나의 신념을 융합해 초안·비평·퇴고·De-AI까지 작성합니다.
+          <strong>1단계</strong>로 기업 문항의 숨은 평가 의도를 해부해 최적의{" "}
+          <strong>프로젝트 · STAR-L · 핵심 신념 카드 · 회고 노트</strong>를 추천받고,{" "}
+          <strong>2단계</strong>로 선택한 소재 × 나의 신념 × 기업 가치를 초안·비평·퇴고·De-AI 전 과정에 1급 근거로 유지하며 작성합니다.
         </p>
+      </div>
+
+      {/* Connected Personal Beliefs Live Status Banner */}
+      <div
+        className={`rounded-2xl border px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+          hasAnyBelief
+            ? "border-violet-200 bg-violet-50/50 text-violet-950"
+            : "border-amber-200 bg-amber-50/70 text-amber-950"
+        }`}
+      >
+        <div className="flex items-start gap-2.5 min-w-0">
+          <BookHeart className={`w-4 h-4 mt-0.5 shrink-0 ${hasAnyBelief ? "text-violet-600" : "text-amber-600"}`} />
+          <div className="space-y-0.5 min-w-0">
+            <div className="font-bold flex flex-wrap items-center gap-2">
+              <span>연동된 나의 신념 현황</span>
+              <span className="rounded-full bg-white border border-violet-200 px-2 py-0.5 text-[10px] font-bold text-violet-800">
+                신념 카드 {beliefPillars.length}개
+              </span>
+              <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                회고 저널 {beliefNotes.length}건
+              </span>
+            </div>
+            <p className="text-[11px] opacity-85 line-clamp-1">
+              {hasAnyBelief
+                ? profile?.career_vision ||
+                  beliefPillars[0]?.title ||
+                  profile?.core_beliefs ||
+                  "등록된 신념 카드와 회고 노트가 1단계 추천과 2단계 생성·퇴고 전 과정에 자동 반영됩니다."
+                : "아직 등록된 신념 카드나 커리어 비전이 없습니다. '1. 나의 신념'에서 포트폴리오 기반 신념을 먼저 발굴하면 자소서 차별화가 훨씬 강해집니다."}
+            </p>
+          </div>
+        </div>
+        {onJumpToBeliefs && (
+          <button
+            type="button"
+            onClick={onJumpToBeliefs}
+            className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-50 shrink-0"
+          >
+            <span>1. 나의 신념 편집·발굴</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Step 1 Input Card + Live Progress */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-indigo-700">
               <Target className="w-4 h-4" />
               <span>STEP 1. 기업 정보 &amp; 기업 제공 문항 입력</span>
             </span>
             <span className="text-[11px] text-slate-400">
-              등록된 프로젝트 {projects.length}개 · STAR {experiences.length}건 보유
+              프로젝트 {projects.length} · STAR {experiences.length} · 신념 카드 {beliefPillars.length}
             </span>
           </div>
 
@@ -518,8 +639,8 @@ export default function CoverLetterStudioPage() {
               )}
               <span>
                 {recommending
-                  ? "문항 해부 & 프로젝트 매칭 중..."
-                  : "1단계: 문항 심층 분석 & 추천 프로젝트 찾기"}
+                  ? "문항 해부 & 프로젝트·신념 매칭 중..."
+                  : "1단계: 문항 심층 분석 & 추천 프로젝트·신념 찾기"}
               </span>
             </button>
 
@@ -541,20 +662,20 @@ export default function CoverLetterStudioPage() {
         </div>
       </div>
 
-      {/* STEP 2: Question Deconstruction + Project/STAR Recommendation & Manual Picker */}
+      {/* STEP 2: Question Deconstruction + Project/STAR/Belief Pickers */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 space-y-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
             <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-700">
               <FolderKanban className="w-4 h-4" />
-              <span>STEP 2. 문항 의도 확인 &amp; 활용할 포트폴리오·STAR-L 선택</span>
+              <span>STEP 2. 문항 의도 확인 &amp; 활용할 프로젝트 · STAR-L · 신념 선택</span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              선택한 프로젝트의 <strong>전체 섹션 원문</strong>과 <strong>STAR 경험</strong>이 자소서 1급 사실 근거로 직접 주입됩니다.
+              선택한 <strong>프로젝트 원문 · STAR 경험 · 신념 카드 · 회고 노트</strong>가 1급 소재로 DB에서 직접 주입되며 퇴고(Refiner)까지 끝까지 보존됩니다.
             </p>
           </div>
           <span className="rounded-full bg-indigo-50 border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700">
-            선택됨: 프로젝트 {selectedProjectIds.length}개 · STAR {selectedExperienceIds.length}건
+            프로젝트 {selectedProjectIds.length} · STAR {selectedExperienceIds.length} · 신념 {selectedBeliefIds.length + selectedBeliefNoteIds.length}
           </span>
         </div>
 
@@ -636,8 +757,144 @@ export default function CoverLetterStudioPage() {
           </div>
         )}
 
-        {/* Project Material Selector (shows AI recommendations first + all registered projects) */}
+        {/* Belief Pillar & Belief Note Selector (NEW 1st-class axis!) */}
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-violet-600" />
+              <span>반영할 나의 핵심 신념 카드 선택 (1~2개 권장)</span>
+            </h4>
+            {beliefPillars.length === 0 && onJumpToBeliefs && (
+              <button
+                type="button"
+                onClick={onJumpToBeliefs}
+                className="text-[11px] font-semibold text-violet-700 hover:underline"
+              >
+                + 1번 탭에서 신념 카드 자동 발굴하기 →
+              </button>
+            )}
+          </div>
+
+          {beliefPillars.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 p-4 text-xs text-slate-600">
+              등록된 핵심 신념 카드가 없습니다. 현재 프로필 요약(
+              {profile?.core_beliefs ? "등록됨" : "미등록"})이 기본으로 사용되며,{" "}
+              <strong>1. 나의 신념</strong>에서 신념 카드를 만들면 문항별로 최적 신념을 골라 3단 융합할 수 있습니다.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[...beliefPillars]
+                .sort((a, b) => (recBeliefById[b.id] ? 1 : 0) - (recBeliefById[a.id] ? 1 : 0))
+                .map((pillar) => {
+                  const rec = recBeliefById[pillar.id];
+                  const checked = selectedBeliefIds.includes(pillar.id);
+                  return (
+                    <label
+                      key={pillar.id}
+                      className={`block rounded-xl border p-3.5 cursor-pointer transition-all space-y-1.5 text-xs ${
+                        checked
+                          ? "border-violet-500 bg-violet-50/50 ring-1 ring-violet-500/30"
+                          : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleBeliefId(pillar.id)}
+                          className="mt-0.5 accent-violet-600"
+                        />
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-800">
+                              {PILLAR_CAT_LABELS[pillar.category] || pillar.category}
+                            </span>
+                            {rec && (
+                              <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                                AI 문항 추천
+                              </span>
+                            )}
+                            {pillar.proof_status === "proven" && (
+                              <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                경험 증명됨
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-bold text-slate-900 leading-snug">
+                            “{pillar.title}”
+                          </div>
+                          {pillar.tradeoff_rule && (
+                            <p className="text-[11px] text-slate-600 line-clamp-2">
+                              기준: {pillar.tradeoff_rule}
+                            </p>
+                          )}
+                          {rec && (
+                            <div className="rounded-lg bg-white/90 border border-violet-100 px-2.5 py-1.5 text-[11px] text-violet-900 space-y-0.5">
+                              <div><strong>추천 사유:</strong> {rec.fit_reason}</div>
+                              {rec.belief_to_company_bridge && (
+                                <div><strong>기업·행동 연결:</strong> {rec.belief_to_company_bridge}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* Optional Belief Notes Picker */}
+          {beliefNotes.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Quote className="w-3.5 h-3.5 text-amber-600" />
+                <span>함께 녹일 일상 회고 · 독서/강의 구절 노트 (선택)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {beliefNotes.slice(0, 9).map((note) => {
+                  const rec = recNoteById[note.id];
+                  const checked = selectedBeliefNoteIds.includes(note.id);
+                  return (
+                    <label
+                      key={note.id}
+                      className={`flex items-start gap-2 rounded-xl border p-2.5 text-xs cursor-pointer ${
+                        checked
+                          ? "border-amber-500 bg-amber-50/50"
+                          : "border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleBeliefNoteId(note.id)}
+                        className="mt-0.5 accent-amber-600"
+                      />
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-900 truncate">
+                            {note.source_title || "일상 회고 노트"}
+                          </span>
+                          {rec && (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-800 shrink-0">
+                              AI 추천
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-600 line-clamp-2">
+                          {rec?.fit_reason || note.quote_text || note.my_reflection}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Project Material Selector */}
+        <div className="space-y-3 pt-2 border-t border-slate-100">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-indigo-600" />
@@ -652,7 +909,7 @@ export default function CoverLetterStudioPage() {
 
           {projects.length === 0 ? (
             <p className="text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 p-4 text-center">
-              등록된 프로젝트가 없습니다. &apos;2. 포트폴리오 &amp; 캐릭터&apos;에서 프로젝트를 먼저 등록하면 여기에서 바로 선택해 자소서에 활용할 수 있습니다.
+              등록된 프로젝트가 없습니다. &apos;2. 포트폴리오&apos;에서 프로젝트를 먼저 등록하면 여기에서 바로 선택해 자소서에 활용할 수 있습니다.
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -836,8 +1093,8 @@ export default function CoverLetterStudioPage() {
             )}
             <span>
               {running
-                ? "선택 소재 기반 초안 · 비평 · 퇴고 · De-AI 실행 중..."
-                : `2단계: 선택 소재(${selectedProjectIds.length}개 프로젝트)로 자소서 생성`}
+                ? "선택 소재·신념 기반 초안 · 비평 · 퇴고 · De-AI 실행 중..."
+                : `2단계: 선택 소재(프로젝트 ${selectedProjectIds.length} · 신념 ${selectedBeliefIds.length + selectedBeliefNoteIds.length})로 자소서 생성`}
             </span>
           </button>
         </div>
@@ -878,11 +1135,24 @@ export default function CoverLetterStudioPage() {
               </button>
             </div>
 
-            {/* Used Projects & STARs Transparency Strip */}
+            {/* Used Projects, STARs & Beliefs Transparency Strip */}
             {((result.used_projects || []).length > 0 ||
-              (result.used_experiences || []).length > 0) && (
+              (result.used_experiences || []).length > 0 ||
+              (result.used_beliefs || []).length > 0) && (
               <div className="flex flex-wrap items-center gap-1.5 text-[11px] pt-1">
                 <span className="font-semibold text-slate-500">반영된 1급 소재:</span>
+                {(result.used_beliefs || []).map((b, bIdx) => (
+                  <span
+                    key={`ub-${b.kind}-${b.id}-${bIdx}`}
+                    className={`rounded-full border px-2.5 py-0.5 font-semibold ${
+                      b.kind === "pillar"
+                        ? "bg-violet-50 border-violet-200 text-violet-800"
+                        : "bg-amber-50 border-amber-200 text-amber-800"
+                    }`}
+                  >
+                    {b.kind === "pillar" ? "신념" : "회고"}: {b.title}
+                  </span>
+                ))}
                 {(result.used_projects || []).map((p) => (
                   <span
                     key={`up-${p.id}`}
@@ -952,12 +1222,12 @@ export default function CoverLetterStudioPage() {
           </div>
 
           <div className="space-y-4">
-            {/* Question Checkpoint Fulfillment Card */}
+            {/* Question & Belief Checkpoint Fulfillment Card */}
             {(result.checkpoint_checks || []).length > 0 && (
               <div className="rounded-2xl border border-emerald-200 bg-white p-5 space-y-3 shadow-sm">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>기업 문항 체크포인트 검증</span>
+                  <span>문항 · 신념 연결 체크포인트 검증</span>
                 </h3>
                 <ul className="space-y-1.5 text-xs text-slate-700">
                   {result.checkpoint_checks.map((chk, idx) => (
@@ -1001,7 +1271,7 @@ export default function CoverLetterStudioPage() {
         </div>
       )}
 
-      {/* Saved Cover Letter Archive (QA #2) */}
+      {/* Saved Cover Letter Archive */}
       <section className="rounded-2xl border border-indigo-200/80 bg-white p-6 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1069,6 +1339,19 @@ export default function CoverLetterStudioPage() {
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
+
+                  {(cl.used_beliefs || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {cl.used_beliefs.slice(0, 3).map((b, bi) => (
+                        <span
+                          key={bi}
+                          className="rounded bg-violet-50 border border-violet-200 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 truncate max-w-[200px]"
+                        >
+                          신념: {b.title}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {cl.memo && (
                     <div className="rounded-md bg-amber-50 border border-amber-200/70 px-2 py-1 text-[11px] text-amber-900">

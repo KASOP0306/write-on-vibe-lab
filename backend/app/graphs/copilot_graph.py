@@ -14,6 +14,7 @@ from app.core.bedrock import ainvoke_structured, get_fast_llm, get_smart_llm
 from app.core.database import (
     ApplicationLog,
     BeliefNote,
+    BeliefPillar,
     CompanyProfile,
     Experience,
     Project,
@@ -21,48 +22,12 @@ from app.core.database import (
     get_session_factory,
 )
 from app.core.project_templates import normalize_project_types
-from app.core.star_rubric import PORTFOLIO_AXES, PORTFOLIO_AXIS_ORDER
+from app.core.star_rubric import compute_cumulative_portfolio_xp
 from app.core.vector_store import DocType, search_documents
+from app.tools.copilot_tools import format_star_mastery_summary
 from app.tools.web_search import search_and_extract
 
 logger = logging.getLogger(__name__)
-
-
-def _format_character_diagnosis(diag: dict[str, Any] | None) -> str:
-    if not diag or not diag.get("character_archetype"):
-        return "(아직 포트폴리오 캐릭터 진단 미실행 — 보유 프로젝트와 신념을 바탕으로 보완점을 추론)"
-
-    axes = diag.get("axes") or {}
-    axis_lines = []
-    for ax_id in PORTFOLIO_AXIS_ORDER:
-        meta = PORTFOLIO_AXES[ax_id]
-        entry = axes.get(ax_id) or {}
-        axis_lines.append(
-            f"  - {meta['label']} ({'외적' if meta['domain']=='external' else '내적'}): "
-            f"{entry.get('score', 0)}점 [{entry.get('evidence_status', 'unknown')}] — {entry.get('improvement_tip', '')}"
-        )
-
-    weak_lines = [
-        f"  - [약점] {w.get('title', '')}: {w.get('detail', '')}"
-        for w in (diag.get("weaknesses") or [])
-    ]
-    strength_lines = [
-        f"  - [강점] {s.get('title', '')}: {s.get('detail', '')}"
-        for s in (diag.get("strengths") or [])
-    ]
-    growth_lines = [
-        f"  - [성장 액션] {g.get('target_weakness', '')} → {g.get('action', '')}"
-        for g in (diag.get("growth_actions") or [])
-    ]
-
-    return (
-        f"캐릭터 아키타입: {diag.get('character_archetype')} ({diag.get('one_line_identity', '')})\n"
-        f"종합 {diag.get('overall_score', 0)}점 (내적 {diag.get('internal_score', 0)} / 외적 {diag.get('external_score', 0)})\n"
-        f"[6축 상태]\n" + "\n".join(axis_lines) + "\n"
-        f"[핵심 강점]\n" + ("\n".join(strength_lines) or "  (없음)") + "\n"
-        f"[핵심 약점 · 사각지대]\n" + ("\n".join(weak_lines) or "  (없음)") + "\n"
-        f"[우선 성장 액션]\n" + ("\n".join(growth_lines) or "  (없음)")
-    )
 
 
 async def _load_copilot_rich_context(
@@ -70,11 +35,21 @@ async def _load_copilot_rich_context(
     company_profile_id: int | None = None,
     project_id: int | None = None,
 ) -> dict[str, Any]:
-    """포트폴리오 캐릭터 진단 + 신념/생각 노트 + 기업 리서치 + 기존 프로젝트/STAR를 종합 로드한다."""
+    """STAR-L 21지표 마스터리(1,000 XP) + 핵심 신념 카드 + 회고 노트 + 기업 리서치 + 기존 프로젝트/STAR를 종합 로드한다."""
     async with get_session_factory()() as session:
         profile = await session.get(UserProfile, 1)
         projects = (
-            (await session.execute(select(Project).order_by(Project.created_at.desc()).limit(10)))
+            (await session.execute(select(Project).order_by(Project.created_at.desc()).limit(15)))
+            .scalars()
+            .all()
+        )
+        all_experiences = (
+            (await session.execute(select(Experience).order_by(Experience.completeness_score.desc())))
+            .scalars()
+            .all()
+        )
+        belief_pillars = (
+            (await session.execute(select(BeliefPillar).order_by(BeliefPillar.created_at.desc())))
             .scalars()
             .all()
         )
@@ -100,26 +75,53 @@ async def _load_copilot_rich_context(
                 .all()
             )
 
-        exp_stmt = select(Experience).order_by(Experience.completeness_score.desc()).limit(6)
-        if project_id:
-            exp_stmt = (
-                select(Experience)
-                .where(Experience.project_id == project_id)
-                .order_by(Experience.created_at.desc())
-                .limit(6)
-            )
-        experiences = (await session.execute(exp_stmt)).scalars().all()
+    experiences = (
+        [e for e in all_experiences if e.project_id == project_id][:6]
+        if project_id
+        else all_experiences[:6]
+    )
+
+    proj_dicts = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "period": p.period,
+            "project_types": normalize_project_types(p.project_types),
+            "is_portfolio_selected": bool(p.is_portfolio_selected),
+        }
+        for p in projects
+    ]
+    exp_dicts = [
+        {
+            "id": e.id,
+            "project_id": e.project_id,
+            "title": e.title,
+            "completeness_score": e.completeness_score,
+            "star_scores": e.star_scores or {},
+        }
+        for e in all_experiences
+    ]
+    pillar_dicts = [
+        {
+            "id": b.id,
+            "title": b.title,
+            "category": b.category,
+            "tradeoff_rule": b.tradeoff_rule,
+            "linked_project_ids": list(b.linked_project_ids or []),
+            "linked_experience_ids": list(b.linked_experience_ids or []),
+        }
+        for b in belief_pillars
+    ]
+    mastery = compute_cumulative_portfolio_xp(proj_dicts, exp_dicts)
 
     profile_summary = (
         f"커리어 비전: {profile.career_vision}\n"
-        f"핵심 신념: {profile.core_beliefs}\n"
+        f"핵심 신념 요약: {profile.core_beliefs}\n"
         f"희망 직무: {profile.target_roles}"
         if profile
         else "(미설정)"
     )
-    character_context = _format_character_diagnosis(
-        profile.portfolio_diagnosis if profile else None
-    )
+    character_context = format_star_mastery_summary(mastery, pillar_dicts)
     belief_notes_context = (
         "\n".join(
             f"- [{n.source_type}] {n.source_title or '생각'}: {(n.quote_text or '')[:120]} / 생각: {n.my_reflection[:180]}"
@@ -175,7 +177,7 @@ async def _load_copilot_rich_context(
 
 
 # ==============================================================================
-# 모드 A-1: 포트폴리오 캐릭터 약점 보완형 '새 프로젝트 청사진' 원클릭 추천 (웹 검색 포함)
+# 모드 A-1: STAR-L 21지표 취약 보완 & 미증명 신념 증명용 '새 프로젝트 청사진' 추천 (웹 검색 포함)
 # ==============================================================================
 class BlueprintQuerySchema(BaseModel):
     queries: list[str] = Field(
@@ -193,7 +195,7 @@ class NewProjectBlueprintItem(BaseModel):
     )
     target_weaknesses: list[str] = Field(
         default_factory=list,
-        description="이 새 프로젝트가 정면으로 보완해 줄 캐릭터 약점·사각지대 (내적·외적 축 포함)",
+        description="이 새 프로젝트가 정면으로 보완해 줄 STAR-L 21지표 취약 체크포인트(예: '[R1] 정량 수치', '[A2] 대안 비교') 또는 미증명 신념 카드",
     )
     company_alignment: str = Field(
         description="리서치한 목표 기업(들)의 비전·최근 동향과 어떻게 맞물려 어필되는지 (2문장)"
@@ -211,13 +213,13 @@ class NewProjectBlueprintItem(BaseModel):
     )
     evidence_plan: list[str] = Field(
         default_factory=list,
-        description="이 프로젝트에서 반드시 남겨야 할 정량 지표·협업/일정 관리 증거 2~3가지",
+        description="STAR-L 21지표 하드캡을 통과하기 위해 반드시 남길 정량 벤치마크(R1/R2)·대안비교 ADR(A2)·장애복구/협업 증거 2~3가지",
     )
 
 
 class NewProjectBlueprintsSchema(BaseModel):
     character_focus_summary: str = Field(
-        description="현재 포트폴리오 캐릭터에서 왜 이런 새 프로젝트가 가장 효과적인지 2문장 전략 요약"
+        description="현재 STAR-L 21지표 마스터리(총 XP·취약 체크포인트)와 미증명 신념 기준으로 왜 이런 새 프로젝트가 가장 효과적인지 2문장 전략 요약"
     )
     blueprints: list[NewProjectBlueprintItem] = Field(
         default_factory=list,
@@ -232,7 +234,7 @@ async def propose_new_project_blueprints(
     topic_hint: str = "",
     use_web_search: bool = True,
 ) -> dict[str, Any]:
-    """포트폴리오 캐릭터 약점 + 기업 리서치 + 실시간 웹 검색을 결합해 새 프로젝트 청사진 2~3개를 추천한다."""
+    """STAR-L 21지표 취약 체크포인트 + 미증명 신념 카드 + 기업 리서치 + 실시간 웹 검색을 결합해 새 프로젝트 청사진 2~3개를 추천한다."""
     ctx = await _load_copilot_rich_context(company_profile_id=company_profile_id)
 
     web_sources: list[dict[str, Any]] = []
@@ -253,7 +255,7 @@ async def propose_new_project_blueprints(
                         content=(
                             f"희망 직무: {ctx['target_roles']}\n"
                             f"목표 기업: {', '.join(ctx['company_names']) or '(미지정)'}\n"
-                            f"보완 약점 포커스: {focus_weakness or '(캐릭터 진단 약점 전반)'}\n"
+                            f"보완 포커스(STAR-L 지표/신념): {focus_weakness or '(STAR-L 21지표 취약 체크포인트 전반)'}\n"
                             f"사용자 아이디어 힌트: {topic_hint or '(없음)'}\n"
                             f"기업 동향 요약:\n{ctx['company_context'][:1500]}"
                         )
@@ -281,21 +283,21 @@ async def propose_new_project_blueprints(
     )
 
     system_prompt = (
-        "당신은 지원자의 **포트폴리오 캐릭터 진단(강점·약점·사각지대)**, **리서치한 목표 기업 동향**, "
-        "**지원자의 커리어 신념**, 그리고 **최신 웹 리서치 사례**를 결합해 "
+        "당신은 지원자의 **STAR-L 21지표 마스터리(총 1,000 XP · 대표 4슬롯 · 취약 체크포인트 TOP)**, "
+        "**핵심 신념 카드(특히 증명 경험이 없는 신념)**, **리서치한 목표 기업 동향**, 그리고 **최신 웹 리서치 사례**를 결합해 "
         "가장 전략적인 **새로운 프로젝트 청사진 2~3개**를 설계하는 커리어 프로덕트 아키텍트입니다.\n\n"
         "핵심 설계 원칙:\n"
-        "1. 기존에 이미 한 프로젝트와 겹치는 식상한 토이 프로젝트는 배제하고, 캐릭터 진단에서 드러난 **약점·미검증 외적 축(시간/일정, 인적/협업, 정량 증거 등)**을 정면으로 증명할 수 있는 프로젝트를 제안하세요.\n"
+        "1. 기존 프로젝트와 겹치는 식상한 토이 프로젝트는 배제하고, **STAR-L 21지표 취약 체크포인트(R1 정량수치, R2 Before/After, A2 대안비교, A4 장애물돌파, A6 협업 등)**와 **미증명 신념 카드**를 정면으로 증명해 대표 프로젝트 XP(+250 XP)를 채울 수 있는 프로젝트를 제안하세요.\n"
         "2. `project_types`는 `engineering`, `product_planning`, `data_research`, `operations_leadership`, `general` 중 가장 알맞은 1~2개 트랙 ID만 사용하세요.\n"
         "3. `execution_roadmap`은 지원자가 오늘 바로 시작할 수 있도록 4단계(주차별) 구체적 실행 가이드를 제시하세요.\n"
-        "4. `evidence_plan`에는 프로젝트 완료 후 포트폴리오/자소서에 남길 구체적 정량 지표·협업/운영 증거 계획을 꼭 포함하세요."
+        "4. `evidence_plan`에는 프로젝트 완료 후 21지표 엄격 채점에서 만점을 받기 위해 반드시 남길 정량 벤치마크·대안 비교 ADR·운영/협업 증거 계획을 구체적으로 포함하세요."
     )
 
     user_prompt = (
-        f"[보완에 집중하고 싶은 약점/축] {focus_weakness or '(캐릭터 진단의 핵심 약점 3가지 우선 반영)'}\n"
+        f"[보완에 집중하고 싶은 STAR-L 취약 지표 / 미증명 신념] {focus_weakness or '(21지표 취약 체크포인트 TOP 5 및 미증명 신념 우선 반영)'}\n"
         f"[사용자가 떠올린 관심 주제 힌트] {topic_hint or '(자유 추천)'}\n\n"
-        f"=== 1. 나의 포트폴리오 캐릭터 진단 (강점·약점·6축) ===\n{ctx['character_context']}\n\n"
-        f"=== 2. 나의 커리어 신념 & 최근 생각 노트 ===\n{ctx['profile_summary']}\n{ctx['belief_notes_context']}\n\n"
+        f"=== 1. 나의 STAR-L 21지표 마스터리 & 핵심 신념 현황 ===\n{ctx['character_context']}\n\n"
+        f"=== 2. 나의 커리어 프로필 & 최근 회고 노트 ===\n{ctx['profile_summary']}\n{ctx['belief_notes_context']}\n\n"
         f"=== 3. 리서치해둔 목표 기업 동향 ===\n{ctx['company_context'][:3000]}\n\n"
         f"=== 4. 기존 보유 프로젝트 (중복 방지용) ===\n{ctx['existing_projects_context'][:2500]}\n\n"
         f"=== 5. 이전 프로젝트 회고에서 인계된 Try 규칙 (프로젝트 간 학습 루프 — 반드시 새 프로젝트 실행 로드맵에 반영!) ===\n{ctx['learning_loop_context']}\n\n"

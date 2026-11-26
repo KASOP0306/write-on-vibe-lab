@@ -174,6 +174,14 @@ class CoverLetterGenerateRequest(BaseModel):
         default_factory=list,
         description="사용자가 선택한 핵심 STAR 경험 ID 목록",
     )
+    selected_belief_ids: list[int] = Field(
+        default_factory=list,
+        description="사용자가 선택한 핵심 신념 카드(BeliefPillar) ID 목록 (최우선 1급 신념으로 주입)",
+    )
+    selected_belief_note_ids: list[int] = Field(
+        default_factory=list,
+        description="사용자가 선택한 일상 회고·구절 노트(BeliefNote) ID 목록",
+    )
     question_analysis: dict[str, Any] = Field(
         default_factory=dict,
         description="1단계 문항 심층 분석 결과 (체크포인트·권장 구조 등)",
@@ -194,6 +202,7 @@ class CoverLetterSaveRequest(BaseModel):
     revision_count: int = Field(default=0, ge=0)
     used_projects: list[dict[str, Any]] = Field(default_factory=list)
     used_experiences: list[dict[str, Any]] = Field(default_factory=list)
+    used_beliefs: list[dict[str, Any]] = Field(default_factory=list)
     diff_summary: list[str] = Field(default_factory=list)
     checkpoint_checks: list[str] = Field(default_factory=list)
     memo: str = Field(default="")
@@ -220,6 +229,7 @@ class CoverLetterResponse(BaseModel):
     revision_count: int
     used_projects: list[dict[str, Any]]
     used_experiences: list[dict[str, Any]]
+    used_beliefs: list[dict[str, Any]] = Field(default_factory=list)
     diff_summary: list[str]
     checkpoint_checks: list[str]
     memo: str

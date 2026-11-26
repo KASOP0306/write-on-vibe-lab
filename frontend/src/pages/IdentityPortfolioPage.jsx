@@ -444,9 +444,9 @@ export default function IdentityPortfolioPage({
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">2. 포트폴리오 &amp; 캐릭터</h2>
+        <h2 className="text-2xl font-bold text-slate-900">2. 포트폴리오 &amp; STAR-L 마스터리</h2>
         <p className="text-sm text-slate-600 mt-1">
-          6축 육각형 포트폴리오 캐릭터 진단(내적 3축 × 외적 3축, 강점 50% : 약점 50%)과{" "}
+          <strong>STAR-L 21지표 엄격 하이브리드 평가 · 대표 4프로젝트 1,000 XP 마스터리</strong>와{" "}
           <strong>복수 유형 조합형 프로젝트 워크스페이스</strong>를 한곳에서 관리합니다.
         </p>
       </div>

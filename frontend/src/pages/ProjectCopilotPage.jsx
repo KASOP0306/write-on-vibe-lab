@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   AlertTriangle,
+  Award,
   Brain,
   Building2,
   CheckCircle2,
-  Compass,
   ExternalLink,
   Globe,
   Loader2,
@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Rocket,
   Send,
+  ShieldCheck,
   Sparkles,
   Target,
   Trash2,
@@ -24,31 +25,41 @@ import StepIndicator from "../components/StepIndicator.jsx";
 import { TRACK_SHORT_LABELS, getTrackBadgeClass } from "../utils/projectTracks.js";
 
 const QUICK_PROMPTS = [
-  "내 포트폴리오 캐릭터 약점을 정면으로 보완할 3주 MVP 프로젝트 아키텍처와 실행 단계를 짜줘",
-  "리서치해둔 목표 기업 동향에 맞춰 차별화할 수 있는 새 프로젝트 핵심 기능과 검증 지표를 설계해줘",
+  "내 STAR-L 21지표 취약 체크포인트(R1 정량 수치·A2 대안 비교 등)를 정면으로 보완할 3주 MVP 프로젝트 아키텍처와 실행 단계를 짜줘",
+  "리서치해둔 목표 기업 동향에 맞춰 대표 4슬롯(+250 XP)을 채울 새 프로젝트 핵심 기능과 검증 지표를 설계해줘",
   "최신 오픈소스/실무 레퍼런스를 웹 검색해서 새 프로젝트에 쓸 최적의 기술 스택과 트레이드오프를 비교해줘",
-  "협업·일정 관리(외적 역량)까지 포트폴리오 증거로 남길 수 있는 프로젝트 진행 방식과 산출물 체크리스트를 알려줘",
+  "아직 경험으로 증명되지 않은 내 신념 카드를 실제 코드·운영 지표로 증명할 수 있는 프로젝트 진행 방식과 증거 체크리스트를 알려줘",
 ];
 
 const TOOL_LABELS = {
   search_portfolio_docs: "포트폴리오 RAG 검색",
-  get_portfolio_character_and_loop: "캐릭터 진단·회고 Try 조회",
+  get_portfolio_character_and_loop: "STAR-L 마스터리·신념·회고 Try 조회",
   get_company_research: "기업 리서치 조회",
   web_search_reference: "실시간 웹 검색",
   save_career_memory: "장기 기억 저장",
   recall_career_memory: "장기 기억 조회",
 };
 
+const STAR_AXIS_SHORT = [
+  { id: "situation", label: "S" },
+  { id: "task", label: "T" },
+  { id: "action", label: "A" },
+  { id: "result", label: "R" },
+  { id: "learning", label: "L" },
+];
+
 const createThreadId = () => `copilot-${Math.random().toString(36).slice(2, 10)}`;
 
 export default function ProjectCopilotPage({
   projects = [],
+  beliefPillars: propPillars = [],
   initialTopic = "",
   onConsumeInitialTopic,
   onProjectCreated,
 }) {
   const [modeTab, setModeTab] = useState("blueprint"); // "blueprint" | "chat"
-  const [diagnosisData, setDiagnosisData] = useState(null);
+  const [masteryData, setMasteryData] = useState(null);
+  const [beliefPillars, setBeliefPillars] = useState(propPillars);
   const [companies, setCompanies] = useState([]);
   const [learningLoop, setLearningLoop] = useState(null);
 
@@ -83,6 +94,10 @@ export default function ProjectCopilotPage({
   const [chatSteps, setChatSteps] = useState([]);
   const [chatRunning, setChatRunning] = useState(false);
 
+  useEffect(() => {
+    if (propPillars?.length) setBeliefPillars(propPillars);
+  }, [propPillars]);
+
   const loadMemories = async () => {
     try {
       const list = await api.listCopilotMemories();
@@ -95,20 +110,22 @@ export default function ProjectCopilotPage({
   useEffect(() => {
     const loadContext = async () => {
       try {
-        const [diag, comps, loop, hist, mems] = await Promise.all([
-          api.getPortfolioDiagnosis().catch(() => null),
+        const [mastery, comps, loop, hist, mems, pillars] = await Promise.all([
+          api.getPortfolioMastery().catch(() => null),
           api.listCompanies().catch(() => []),
           api.getProjectsLearningLoop().catch(() => null),
           api.getCopilotHistory(threadId).catch(() => null),
           api.listCopilotMemories().catch(() => []),
+          api.listBeliefPillars().catch(() => []),
         ]);
-        setDiagnosisData(diag);
+        setMasteryData(mastery);
         setCompanies(comps || []);
         setLearningLoop(loop);
         if (hist?.messages?.length) {
           setChatMessages(hist.messages);
         }
         setMemories(mems || []);
+        if (pillars?.length) setBeliefPillars(pillars);
       } catch (err) {
         console.warn(err);
       }
@@ -143,16 +160,20 @@ export default function ProjectCopilotPage({
     if (initialTopic) {
       setTopicHint(initialTopic);
       setChatInput(
-        `지원 회고에서 나온 이 보완 과제를 해결하는 새 프로젝트를 기획해 줘: ${initialTopic}`
+        `이 보완 과제를 정면으로 증명하는 새 프로젝트를 기획해 줘: ${initialTopic}`
       );
       onConsumeInitialTopic?.();
     }
   }, [initialTopic]);
 
-  const diag = diagnosisData?.diagnosis?.character_archetype
-    ? diagnosisData.diagnosis
-    : null;
-  const weaknesses = diag?.weaknesses || [];
+  // Extract live STAR-L weak checkpoints TOP 5 & unproven belief pillars
+  const cpStats = masteryData?.checkpoint_stats || [];
+  const evaluatedCps = cpStats.filter((c) => (c.evaluated_count || 0) > 0);
+  const weakCheckpoints = [...(evaluatedCps.length > 0 ? evaluatedCps : cpStats)]
+    .sort((a, b) => (a.mastery_pct || 0) - (b.mastery_pct || 0) || (b.weight || 0) - (a.weight || 0))
+    .slice(0, 5);
+  const unprovenPillars = beliefPillars.filter((b) => b.proof_status === "needs_proof");
+  const starAxes = masteryData?.star_averages?.axes || {};
 
   const handleProposeBlueprints = async (e) => {
     e?.preventDefault();
@@ -178,7 +199,7 @@ export default function ProjectCopilotPage({
     if (creatingIdx !== null) return;
     setCreatingIdx(idx);
     try {
-      const summaryText = `${bp.tagline}\n\n[보완 목표] ${(bp.target_weaknesses || []).join(", ")}\n[기업 연결] ${bp.company_alignment}`;
+      const summaryText = `${bp.tagline}\n\n[보완 STAR-L 지표·신념] ${(bp.target_weaknesses || []).join(", ")}\n[기업 연결] ${bp.company_alignment}`;
       const created = await api.createProject({
         name: bp.name,
         project_types: bp.project_types || ["engineering"],
@@ -189,7 +210,6 @@ export default function ProjectCopilotPage({
         portfolio_goal_link: bp.company_alignment || "",
       });
 
-      // Seed the overview section with roadmap & evidence plan
       const detail = await api.getProject(created.id);
       const overviewSec = (detail.sections || []).find(
         (s) => s.section_type === "overview"
@@ -204,9 +224,9 @@ export default function ProjectCopilotPage({
         await api.updateSection(created.id, overviewSec.id, {
           content:
             `### 문제 정의 & 솔루션\n${bp.problem_and_solution}\n\n` +
-            `### 보완 대상 캐릭터 약점\n${(bp.target_weaknesses || []).map((w) => `- ${w}`).join("\n")}\n\n` +
+            `### 보완 대상 STAR-L 취약 지표 · 신념\n${(bp.target_weaknesses || []).map((w) => `- ${w}`).join("\n")}\n\n` +
             `### 실행 로드맵\n${roadmapMd}\n\n` +
-            `### 반드시 남길 객관적 증거 계획\n${evidenceMd}`,
+            `### STAR-L 21지표 통과용 객관적 증거 계획\n${evidenceMd}`,
         });
       }
 
@@ -321,24 +341,46 @@ export default function ProjectCopilotPage({
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <Rocket className="w-6 h-6 text-indigo-600" />
-          <span>7. 새 프로젝트 코파일럿</span>
+          <span>7. 새 프로젝트 코파일럿 (STAR-L 21지표 × 신념 기반 설계)</span>
         </h2>
         <p className="text-sm text-slate-600 mt-1">
-          <strong>나의 포트폴리오 캐릭터 약점</strong>, <strong>리서치해둔 목표 기업 동향</strong>, 그리고{" "}
-          <strong>실시간 웹 검색</strong>을 결합해 어떤 새 프로젝트를 어떻게 진행하면 가장 강력하게 보완할 수 있는지 설계합니다.
+          <strong>STAR-L 21지표 취약 체크포인트 · 대표 4슬롯(1,000 XP)</strong>, <strong>미증명 핵심 신념 카드</strong>,{" "}
+          <strong>목표 기업 동향</strong>, 그리고 <strong>실시간 웹 검색</strong>을 결합해 어떤 새 프로젝트를 어떻게 진행하면 가장 강력하게 보완할 수 있는지 설계합니다.
         </p>
       </div>
 
-      {/* Shared Context Bar: Portfolio Character Weaknesses + Researched Company */}
+      {/* Shared Context Bar: Live STAR-L 1,000 XP Mastery + Unproven Beliefs + Researched Company */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Compass className="w-4 h-4 text-indigo-600" />
-            <span className="text-sm font-bold text-slate-900">
-              {diag
-                ? `연동된 캐릭터: ${diag.character_archetype} (종합 ${diag.overall_score}점 · 내적 ${diag.internal_score} / 외적 ${diag.external_score})`
-                : "포트폴리오 캐릭터 진단 미실행 (2번 탭에서 진단하면 약점이 자동 연동됩니다)"}
-            </span>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Award className="w-4 h-4 text-indigo-600 shrink-0" />
+            {masteryData ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-sm font-bold text-slate-900">
+                  Lv.{masteryData.level?.level || 1} {masteryData.level?.name || "Seed"} ·{" "}
+                  <span className="text-indigo-700">
+                    {masteryData.total_xp || 0} / {masteryData.max_total_xp || 1000} XP
+                  </span>
+                </span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+                  대표 슬롯 {(masteryData.selected_projects || []).length}/{masteryData.max_selected_projects || 4}
+                </span>
+                <div className="flex items-center gap-1">
+                  {STAR_AXIS_SHORT.map((ax) => (
+                    <span
+                      key={ax.id}
+                      className="rounded bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800"
+                    >
+                      {ax.label} {starAxes[ax.id]?.score ?? 0}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <span className="text-sm font-bold text-slate-700">
+                STAR-L 21지표 마스터리 불러오는 중...
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -358,45 +400,64 @@ export default function ProjectCopilotPage({
           </div>
         </div>
 
-        {/* Clickable Weakness Focus Chips */}
-        {weaknesses.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-[11px] font-semibold text-rose-700 flex items-center gap-1">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>보완에 집중할 캐릭터 약점 선택 (클릭해 포커스 지정):</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setFocusWeakness("")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold border ${
-                  !focusWeakness
-                    ? "bg-slate-900 text-white border-slate-900"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                약점 전체 종합
-              </button>
-              {weaknesses.map((w, i) => {
-                const active = focusWeakness === w.title;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setFocusWeakness(active ? "" : w.title)}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold border ${
-                      active
-                        ? "bg-rose-600 text-white border-rose-600"
-                        : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
-                    }`}
-                  >
-                    {w.title}
-                  </button>
-                );
-              })}
-            </div>
+        {/* Clickable STAR-L Weak Checkpoints & Unproven Belief Focus Chips */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold text-rose-700 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>보완에 집중할 STAR-L 21지표 취약 항목 또는 미증명 신념 선택 (클릭해 포커스 지정):</span>
           </div>
-        )}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFocusWeakness("")}
+              className={`rounded-full px-3 py-1 text-xs font-semibold border ${
+                !focusWeakness
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              취약 지표 전체 종합
+            </button>
+            {weakCheckpoints.map((cp) => {
+              const chipValue = `[${cp.id}] ${cp.label}`;
+              const active = focusWeakness === chipValue;
+              return (
+                <button
+                  key={cp.id}
+                  type="button"
+                  title={cp.probe_hint}
+                  onClick={() => setFocusWeakness(active ? "" : chipValue)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold border ${
+                    active
+                      ? "bg-rose-600 text-white border-rose-600"
+                      : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100"
+                  }`}
+                >
+                  {cp.id} {cp.label} ({cp.mastery_pct}%)
+                </button>
+              );
+            })}
+            {unprovenPillars.map((b) => {
+              const chipValue = `미증명 신념: ${b.title}`;
+              const active = focusWeakness === chipValue;
+              return (
+                <button
+                  key={`up-${b.id}`}
+                  type="button"
+                  onClick={() => setFocusWeakness(active ? "" : chipValue)}
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold border ${
+                    active
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-violet-50 text-violet-800 border-violet-200 hover:bg-violet-100"
+                  }`}
+                >
+                  <ShieldCheck className="w-3 h-3" />
+                  <span className="truncate max-w-[220px]">신념 증명: {b.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Cross-Project Learning Loop: Try Rules Inherited from Prior Retrospectives */}
         {(learningLoop?.items || []).length > 0 && (
@@ -462,7 +523,7 @@ export default function ProjectCopilotPage({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <label className="md:col-span-2 block space-y-1">
                 <span className="text-xs font-semibold text-slate-700">
-                  구상 중인 도메인·주제 힌트 (선택 — 비워두면 캐릭터 약점 &amp; 기업 리서치 기반으로 자동 추천)
+                  구상 중인 도메인·주제 힌트 (선택 — 비워두면 STAR-L 취약 지표 &amp; 미증명 신념 &amp; 기업 리서치 기반으로 자동 추천)
                 </span>
                 <input
                   type="text"
@@ -496,8 +557,8 @@ export default function ProjectCopilotPage({
                   )}
                   <span>
                     {proposing
-                      ? "웹 검색 & 청사진 설계 중..."
-                      : "보완형 새 프로젝트 청사진 추천"}
+                      ? "STAR-L 분석 · 웹 검색 · 청사진 설계 중..."
+                      : "STAR-L 보완형 새 프로젝트 청사진 추천"}
                   </span>
                 </button>
               </div>
@@ -514,7 +575,7 @@ export default function ProjectCopilotPage({
             <div className="space-y-5">
               {blueprintResult.character_focus_summary && (
                 <div className="rounded-2xl bg-indigo-50/70 border border-indigo-200 p-4 text-xs text-indigo-950 leading-relaxed">
-                  <strong>전략 요약:</strong> {blueprintResult.character_focus_summary}
+                  <strong>STAR-L · 신념 전략 요약:</strong> {blueprintResult.character_focus_summary}
                 </div>
               )}
 
@@ -553,7 +614,7 @@ export default function ProjectCopilotPage({
                           onClick={() => {
                             setModeTab("chat");
                             setChatInput(
-                              `'${bp.name}' 청사진을 실제로 시작하려고 해. 첫 1주차에 바로 실행할 구체적인 설계·일정·검증 계획을 더 자세히 짜줘.`
+                              `'${bp.name}' 청사진을 실제로 시작하려고 해. 첫 1주차에 바로 실행할 구체적인 설계·일정·STAR-L 21지표 검증 계획을 더 자세히 짜줘.`
                             );
                           }}
                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -585,7 +646,7 @@ export default function ProjectCopilotPage({
                       <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3.5 space-y-1.5">
                         <div className="font-bold text-rose-900 flex items-center gap-1">
                           <Target className="w-3.5 h-3.5" />
-                          <span>정면 보완하는 캐릭터 약점</span>
+                          <span>정면 보완하는 STAR-L 취약 지표 · 신념</span>
                         </div>
                         <ul className="space-y-1 text-rose-900">
                           {(bp.target_weaknesses || []).map((w, i) => (
@@ -618,7 +679,7 @@ export default function ProjectCopilotPage({
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-3.5 space-y-1.5">
                         <div className="font-bold text-emerald-950 flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>반드시 남길 정량·운영 증거 계획</span>
+                          <span>STAR-L 21지표 통과용 증거 계획</span>
                         </div>
                         <ul className="space-y-1 text-emerald-900">
                           {(bp.evidence_plan || []).map((ev, i) => (
@@ -685,7 +746,7 @@ export default function ProjectCopilotPage({
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                 <div className="space-y-0.5">
                   <div className="text-sm font-bold text-slate-900">
-                    새 프로젝트 Agentic RAG 코파일럿 (ReAct 도구 · 단기/장기 기억)
+                    새 프로젝트 Agentic RAG 코파일럿 (STAR-L · 신념 · 단기/장기 기억)
                   </div>
                   <div className="text-[11px] text-slate-500">
                     스레드 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">{threadId}</code> · 대화는 PostgreSQL 체크포인트에 자동 저장됩니다
@@ -719,7 +780,7 @@ export default function ProjectCopilotPage({
               {chatMessages.length === 0 ? (
                 <div className="py-6 space-y-3">
                   <p className="text-xs text-slate-500 text-center">
-                    새 프로젝트의 기획·아키텍처·차별화 포인트·협업/일정 설계를 무엇이든 물어보세요. 필요하면 최신 웹 레퍼런스를 자동으로 검색해 제안합니다.
+                    STAR-L 취약 지표 보완, 미증명 신념 증명 프로젝트, 아키텍처·트레이드오프·검증 지표 설계를 무엇이든 물어보세요. 필요하면 최신 웹 레퍼런스를 자동으로 검색해 제안합니다.
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {QUICK_PROMPTS.map((qp, i) => (
@@ -817,7 +878,7 @@ export default function ProjectCopilotPage({
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="새 프로젝트 아이디어, 아키텍처, 검증 지표, 최신 기술 비교 등을 질문해 보세요..."
+                placeholder="새 프로젝트 아이디어, STAR-L 증거 설계, 미증명 신념 증명, 최신 기술 비교 등을 질문해 보세요..."
                 className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
               <button

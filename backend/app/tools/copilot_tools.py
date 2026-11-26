@@ -15,7 +15,9 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.core.database import (
+    BeliefPillar,
     CompanyProfile,
+    Experience,
     Project,
     UserProfile,
     _store_embed_texts,
@@ -23,7 +25,11 @@ from app.core.database import (
     get_session_factory,
 )
 from app.core.project_templates import normalize_project_types
-from app.core.star_rubric import PORTFOLIO_AXES, PORTFOLIO_AXIS_ORDER
+from app.core.star_rubric import (
+    STAR_AXES,
+    STAR_AXIS_ORDER,
+    compute_cumulative_portfolio_xp,
+)
 from app.core.vector_store import (
     DocType,
     SearchStrategy,
@@ -138,54 +144,134 @@ async def search_portfolio_docs(
     )
 
 
+def format_star_mastery_summary(
+    mastery: dict[str, Any],
+    pillars: list[dict[str, Any]] | None = None,
+) -> str:
+    """STAR-L 21지표 마스터리(1,000 XP / 대표 4프로젝트)와 핵심 신념 카드(특히 미증명 신념)를 텍스트로 포맷한다."""
+    lv = mastery.get("level") or {}
+    total_xp = int(mastery.get("total_xp") or 0)
+    max_xp = int(mastery.get("max_total_xp") or 1000)
+    max_sel = int(mastery.get("max_selected_projects") or 4)
+    sel_projs = mastery.get("selected_projects") or []
+    star_avg = (mastery.get("star_averages") or {}).get("axes") or {}
+    cp_stats = mastery.get("checkpoint_stats") or []
+
+    axis_lines = [
+        f"  - {STAR_AXES[ax]['label']}({ax.upper()}): {(star_avg.get(ax) or {}).get('score', 0)}%"
+        for ax in STAR_AXIS_ORDER
+    ]
+    evaluated_cps = [c for c in cp_stats if int(c.get("evaluated_count") or 0) > 0]
+    weak_pool = sorted(
+        evaluated_cps if evaluated_cps else cp_stats,
+        key=lambda c: (int(c.get("mastery_pct") or 0), -int(c.get("weight") or 0)),
+    )[:5]
+    weak_cp_lines = [
+        f"  - [{c['id']}] {c['label']} (배점 {c['weight']}점 · 달성률 {c['mastery_pct']}%) — {c.get('probe_hint', '')}"
+        for c in weak_pool
+    ]
+    slot_lines = [
+        f"  - {p['name']}: {p['capped_xp']}/{p['cap']} XP (경험 {p['experience_count']}건, 최고 {p['best_score']}점)"
+        for p in sel_projs
+    ]
+    empty_slots = max(0, max_sel - len(sel_projs))
+    if empty_slots > 0:
+        slot_lines.append(f"  - (빈 대표 프로젝트 슬롯 {empty_slots}개 — 새 프로젝트로 최대 +{empty_slots * int(mastery.get('project_cap') or 250)} XP 확보 가능)")
+
+    parts = [
+        f"[STAR-L 21지표 마스터리] Lv.{lv.get('level', 1)} {lv.get('name', 'Seed')} · 총 {total_xp} / {max_xp} XP (대표 {len(sel_projs)}/{max_sel}슬롯)\n"
+        f"[대표 프로젝트 XP 슬롯]\n" + ("\n".join(slot_lines) or "  (등록된 프로젝트 없음)") + "\n"
+        f"[STAR-L 5축 평균]\n" + "\n".join(axis_lines) + "\n"
+        f"[21지표 취약 체크포인트 TOP 5 (새 프로젝트에서 반드시 증거 확보)]\n" + ("\n".join(weak_cp_lines) or "  (데이터 없음)")
+    ]
+
+    if pillars:
+        unproven = [
+            b for b in pillars
+            if not (b.get("linked_project_ids") or b.get("linked_experience_ids"))
+        ]
+        proven = [
+            b for b in pillars
+            if (b.get("linked_project_ids") or b.get("linked_experience_ids"))
+        ]
+        pillar_lines = [
+            f"  - [미증명 신념 ⚠️] {b['title']} (기준: {b.get('tradeoff_rule') or '미입력'})"
+            for b in unproven
+        ] + [
+            f"  - [증명됨 ✅] {b['title']} (기준: {b.get('tradeoff_rule') or '미입력'})"
+            for b in proven[:4]
+        ]
+        parts.append("[핵심 신념 카드 현황 (미증명 신념은 새 프로젝트 기획의 최우선 소재)]\n" + "\n".join(pillar_lines))
+
+    return "\n\n".join(parts)
+
+
 @tool
 async def get_portfolio_character_and_loop() -> str:
-    """지원자의 6축 포트폴리오 캐릭터 진단(강점·약점·외적 사각지대), 보유 프로젝트 요약, 그리고 이전 프로젝트 회고 Try 학습 루프를 조회한다.
+    """지원자의 STAR-L 21지표 마스터리(총 1,000 XP · 대표 4프로젝트 슬롯 · 5축 평균 · 취약 체크포인트 TOP 5), 핵심 신념 카드(미증명 신념 포함), 보유 프로젝트 요약, 그리고 이전 프로젝트 회고 Try 학습 루프를 조회한다.
 
-    새 프로젝트 기획, 약점 보완, 이전 실수 재발 방지 규칙을 확인할 때 사용한다.
+    새 프로젝트 기획, STAR-L 취약 지표 보완, 미증명 신념 증명, 이전 실수 재발 방지 규칙을 확인할 때 사용한다.
     """
     async with get_session_factory()() as session:
         profile = await session.get(UserProfile, 1)
         projects = (
-            (await session.execute(select(Project).order_by(Project.created_at.desc()).limit(10)))
+            (await session.execute(select(Project).order_by(Project.created_at.desc()).limit(15)))
             .scalars()
             .all()
         )
+        experiences = (
+            (await session.execute(select(Experience).order_by(Experience.created_at.desc())))
+            .scalars()
+            .all()
+        )
+        pillars = (
+            (await session.execute(select(BeliefPillar).order_by(BeliefPillar.created_at.desc())))
+            .scalars()
+            .all()
+        )
+
+    proj_dicts = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "period": p.period,
+            "project_types": normalize_project_types(p.project_types),
+            "is_portfolio_selected": bool(p.is_portfolio_selected),
+        }
+        for p in projects
+    ]
+    exp_dicts = [
+        {
+            "id": e.id,
+            "project_id": e.project_id,
+            "title": e.title,
+            "completeness_score": e.completeness_score,
+            "star_scores": e.star_scores or {},
+        }
+        for e in experiences
+    ]
+    pillar_dicts = [
+        {
+            "id": b.id,
+            "title": b.title,
+            "category": b.category,
+            "tradeoff_rule": b.tradeoff_rule,
+            "linked_project_ids": list(b.linked_project_ids or []),
+            "linked_experience_ids": list(b.linked_experience_ids or []),
+        }
+        for b in pillars
+    ]
+    mastery = compute_cumulative_portfolio_xp(proj_dicts, exp_dicts)
 
     parts: list[str] = []
     if profile:
         parts.append(
             f"[커리어 프로필]\n비전: {profile.career_vision or '(미설정)'}\n"
-            f"신념: {profile.core_beliefs or '(미설정)'}\n"
+            f"핵심 신념 요약: {profile.core_beliefs or '(미설정)'}\n"
             f"희망 직무: {profile.target_roles or '(미설정)'}"
         )
-        diag = profile.portfolio_diagnosis or {}
-        if diag.get("character_archetype"):
-            axes = diag.get("axes") or {}
-            ax_lines = [
-                f"  - {PORTFOLIO_AXES[ax]['label']}({'외적' if PORTFOLIO_AXES[ax]['domain']=='external' else '내적'}): "
-                f"{(axes.get(ax) or {}).get('score', 0)}점 [{(axes.get(ax) or {}).get('evidence_status', 'unknown')}]"
-                for ax in PORTFOLIO_AXIS_ORDER
-            ]
-            weak_lines = [
-                f"  - [약점] {w.get('title', '')}: {w.get('detail', '')}"
-                for w in (diag.get("weaknesses") or [])
-            ]
-            strength_lines = [
-                f"  - [강점] {s.get('title', '')}: {s.get('detail', '')}"
-                for s in (diag.get("strengths") or [])
-            ]
-            parts.append(
-                f"[6축 포트폴리오 캐릭터] {diag.get('character_archetype')} — {diag.get('one_line_identity', '')}\n"
-                f"종합 {diag.get('overall_score', 0)}점 (내적 {diag.get('internal_score', 0)} / 외적 {diag.get('external_score', 0)})\n"
-                + "\n".join(ax_lines)
-                + "\n[강점]\n"
-                + ("\n".join(strength_lines) or "  (없음)")
-                + "\n[약점·사각지대]\n"
-                + ("\n".join(weak_lines) or "  (없음)")
-            )
-        else:
-            parts.append("[6축 포트폴리오 캐릭터] 아직 진단이 실행되지 않았습니다.")
+
+    parts.append(format_star_mastery_summary(mastery, pillar_dicts))
 
     proj_lines = [
         f"- {p.name} ({', '.join(normalize_project_types(p.project_types))}) | 역할: {p.role or '미입력'} | 스택: {', '.join(p.tech_stack or [])}"

@@ -90,10 +90,32 @@ export async function streamSSE(path, body, onEvent) {
 }
 
 export const api = {
-  // Profile & Belief Notes (Quotes / Lectures / Thoughts)
+  // Profile, Belief Pillars & Belief Notes (Quotes / Lectures / Thoughts)
   getProfile: () => apiRequest("/api/profile"),
   updateProfile: (data) =>
     apiRequest("/api/profile", { method: "PUT", body: JSON.stringify(data) }),
+  listBeliefPillars: () => apiRequest("/api/beliefs/pillars"),
+  createBeliefPillar: (data) =>
+    apiRequest("/api/beliefs/pillars", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateBeliefPillar: (id, data) =>
+    apiRequest(`/api/beliefs/pillars/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteBeliefPillar: (id) =>
+    apiRequest(`/api/beliefs/pillars/${id}`, { method: "DELETE" }),
+  sharpenBeliefPillar: (id, contextHint = "") =>
+    apiRequest(`/api/beliefs/pillars/${id}/sharpen`, {
+      method: "POST",
+      body: JSON.stringify({ context_hint: contextHint }),
+    }),
+  discoverBeliefsFromPortfolio: () =>
+    apiRequest("/api/beliefs/discover-from-portfolio", { method: "POST" }),
+  syncPillarsToProfile: () =>
+    apiRequest("/api/beliefs/pillars/sync-to-profile", { method: "POST" }),
   listBeliefNotes: (sourceType = null) =>
     apiRequest(
       sourceType

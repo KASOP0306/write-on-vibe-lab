@@ -91,6 +91,32 @@ class BeliefNote(Base):
     )
 
 
+class BeliefPillar(Base):
+    """자소서·면접에 바로 연결되는 구조화된 핵심 신념 카드(행동 원칙 + 트레이드오프 + 증명 경험)."""
+
+    __tablename__ = "belief_pillars"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(40), default="work_principle", nullable=False, index=True
+    )  # work_principle | problem_lens | collaboration | career_direction
+    tradeoff_rule: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    origin_story: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    linked_project_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    linked_experience_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    linked_note_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -294,6 +320,7 @@ class CoverLetter(Base):
     revision_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     used_projects: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     used_experiences: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    used_beliefs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     diff_summary: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     checkpoint_checks: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     memo: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -479,6 +506,12 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE question_feedback_logs "
                 "ADD COLUMN IF NOT EXISTS user_reason VARCHAR(80) NOT NULL DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE cover_letters "
+                "ADD COLUMN IF NOT EXISTS used_beliefs JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
         )
         # Unit 5: pgvector HNSW 코사인 유사도 인덱스 (검색 속도·확장성 확보)

@@ -165,9 +165,21 @@ async def company_searcher(state: CompanyResearchState) -> dict[str, Any]:
 
 
 async def identity_portfolio_loader(state: CompanyResearchState) -> dict[str, Any]:
-    """지원자의 신념(user_profile), 프로젝트(projects), STAR 경험(experiences)을 로드한다."""
+    """지원자의 신념(user_profile + belief_pillars + belief_notes), 프로젝트, STAR 경험을 로드한다."""
+    from app.core.database import BeliefNote, BeliefPillar
+
     async with get_session_factory()() as session:
         profile = await session.get(UserProfile, 1)
+        pillars = (
+            (await session.execute(select(BeliefPillar).order_by(BeliefPillar.created_at.desc())))
+            .scalars()
+            .all()
+        )
+        notes = (
+            (await session.execute(select(BeliefNote).order_by(BeliefNote.created_at.desc()).limit(8)))
+            .scalars()
+            .all()
+        )
         projects = (
             (await session.execute(select(Project).order_by(Project.created_at.desc())))
             .scalars()
@@ -187,6 +199,27 @@ async def identity_portfolio_loader(state: CompanyResearchState) -> dict[str, An
         "career_vision": profile.career_vision if profile else "",
         "core_beliefs": profile.core_beliefs if profile else "",
         "target_roles": profile.target_roles if profile else "",
+        "belief_pillars": [
+            {
+                "id": b.id,
+                "category": b.category,
+                "title": b.title,
+                "tradeoff_rule": b.tradeoff_rule,
+                "origin_story": b.origin_story[:200],
+                "linked_project_ids": list(b.linked_project_ids or []),
+                "linked_experience_ids": list(b.linked_experience_ids or []),
+            }
+            for b in pillars
+        ],
+        "belief_notes": [
+            {
+                "source_type": n.source_type,
+                "source_title": n.source_title,
+                "quote_text": n.quote_text[:140],
+                "my_reflection": n.my_reflection[:200],
+            }
+            for n in notes
+        ],
     }
     portfolio_items = [
         {
