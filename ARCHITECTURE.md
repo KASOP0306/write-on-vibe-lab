@@ -41,14 +41,14 @@ flowchart TB
 | 서비스 | 이미지 / 런타임 | 노출 포트 | 기동 의존성 & 영속성 | 주요 역할 |
 | :--- | :--- | :---: | :--- | :--- |
 | **`frontend`** | Node 20 (빌드) → `nginx:alpine` | 호스트 `:80` → `:80` | `depends_on: backend` | 정적 SPA 서빙 및 `/api/` 리버스 프록시(SSE 버퍼링 비활성화) |
-| **`backend`** | `python:3.11-slim` + Uvicorn | 내부 `:8000` | `depends_on: db (service_healthy)` | REST CRUD, LangGraph 4대 워크플로우 + Agentic RAG 코파일럿, 루프 A/B 품질 검증, 5축 STAR-L/6축 캐릭터 평가, SSE 스트리밍 |
-| **`db`** | `pgvector/pgvector:pg16` | Docker 내부 `:5432` 전용 | `healthcheck: pg_isready`, `pgdata` 볼륨 마운트 | 정형 테이블(10개) + HNSW 벡터(`vector_documents`) + 단기 기억(`checkpoints`) + 장기 기억(`store`, `store_vectors`) |
+| **`backend`** | `python:3.11-slim` + Uvicorn | 내부 `:8000` | `depends_on: db (service_healthy)` | REST CRUD, LangGraph 4대 워크플로우 + Agentic RAG 코파일럿, 루프 A/B 품질 검증, STAR-L 21지표 하이브리드(v2.1)·1,000 XP 마스터리, GitHub PR/커밋 Diff 연동, SSE 스트리밍 |
+| **`db`** | `pgvector/pgvector:pg16` | Docker 내부 `:5432` 전용 | `healthcheck: pg_isready`, `pgdata` 볼륨 마운트 | 정형 테이블(12개) + HNSW 벡터(`vector_documents`) + 단기 기억(`checkpoints`) + 장기 기억(`store`, `store_vectors`) |
 
 ---
 
 ## 3. 데이터 아키텍처 (PostgreSQL + pgvector + LangGraph 2계층 기억)
 
-단일 PostgreSQL(`pgvector`) 인스턴스에 **정형 테이블 10개 + HNSW 벡터 테이블 + LangGraph 단기/장기 기억 테이블**을 통합 관리합니다.
+단일 PostgreSQL(`pgvector`) 인스턴스에 **정형 테이블 12개(`cover_letters`, `experience_feedback_logs` 포함) + HNSW 벡터 테이블 + LangGraph 단기/장기 기억 테이블**을 통합 관리합니다.
 
 ```mermaid
 erDiagram
@@ -86,6 +86,7 @@ erDiagram
         varchar repo_url
         jsonb artifact_links
         jsonb retrospective
+        boolean is_portfolio_selected
         timestamp created_at
     }
 
@@ -154,14 +155,52 @@ erDiagram
     question_feedback_logs {
         int id PK
         varchar source_flow
+        varchar thread_id
+        int project_id
         varchar technique
         varchar target_axis
+        jsonb target_checkpoints
         text question_text
         int score_before
         int score_after
         int delta_score
+        int unlocked_checkpoints
         int critic_score
         int critic_revisions
+        int user_vote
+        varchar user_reason
+        timestamp created_at
+    }
+
+    experience_feedback_logs {
+        int id PK
+        int experience_id FK
+        int project_id
+        varchar thread_id
+        varchar rubric_version
+        int satisfaction_rating
+        int score_perception
+        text comment
+        int initial_score
+        int final_score
+        int score_gain
+        int turn_count
+        jsonb checkpoint_snapshot
+        timestamp created_at
+    }
+
+    cover_letters {
+        int id PK
+        varchar company_name
+        varchar target_role
+        text question
+        int char_limit
+        text final_text
+        int critic_score
+        int revision_count
+        jsonb used_projects
+        jsonb used_experiences
+        text memo
         timestamp created_at
     }
 
@@ -208,7 +247,7 @@ erDiagram
 | :--- | :--- | :--- |
 | `ChatBedrockConverse` | [bedrock.py](backend/app/core/bedrock.py) | AWS Bedrock Converse API 통합 호출(IAM Role 자동 인증, Tool Calling 지원) |
 | `BedrockEmbeddings` | [bedrock.py](backend/app/core/bedrock.py), [database.py](backend/app/core/database.py) | 1024차원 한국어/다국어 임베딩 (`asyncio.to_thread` 비동기 실행) |
-| `ChatPromptTemplate` + 외부 `.txt` | [app/prompts/](backend/app/prompts/loader.py) (14개 파일) | `<role>/<rules>/<output_format>` 표준 태그로 프롬프트 외부화 및 `@lru_cache` 로딩 |
+| `ChatPromptTemplate` + 외부 `.txt` | [app/prompts/](backend/app/prompts/loader.py) (15개 파일) | `<role>/<rules>/<output_format>` 표준 태그로 프롬프트 외부화(`star_checkpoint_audit.txt` 포함) 및 `@lru_cache` 로딩 |
 | `with_structured_output(schema, include_raw=True)` | [bedrock.py](backend/app/core/bedrock.py) | Pydantic 구조화 출력 + `usage_metadata`/`stopReason`/`latencyMs` 텔레메트리 동시 수집 + JSON Schema 폴백 + `_repair_truncated_json()` 잘림 복구 |
 | `LLMTelemetryTracker` (`contextvars`) | [bedrock.py](backend/app/core/bedrock.py) | 요청·그래프 단위 총 호출 수·입출력 토큰·지연시간·`max_tokens` 잘림 경고 집계 |
 | `MarkdownHeaderTextSplitter` + `RecursiveCharacterTextSplitter` | [chunker.py](backend/app/core/chunker.py) | 620자 이하 단문 유지 / 장문 `500자·겹침 100자` Parent/Child 분할 + 출처 라벨(`source_label`) 태깅 |
@@ -220,13 +259,13 @@ erDiagram
 | 기능 / 화면 | 파일 | 그래프 패턴 & 핵심 노드 | LLM 티어 | 기억 / 상태 영속화 | 가드레일 / 품질 루프 |
 | :--- | :--- | :--- | :---: | :--- | :--- |
 | **1. 나의 신념 & 일상 회고** | [beliefs.py](backend/app/api/beliefs.py) | REST + Direct Structured Chain (생각 심화 회고 · 신념 정제) | Smart | `belief_notes` + `career_identity` 청킹 벡터 | 프로필/노트 저장 시 자동 임베딩 동기화 |
-| **2. 포트폴리오 & 캐릭터** | [portfolio_manager.py](backend/app/tools/portfolio_manager.py)<br>[github_analyzer.py](backend/app/tools/github_analyzer.py)<br>[star_rubric.py](backend/app/core/star_rubric.py) | **루프 B 파이프라인:** Evidence Map(Map) → 트랙 합성(Reduce) → 3축 Verifier/Repair<br>**루프 A 파이프라인:** 온보딩/회고 질문 → Question Critic-Refiner | Fast + Smart | `projects`, `project_sections`, `experience` 청킹 벡터 | **루프 B 최대 2회**(환각 수치 코드 검사 + 중복률 `< 0.42`)<br>**루프 A 최대 2회**(코드 린트 + 80점 기준)<br>6축 캐릭터 `verified/partial/missing` 정직성 규칙 |
-| **3. 경험 채굴 (STAR-L)** | [interview_graph.py](backend/app/graphs/interview_graph.py) | **LangGraph `StateGraph` (HITL Interrupt Loop):** `prepare_turn` → `extract_star` → `grade_gaps` → (`generate_questions` ⇄ 사용자 답변) → `save_experience` | Fast | **`AsyncPostgresSaver` (`thread_id`)** + `question_feedback_logs` (`ΔSTAR-L`) | `recursion_limit=12`, 장기 `qa_history` 최근 6턴+압축, 5축 BARS 하드 캡, **루프 A 최대 2회**, `force_save=true` 즉시 탈출 |
+| **2. 포트폴리오 & STAR-L 마스터리** | [portfolio_manager.py](backend/app/tools/portfolio_manager.py)<br>[github_analyzer.py](backend/app/tools/github_analyzer.py)<br>[star_rubric.py](backend/app/core/star_rubric.py) | **루프 B 파이프라인:** Evidence Map(Map) → 트랙 합성(Reduce) → 3축 Verifier/Repair<br>**STAR-L 1,000 XP 집계:** 대표 4개 프로젝트 × 250 XP(체감 가중치 100/80/50/20%)<br>**온디맨드 GitHub PR·커밋 Diff 조회** | Fast + Smart | `projects` (`is_portfolio_selected`), `project_sections`, `experience` 청킹 벡터 | **루프 B 최대 2회**(환각 수치 코드 검사 + 중복률 `< 0.42` + 명확한 섹션 네이밍 규칙)<br>불러오기 시 자동 경험 생성 차단 |
+| **3. ★ 핵심: 경험 채굴 (Active Interviewer)** | [interview_graph.py](backend/app/graphs/interview_graph.py)<br>[star_rubric.py](backend/app/core/star_rubric.py)<br>[rubrics/rubric_v2.1.json](backend/app/rubrics/rubric_v2.1.json) | **LangGraph `StateGraph` (HITL Interrupt Loop):** `load_project_context` → `prepare_turn` → `extract_star` → `grade_gaps`(21지표 v2.1 하이브리드) → (`generate_questions` ⇄ 사용자 답변) → `save_experience` | Fast | **`AsyncPostgresSaver` (`thread_id`)** + `question_feedback_logs` (`👍/👎`·`ΔSTAR-L`·해금 수) + `experience_feedback_logs` (만족도·점수 체감) | `recursion_limit=12`, **12종 Python 코드 하드 캡 + Quote Grounding(`≥0.52`)**, **보수적 루프 A(`< 70` 또는 린트 결함)**, 동적 `<user_feedback_rules>` 주입, 경험 직접 CRUD·재채점 & 프로젝트 역반영 |
 | **4. 기업 리서치** | [company_graph.py](backend/app/graphs/company_graph.py) | **LangGraph `StateGraph` (4-Node Pipeline):** `query_planner` → `company_searcher` → `identity_portfolio_loader` → `alignment_synthesizer` → `save_company_profile` | Fast + Smart | `company_profiles` + `company_research` 청킹 벡터 | 웹 타임아웃 격리, 출처 번호 `[1]` 인용, JD 1급 근거 우선 반영 |
-| **5. 자소서 공방 v2** | [cover_letter_graph.py](backend/app/graphs/cover_letter_graph.py) | **2단계 HITL + LangGraph `StateGraph` (Critic-Refiner Loop):** Step1 `recommend` → Step2 `multi_source_retriever`(Hybrid+MMR) → `drafter` → (`critic` ⇄ `refiner`) → `de_ai_humanizer` | Smart | 선택 DB 팩트 직접 주입 + 4종 `doc_type` 분리 Hybrid RAG | 유효 ID 코드 검증, `revision_count >= 2` 또는 `critic_score >= 85` 강제 전환, `jasoseo_sample` 수치 유입·AI 클리셰 코드 사후 검증 |
-| **6. 지원 & 취준 회고** | [copilot_graph.py](backend/app/graphs/copilot_graph.py) | **LangGraph `StateGraph` (3-Node):** `load_retro_context` → `analyze_gap_and_plan` → `save_application_log` | Smart | `application_logs` | 6축 캐릭터 약점 대조 + 코파일럿 주제 원클릭 전달 |
+| **5. 자소서 공방 v2 & 보관함** | [cover_letter_graph.py](backend/app/graphs/cover_letter_graph.py) | **2단계 HITL + LangGraph `StateGraph` (Critic-Refiner Loop):** Step1 `recommend` → Step2 `multi_source_retriever`(Hybrid+MMR) → `drafter` → (`critic` ⇄ `refiner`) → `de_ai_humanizer` | Smart | `cover_letters` 보관함 자동 저장 + 선택 DB 팩트 직접 주입 + 4종 `doc_type` 분리 Hybrid RAG | 유효 ID 코드 검증, `revision_count >= 2` 또는 `critic_score >= 85` 강제 전환, `jasoseo_sample` 수치 유입·AI 클리셰 코드 사후 검증 |
+| **6. 지원 & 취준 회고** | [copilot_graph.py](backend/app/graphs/copilot_graph.py) | **LangGraph `StateGraph` (3-Node):** `load_retro_context` → `analyze_gap_and_plan` → `save_application_log` | Smart | `application_logs` | 포트폴리오 약점 대조 + 코파일럿 주제 원클릭 전달 |
 | **7. 새 프로젝트 코파일럿** | [copilot_agent_graph.py](backend/app/graphs/copilot_agent_graph.py)<br>[copilot_graph.py](backend/app/graphs/copilot_graph.py) | **청사진:** `propose_new_project_blueprints`<br>**채팅 (Agentic RAG ReAct `MessagesState`):** `START → model ⇄ tools → stop → END` | Fast + Smart | **단기:** `AsyncPostgresSaver` (`thread_id`) + `trim_messages`<br>**장기:** `AsyncPostgresStore` (`namespace`) | **2중 상한:** `tool_count >= 4 → stop` + `recursion_limit=14`, 웹 검색 턴당 1회, 검색 전략 에스컬레이션(`hybrid`→`rewrite`→`hyde`), 장기 기억 PII 차단 |
-| **오프라인 정량 평가** | [eval/run_eval.py](backend/eval/run_eval.py)<br>[eval/run_quality_eval.py](backend/eval/run_quality_eval.py) | RAG 15문항(검색 비교 + Nova Pro 6지표 Judge + BYOI JSONL) & 루프 A(10종)/루프 B(6종) 전후 비교 러너 | Lite(생성) + Pro(채점) | 격리 태그(`eval_corpus`) 실행 후 자동 정리 | 생성 모델 ≠ 채점 모델 원칙, Baseline vs Upgraded 동일 시험지 비교 |
+| **오프라인 정량 평가** | [eval/run_eval.py](backend/eval/run_eval.py)<br>[eval/run_rubric_eval.py](backend/eval/run_rubric_eval.py)<br>[eval/run_quality_eval.py](backend/eval/run_quality_eval.py) | RAG 15문항 + **STAR-L 21지표 15건 캘리브레이션(5대 지표: `Spearman ρ=0.9543`)** + 루프 A(10종)/루프 B(6종) 전후 비교 러너 | Lite(생성) + Pro(채점) | 격리 태그(`eval_corpus`) 실행 후 자동 정리 | 생성 모델 ≠ 채점 모델 원칙, `v2.0` vs `v2.1` 회귀 검증 게이트 |
 
 ### 4.4 RAG 검색 엔진 v2 (`backend/app/core/vector_store.py`)
 - **격리 정책:** `validate_doc_types()`로 `doc_types` 미지정 전체 검색 원천 차단.
@@ -240,7 +279,7 @@ erDiagram
 ### 5.1 공통 SSE 이벤트 스키마 (`backend/app/api/sse.py`)
 - `node_start`: `{"event": "node_start", "node": "<node_name>", "message": "..."}`
 - `node_end`: `{"event": "node_end", "node": "<node_name>", "data": {...}}` *(코파일럿의 경우 `tool_calls`, `tool_count`, `latest_tools` 포함)*
-- `interrupt`: `{"event": "interrupt", "thread_id": "...", "data": {"questions": [...], "structured_questions": [...], "completeness_score": 65, "star_scores": {...}}}`
+- `interrupt`: `{"event": "interrupt", "thread_id": "...", "data": {"questions": [...], "structured_questions": [...], "completeness_score": 45, "star_scores": {...}, "last_unlocked_checkpoints": 3}}`
 - `done`: `{"event": "done", "data": {..., "telemetry": {...}}}`
 - `error`: `{"event": "error", "message": "..."}`
 
@@ -248,15 +287,14 @@ erDiagram
 
 | 영역 | 메서드 & 경로 | 전송 방식 | 설명 |
 | :--- | :--- | :---: | :--- |
-| **Health / Profile** | `GET /api/health`, `GET / PUT /api/profile` | REST | 헬스체크, 신념·비전·선호 문체·외적 역량 메모 (`career_identity` 청킹 업서트) |
+| **Health / Profile** | `GET /api/health`, `GET / PUT /api/profile` | REST | 헬스체크, 신념·비전·선호 문체 (`career_identity` 청킹 업서트) |
 | **Beliefs Journal** | `GET / POST / PUT / DELETE /api/beliefs/notes`, `/reflect`, `/synthesize-identity` | REST | 일상 회고 저널, AI 심화 회고 및 신념 정제 |
-| **Projects & Tracks** | `GET /api/projects/templates`, `CRUD /api/projects`, `POST /{id}/tracks`, `CRUD /{id}/sections` | REST | 멀티트랙 프로젝트·섹션 관리 (`experience` 청킹 동기화) |
-| **Doc / GitHub (루프 B)** | `POST /api/projects/analyze-document`, `/analyze-github/stream`, `/{id}/ingest-document`, `/{id}/sections/{sec_id}/ingest-document` | Multipart / SSE / REST | Evidence Map → 트랙 합성 → 3축 Critic-Repair(최대 2회) 적용 문서/GitHub/섹션 업데이트 |
-| **STAR-L & Retro (루프 A)** | `POST /api/projects/{id}/star-onboarding/*`, `/{id}/retrospective/*`, `GET /api/projects/learning-loop`, `GET/POST /api/projects/portfolio-diagnosis` | REST | Question Critic-Refiner(최대 2회) 적용 온보딩·회고 질문, `Try` 학습 루프, 6축 캐릭터 진단 |
-| **Agent ① (Interview)** | `POST /api/agents/interview/start`, `/reply`, `GET /api/agents/question-quality/stats` | SSE / REST | 5축 STAR-L 채굴, 루프 A 질문 비평·`ΔSTAR-L` 통계 조회 |
+| **Projects & Mastery** | `GET /api/projects/portfolio-mastery`, `PUT /api/projects/portfolio-selection`, `CRUD /api/projects`, `CRUD /{id}/sections` | REST | 대표 4개 프로젝트 선택·1,000 XP 마스터리·21지표 히트맵, 멀티트랙 프로젝트·섹션 관리 |
+| **Doc / GitHub / Reverse-Sync** | `POST /api/projects/analyze-document`, `/analyze-github/stream`, `/{id}/github-activity`, `/{id}/github-diff-context`, `/{id}/sync-from-experience/{exp_id}`, `/{id}/apply-updates` | Multipart / SSE / REST | 루프 B 적용 문서/GitHub 분석, **온디맨드 PR·커밋 Diff 조회**, **역질문 결과 프로젝트 섹션 역반영** |
+| **Experiences & Agent ①** | `CRUD /api/experiences` (`POST`/`PUT` 즉시 21지표 채점), `POST /api/agents/interview/start`, `/reply`, `POST /api/agents/question-feedback`, `/experience-feedback`, `GET /api/agents/experience-mining/metrics` | REST / SSE | STAR-L 21지표(v2.1) 직접 입력·수정·재채점·역질문 채굴, 2중 피드백(`👍/👎`, 만족도·체감) 및 21항목 문항 분석 |
 | **Agent ② (Company)** | `POST /api/agents/company/research`, `GET / DELETE /api/companies` | SSE / REST | 4관점 멀티소스 리서치 & 신념 3각 매칭 |
-| **Agent ③ (Cover Letter)** | `POST /api/agents/cover-letter/recommend`, `/generate`, `GET/POST /api/samples` | REST / SSE | 1단계 문항 해부·소재 추천 → 2단계 3축 융합·비평·퇴고·De-AI·코드 사후 검증 |
-| **Agent ④ (Retrospect)** | `POST /api/agents/applications/retrospect`, `GET / DELETE /api/applications` | SSE / REST | 6축 캐릭터 대비 Gap 분석 & 코파일럿 주제 연계 |
+| **Agent ③ (Cover Letter)** | `POST /api/agents/cover-letter/recommend`, `/generate`, `CRUD /api/cover-letters`, `GET/POST /api/samples` | REST / SSE | 문항 해부·소재 추천 → 3축 융합·비평·퇴고·De-AI·코드 사후 검증 + **자소서 보관함 CRUD** |
+| **Agent ④ (Retrospect)** | `POST /api/agents/applications/retrospect`, `GET / DELETE /api/applications` | SSE / REST | 포트폴리오 Gap 분석 & 코파일럿 주제 연계 |
 | **Agent ④ (Copilot v2)** | `POST /api/agents/copilot/propose-projects`, `/chat`, `GET /history/{thread_id}`, `GET / DELETE /memories` | REST / SSE | 청사진 추천 + Agentic RAG ReAct 채팅(단기 `thread_id` 이력 & 장기 기억 서랍 CRUD) |
 
 ---
@@ -264,16 +302,16 @@ erDiagram
 ## 6. 프론트엔드 아키텍처 (`frontend/`)
 
 - **레이아웃:** 좌측 고정 사이드바(`Sidebar.jsx`) + 우측 **7개 독립 기능 뷰** 전환 구조.
-- **상태 관리:** React 기본 Hook + [client.js](./frontend/src/api/client.js) (`apiRequest()` / `streamSSE()`).
+- **상태 관리:** React 기본 Hook + [client.js](./frontend/src/api/client.js) (`apiRequest()` / `streamSSE()`) + 섹션 전환 시 `localStorage`/`sessionStorage` 드래프트·AI 제안 상태 보존.
 
 | 순서 | 화면 컴포넌트 | 역할 |
 | :---: | :--- | :--- |
 | 1 | `IdentityBeliefsPage.jsx` | 나의 신념·비전·선호 문체 + 일상 회고 저널 + AI 심화 회고 & 신념 정제 |
-| 2 | `IdentityPortfolioPage.jsx` | 접이식 6축 포트폴리오 캐릭터 진단 + 멀티트랙 프로젝트 워크스페이스(섹션 AI 업데이트·STAR-L 온보딩·프로젝트 회고) |
-| 3 | `ExperienceMinerPage.jsx` | 5축 STAR-L 레이더 & S~D 등급 + DDI/Bar-Raiser 역질문 채팅 + `[이 상태로 저장하기]` |
+| 2 | `IdentityPortfolioPage.jsx` | **STAR-L 1,000 XP 마스터리 보드**(대표 4슬롯 토글·21지표 히트맵·약점 TOP 3) + 멀티트랙 프로젝트 워크스페이스(섹션 상태 유지 · PR·커밋 Diff 채굴 · 프로젝트 회고) |
+| 3 | `ExperienceMinerPage.jsx` | **핵심 엔진 UI:** 프로젝트 요약 / **GitHub PR·커밋 Diff** / **직접 STAR-L 입력** + 21지표 실시간 해금 감사표 + 역질문 `👍/👎`·완료 만족도/체감 피드백 + 품질·캘리브레이션·문항 분석 대시보드 + **경험 상세 수정·재채점** + **프로젝트 섹션 역반영** |
 | 4 | `CompanyInterestPage.jsx` | 목표 기업 4관점 멀티소스 리서치 + 출처 인용 & 신념 3각 매칭 |
-| 5 | `CoverLetterStudioPage.jsx` | 자소서 공방 v2(문항 해부 → 프로젝트·STAR-L 선택 → 3축 융합·비평·퇴고·De-AI) |
-| 6 | `ApplicationRetroPage.jsx` | 지원 현황 통계 + 6축 캐릭터 대비 Gap 분석 + 코파일럿 원클릭 연계 |
+| 5 | `CoverLetterStudioPage.jsx` | 자소서 공방 v2(문항 해부 → 소재 선택 → 3축 융합·비평·퇴고·De-AI) + **생성 자소서 보관함(인라인 편집·메모·버전 저장)** |
+| 6 | `ApplicationRetroPage.jsx` | 지원 현황 통계 + Gap 분석 + 코파일럿 원클릭 연계 |
 | 7 | `ProjectCopilotPage.jsx` | 새 프로젝트 청사진 추천 + **Agentic RAG 코파일럿(`[새 대화]`, 도구 호출 타임라인, 장기 기억 서랍)** |
 
 ---
@@ -284,6 +322,7 @@ erDiagram
 write-on-vibe-lab/
 ├── docker-compose.yml                  # frontend + backend + db(pgvector) 3-컨테이너
 ├── README.md                           # 프로젝트 개요 & 빠른 시작
+├── EXPERIENCE_MINING_ARCHITECTURE.md   # ★ 핵심 엔진: 경험 채굴 · STAR-L v2.1 · 1,000 XP · 실측 심층 설계서
 ├── ARCHITECTURE.md                     # 본 시스템 아키텍처 & AI(LLM·LangChain·LangGraph) 설계서
 ├── WORKFLOWS.md                        # LangGraph 워크플로우 & 루브릭 명세서
 ├── LANGCHAIN_LANGGRAPH_UPGRADE.md      # LangChain/LangGraph/RAG 4-Phase 고도화 기록
@@ -293,16 +332,17 @@ write-on-vibe-lab/
 ├── scripts/                            # deploy_ec2.sh, e2e_verify.py
 ├── backend/
 │   ├── Dockerfile / requirements.txt
-│   ├── eval/                           # 골든 평가셋 3종(RAG 15 / 질문 10 / 요약 6) + run_eval.py + run_quality_eval.py
-│   ├── tests/                          # 단위 테스트 (루브릭·템플릿·JSON복구·RAG v2·Agent·루프 A/B)
+│   ├── eval/                           # 골든 평가셋 4종(RAG 15 / 루브릭 15 / 질문 10 / 요약 6) + 평가 러너 3종
+│   ├── tests/                          # 단위 테스트 48건 (STAR-L v2.1 · GitHub Diff · RAG v2 · Agent · 루프 A/B)
 │   └── app/
 │       ├── main.py / config.py
-│       ├── prompts/                    # 외부 프롬프트 템플릿 14종 (<role>/<rules>/<output_format>) + loader.py
-│       ├── core/                       # bedrock.py(관측성), database.py(HNSW/Saver/Store), chunker.py,
-│       │                               # vector_store.py(BM25+RRF/MMR/Rewrite/HyDE), project_templates.py,
-│       │                               # star_rubric.py, question_critic.py(루프A), summary_verifier.py(루프B)
+│       ├── rubrics/                    # 버전 관리형 체크표 번들 (rubric_v2.0.json, rubric_v2.1.json)
+│       ├── prompts/                    # 외부 프롬프트 템플릿 15종 (<role>/<rules>/<output_format>) + loader.py
+│       ├── core/                       # bedrock.py(관측성), database.py(12테이블/HNSW/Saver/Store), chunker.py,
+│       │                               # vector_store.py(BM25+RRF/MMR/Rewrite/HyDE), project_templates.py(네이밍 규칙),
+│       │                               # star_rubric.py(21지표 하이브리드/1,000 XP), question_critic.py(루프A), summary_verifier.py(루프B)
 │       ├── schemas/                    # Pydantic 입출력 스키마
-│       ├── tools/                      # web_search, document_parser, github_analyzer, portfolio_manager, copilot_tools(@tool 6종)
+│       ├── tools/                      # web_search, document_parser, github_analyzer(PR/Commit Diff), portfolio_manager, copilot_tools(@tool 6종)
 │       ├── graphs/                     # interview_graph, company_graph, cover_letter_graph, copilot_graph, copilot_agent_graph
 │       ├── api/                        # FastAPI REST & SSE 라우터
 │       ├── scripts/                    # verify_bedrock.py, reindex_vectors.py
@@ -311,7 +351,8 @@ write-on-vibe-lab/
     ├── Dockerfile / nginx.conf / package.json
     └── src/
         ├── api/client.js
-        ├── components/                 # Sidebar, RadarChart, PortfolioDiagnosisPanel, ProjectWorkspaceView, StarMeter 등
+        ├── components/                 # Sidebar, PortfolioDiagnosisPanel(1,000 XP), ProjectWorkspaceView, StarMeter(21지표),
+        │                               # ExperienceDetailModal(수정·재채점), ExperienceProjectSyncModal, GitHubActivityPickerModal
         └── pages/                      # 7개 독립 페이지
 ```
 
