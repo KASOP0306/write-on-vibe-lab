@@ -198,20 +198,20 @@ class TestPortfolioWorkspace(unittest.TestCase):
         self.assertEqual(scores["overall_score"], 65)
 
         ref = get_rubric_reference_payload()
-        self.assertEqual(ref["rubric_version"], "v2.0")
+        self.assertEqual(ref["rubric_version"], "v2.1")
         self.assertEqual(len(ref["star_rubric"]["axes"]), 5)
         self.assertEqual(len(ref["star_rubric"]["checkpoints"]), 21)
-        self.assertEqual(ref["portfolio_xp"]["max_total_xp"], 600)
-        self.assertEqual(ref["portfolio_xp"]["project_cap"], 150)
+        self.assertEqual(ref["portfolio_xp"]["max_total_xp"], 1000)
+        self.assertEqual(ref["portfolio_xp"]["project_cap"], 250)
         self.assertEqual(ref["portfolio_xp"]["max_selected_projects"], 4)
         self.assertEqual(len(ref["calibration_tiers"]), 5)
         self.assertEqual(len(ref["probing_techniques"]), 5)
-        # v2.0 보수적 등급 경계 (S:85+, A:70+, B:50+, C:30+, D:<30)
+        # v2.1 엄격 보수 등급 경계 (S:85+, A:70+, B:55+, C:35+, D:<35)
         self.assertEqual(get_calibration_tier(88)["grade"], "S")
         self.assertEqual(get_calibration_tier(74)["grade"], "A")
-        self.assertEqual(get_calibration_tier(55)["grade"], "B")
-        self.assertEqual(get_calibration_tier(35)["grade"], "C")
-        self.assertEqual(get_calibration_tier(20)["grade"], "D")
+        self.assertEqual(get_calibration_tier(58)["grade"], "B")
+        self.assertEqual(get_calibration_tier(40)["grade"], "C")
+        self.assertEqual(get_calibration_tier(25)["grade"], "D")
 
 
 if __name__ == "__main__":

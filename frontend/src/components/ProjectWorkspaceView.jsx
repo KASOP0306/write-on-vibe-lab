@@ -545,10 +545,6 @@ export default function ProjectWorkspaceView({
           title: s.title,
           content: s.proposed_content,
         }));
-      const chosenExps = (updateProposal.suggested_experiences || []).filter((_, idx) =>
-        selectedExpIndices.has(idx)
-      );
-
       const res = await api.applyProjectUpdates(project.id, {
         filename: updateProposal.filename,
         source_type: updateProposal.source_type,
@@ -563,13 +559,13 @@ export default function ProjectWorkspaceView({
           ? updateProposal.suggested_tech_stack_additions || []
           : [],
         section_updates: chosenSections,
-        experiences: chosenExps,
+        experiences: [],
       });
       setUpdateProposal(null);
       await loadProject(true);
       await onGlobalRefresh();
       alert(
-        `업데이트 완료! 섹션 ${res.updated_section_types.length}개 반영 · STAR 경험 ${res.saved_experience_ids.length}건 추가 (벡터 동기화 ${res.vector_synced_count}건)`
+        `업데이트 완료! 섹션 ${res.updated_section_types.length}개 반영 (벡터 동기화 ${res.vector_synced_count}건)`
       );
     } catch (err) {
       alert(`업데이트 반영 실패: ${err.message}`);
@@ -2470,40 +2466,6 @@ export default function ProjectWorkspaceView({
                   })
                 )}
               </div>
-
-              {(updateProposal.suggested_experiences || []).length > 0 && (
-                <div className="space-y-2">
-                  <div className="font-bold text-slate-800">
-                    신규 STAR 경험 추가 제안 ({updateProposal.suggested_experiences.length}건)
-                  </div>
-                  {updateProposal.suggested_experiences.map((exp, idx) => (
-                    <label
-                      key={idx}
-                      className="block rounded-xl border border-slate-200 p-3 space-y-1 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2 font-bold text-slate-900">
-                        <input
-                          type="checkbox"
-                          checked={selectedExpIndices.has(idx)}
-                          onChange={() =>
-                            setSelectedExpIndices((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(idx)) next.delete(idx);
-                              else next.add(idx);
-                              return next;
-                            })
-                          }
-                        />
-                        <span>{exp.title}</span>
-                      </div>
-                      <p className="text-slate-600 pl-5">
-                        <strong>A:</strong> {exp.action} / <strong>R:</strong>{" "}
-                        {exp.result}
-                      </p>
-                    </label>
-                  ))}
-                </div>
-              )}
             </div>
 
             <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
@@ -2524,7 +2486,7 @@ export default function ProjectWorkspaceView({
                 <span>
                   {applyingUpdates
                     ? "반영 중..."
-                    : `선택한 섹션 ${selectedUpdateIndices.size}개 + STAR ${selectedExpIndices.size}건 반영`}
+                    : `선택한 섹션 ${selectedUpdateIndices.size}개 반영`}
                 </span>
               </button>
             </div>
@@ -2831,11 +2793,17 @@ export default function ProjectWorkspaceView({
 
       <ExperienceDetailModal
         experience={detailExp}
+        projects={project ? [{ id: project.id, name: project.name }] : []}
         projectName={project?.name || ""}
         onClose={() => setDetailExp(null)}
         onOpenProjectSync={(exp) => {
           setDetailExp(null);
           setSyncExp(exp);
+        }}
+        onUpdated={async (updated) => {
+          setDetailExp(updated);
+          await loadProject(true);
+          await onGlobalRefresh();
         }}
       />
 

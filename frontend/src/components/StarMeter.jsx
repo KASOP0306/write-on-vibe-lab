@@ -12,7 +12,7 @@ const AXIS_META = [
 function getTierBadge(score, gradeProp, labelProp) {
   const s = Number(score) || 0;
   const grade =
-    gradeProp || (s >= 85 ? "S" : s >= 70 ? "A" : s >= 50 ? "B" : s >= 30 ? "C" : "D");
+    gradeProp || (s >= 85 ? "S" : s >= 70 ? "A" : s >= 55 ? "B" : s >= 35 ? "C" : "D");
   const label =
     labelProp ||
     (grade === "S"

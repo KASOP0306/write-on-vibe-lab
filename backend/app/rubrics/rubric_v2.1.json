@@ -1,0 +1,416 @@
+{
+  "version": "v2.1",
+  "name": "STAR-L 21-Checkpoint Strict Hybrid Rubric (v2.1)",
+  "references": [
+    {
+      "name": "Sackett, Zhang, Berry, & Lievens (2022, JAP)",
+      "role": "구조화 면접 직무 성과 예측 타당도 1위(r=0.42) — 표준 STAR + 행동 척도 + 근거 메모 채점"
+    },
+    {
+      "name": "Google re:Work Structured Interviewing & BARS",
+      "role": "관찰 가능한 행동 앵커(BARS), verbatim 원문 근거 기록, Action·Result 중심 배분(62%)"
+    },
+    {
+      "name": "Amazon Bar Raiser STAR Probing",
+      "role": "'I vs We' 개인 주도성 원칙, 대안·트레이드오프·실패 투명성·리스크 프로빙"
+    },
+    {
+      "name": "CheckEval (arXiv:2403.18771) × Rulers (2026) × FActScore × FLASK × RaR",
+      "role": "버전 고정 Atomic 체크리스트(v2.1 엄격 부분점수 30% + 확장 코드 하드캡) + 체감 수익(Diminishing Returns) 누적 XP"
+    }
+  ],
+  "calibration_tiers": [
+    {
+      "grade": "S",
+      "min_score": 85,
+      "xp_multiplier": 1.0,
+      "label": "Bar Raiser 수준 (최상위)",
+      "color": "emerald",
+      "description": "대안 비교·트레이드오프·전후 정량 검증·재발 방지 원칙까지 입증되어 심층 꼬리질문도 방어 가능한 수준"
+    },
+    {
+      "grade": "A",
+      "min_score": 70,
+      "xp_multiplier": 0.85,
+      "label": "Clear Signal (채용 기준 충족)",
+      "color": "indigo",
+      "description": "개인 오너십과 구체 행동·성과 근거가 선명해 자소서·면접 핵심 소재로 즉시 활용 가능한 수준"
+    },
+    {
+      "grade": "B",
+      "min_score": 55,
+      "xp_multiplier": 0.6,
+      "label": "Mixed Signal (보완 권장)",
+      "color": "amber",
+      "description": "핵심 뼈대는 갖췄으나 정량 기준선, 대안 비교, 또는 개인 기여 경계 보강이 필요한 수준"
+    },
+    {
+      "grade": "C",
+      "min_score": 35,
+      "xp_multiplier": 0.3,
+      "label": "Below Bar (핵심 공백)",
+      "color": "orange",
+      "description": "면접관 드릴다운 시 기여도·근거 공백이 바로 노출될 수 있어 역질문 보강이 필요한 수준"
+    },
+    {
+      "grade": "D",
+      "min_score": 0,
+      "xp_multiplier": 0.1,
+      "label": "Strong Concern (초안·근거 부족)",
+      "color": "rose",
+      "description": "거친 초안 수준으로 구체적 행동·의사결정·정량 근거를 채굴해야 하는 단계"
+    }
+  ],
+  "portfolio_xp": {
+    "project_cap": 250,
+    "max_selected_projects": 4,
+    "max_total_xp": 1000,
+    "rank_decay_weights": [1.0, 0.8, 0.5, 0.2],
+    "levels": [
+      {
+        "level": 4,
+        "code": "Lv.4",
+        "name": "Bar Raiser",
+        "min_xp": 800,
+        "color": "emerald",
+        "description": "대표 4개 프로젝트 전반에서 다수의 A~S급 검증 경험을 축적한 최상위 포트폴리오"
+      },
+      {
+        "level": 3,
+        "code": "Lv.3",
+        "name": "Proven",
+        "min_xp": 500,
+        "color": "indigo",
+        "description": "3개 이상 대표 프로젝트에서 일관된 행동·성과 근거가 입증된 단계"
+      },
+      {
+        "level": 2,
+        "code": "Lv.2",
+        "name": "Builder",
+        "min_xp": 250,
+        "color": "amber",
+        "description": "1~2개 대표 프로젝트의 경험 근거를 쌓은 단계 (단일 프로젝트는 최대 250 XP 제한)"
+      },
+      {
+        "level": 1,
+        "code": "Lv.1",
+        "name": "Seed",
+        "min_xp": 0,
+        "color": "slate",
+        "description": "첫 대표 프로젝트의 STAR-L 경험 채굴을 시작한 단계"
+      }
+    ]
+  },
+  "axes": {
+    "situation": {
+      "id": "situation",
+      "code": "S",
+      "label": "상황 · 맥락",
+      "short_label": "S 상황",
+      "max_points": 12,
+      "weight": 0.12,
+      "reference": "Google re:Work & DDI Targeted Selection — Context Clarity",
+      "description": "프로젝트 배경, 문제·결핍, 제약조건 및 영향 규모가 군더더기 없이 명확한가"
+    },
+    "task": {
+      "id": "task",
+      "code": "T",
+      "label": "과제 · 책임",
+      "short_label": "T 책임",
+      "max_points": 14,
+      "weight": 0.14,
+      "reference": "Amazon Bar Raiser — Ownership & Root Cause Diagnosis",
+      "description": "목표·성공 기준, 본인 오너십 경계, 원인 진단 및 우선순위 판단이 명확한가"
+    },
+    "action": {
+      "id": "action",
+      "code": "A",
+      "label": "행동 · 실행 · 운영",
+      "short_label": "A 행동",
+      "max_points": 36,
+      "weight": 0.36,
+      "reference": "Amazon Bar Raiser ('I' Rule) × Google GCA Trade-off",
+      "description": "구체적 실행 절차, 대안 비교, 본인 주도성, 장애물 돌파, 일정·리스크 및 이해관계자 조율"
+    },
+    "result": {
+      "id": "result",
+      "code": "R",
+      "label": "결과 · 검증",
+      "short_label": "R 성과",
+      "max_points": 26,
+      "weight": 0.26,
+      "reference": "Google XYZ Formula ([X] measured by [Y] by doing [Z])",
+      "description": "정량 수치, 전후 비교 기준선(Before/After), 행동→결과 인과성 및 외부 검증"
+    },
+    "learning": {
+      "id": "learning",
+      "code": "L",
+      "label": "회고 · 전이",
+      "short_label": "L 회고",
+      "max_points": 12,
+      "weight": 0.12,
+      "reference": "Post-Mortem / CARL Learning Agility",
+      "description": "한계 메타인지, 일반화된 업무 원칙 및 후속 프로젝트 적용·재현성"
+    }
+  },
+  "checkpoints": [
+    {
+      "id": "S1",
+      "axis": "situation",
+      "label": "배경·환경 구체성",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "micro_behavioral",
+      "anchor_0": "시기·조직·프로젝트 도메인 맥락이 전혀 없음",
+      "anchor_1": "프로젝트 이름이나 분야만 모호하게 언급됨",
+      "anchor_2": "언제, 어떤 팀/조직/서비스 환경에서 발생한 일인지 구체적으로 명시됨",
+      "probe_hint": "이 일이 언제, 어떤 서비스/팀 상황에서 시작되었는지 구체적 배경을 물어보세요."
+    },
+    {
+      "id": "S2",
+      "axis": "situation",
+      "label": "문제·결핍의 구체화",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "micro_behavioral",
+      "anchor_0": "해결해야 할 문제나 병목 자체가 제시되지 않음",
+      "anchor_1": "'느렸다', '불편했다' 등 추상적 불편감만 언급됨",
+      "anchor_2": "구체적 병목·장애·이탈·비효율의 실체와 방치 시 리스크가 명확히 드러남",
+      "probe_hint": "당시 정확히 무엇이 병목이었고, 해결하지 않으면 어떤 문제가 생기는 상황이었는지 물어보세요."
+    },
+    {
+      "id": "S3",
+      "axis": "situation",
+      "label": "제약조건·난이도",
+      "weight": 2,
+      "partial_weight": 1,
+      "technique": "counter_factual",
+      "anchor_0": "마감·인력·예산·기술적 제약이나 난이도 언급 없음",
+      "anchor_1": "'어려웠다', '시간이 부족했다' 등 모호한 표현만 있음",
+      "anchor_2": "구체적 기한·인력·예산·레거시/기술 제약 또는 이해관계자 갈등 조건이 명시됨",
+      "probe_hint": "당시 마감 기한·인력·기술·예산 중 가장 까다로웠던 제약조건이 무엇이었는지 물어보세요."
+    },
+    {
+      "id": "S4",
+      "axis": "situation",
+      "label": "규모·중요도",
+      "weight": 2,
+      "partial_weight": 1,
+      "technique": "xyz_quantification",
+      "anchor_0": "사용자 수·트래픽·매출·팀 규모 등 영향 범위 정보 없음",
+      "anchor_1": "대략적 대상만 언급되고 규모감 불명확",
+      "anchor_2": "트래픽·사용자·데이터량·매출·팀 규모 등 문제의 크기와 비즈니스 중요도가 드러남",
+      "probe_hint": "이 문제가 영향을 미치던 사용자 수·트래픽·팀 규모나 비즈니스 중요도는 어느 정도였는지 물어보세요."
+    },
+    {
+      "id": "T1",
+      "axis": "task",
+      "label": "목표·성공 기준",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "xyz_quantification",
+      "anchor_0": "달성해야 할 목표나 완료 기준이 명시되지 않음",
+      "anchor_1": "'개선하기', '잘 만들기' 등 추상적 목표만 언급됨",
+      "anchor_2": "정량 목표치 또는 객관적으로 확인 가능한 완료 조건(DoD/KPI)이 정의됨",
+      "probe_hint": "이 과제에서 '성공했다'고 판단할 구체적 목표 기준(KPI 또는 완료 조건)을 어떻게 세웠는지 물어보세요."
+    },
+    {
+      "id": "T2",
+      "axis": "task",
+      "label": "본인 역할·책임 경계",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "ownership_drilldown",
+      "anchor_0": "'팀이 했다'만 있고 본인 담당 범위 불명확",
+      "anchor_1": "직무 포지션(예: 백엔드 담당)만 언급되고 구체적 책임 경계 모호",
+      "anchor_2": "팀 목표 중 본인이 직접 오너십을 갖고 끝까지 책임진 범위가 선명하게 분리됨",
+      "probe_hint": "팀 전체 과제 중에서 다른 팀원이 아니라 본인이 단독으로 책임져야 했던 범위는 정확히 어디까지였는지 물어보세요."
+    },
+    {
+      "id": "T3",
+      "axis": "task",
+      "label": "원인 진단·가설 수립",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "micro_behavioral",
+      "anchor_0": "문제 원인 분석 없이 곧바로 해결책만 나열됨",
+      "anchor_1": "단순 추측 수준의 원인만 한 줄 언급됨",
+      "anchor_2": "로그·데이터·프로파일링·사용자 인터뷰·리서치 등 근거로 핵심 원인을 진단하고 가설을 세움",
+      "probe_hint": "해결책을 바로 적용하기 전에, 문제의 진짜 원인을 어떤 데이터·로그·조사로 먼저 진단했는지 물어보세요."
+    },
+    {
+      "id": "T4",
+      "axis": "task",
+      "label": "우선순위 판단 기준",
+      "weight": 2,
+      "partial_weight": 1,
+      "technique": "counter_factual",
+      "anchor_0": "왜 이 과제를 먼저/핵심으로 택했는지 언급 없음",
+      "anchor_1": "중요해서 먼저 했다는 수준의 추상적 이유만 있음",
+      "anchor_2": "임팩트·비용·긴급도 등 명확한 기준으로 여러 후보 중 우선순위를 결정한 논리가 있음",
+      "probe_hint": "해결할 거리가 여러 개였을 텐데, 왜 이 과제를 최우선으로 잡았는지 판단 기준을 물어보세요."
+    },
+    {
+      "id": "A1",
+      "axis": "action",
+      "label": "실행 방법·절차 구체성",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "micro_behavioral",
+      "anchor_0": "'최적화했다', '구현했다', '기획했다' 등 추상 동사만 존재",
+      "anchor_1": "도구/기술명만 나열되고 구체적 실행 단계가 생략됨",
+      "anchor_2": "실제 수행한 설계·구현·실험·운영 절차와 핵심 메커니즘이 구체적으로 서술됨",
+      "probe_hint": "추상적 요약 대신 실제로 어떤 단계와 도구·설정·방식으로 문제를 해결했는지 구체적 실행 과정을 물어보세요."
+    },
+    {
+      "id": "A2",
+      "axis": "action",
+      "label": "대안 비교·트레이드오프",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "counter_factual",
+      "anchor_0": "고민한 다른 선택지나 비교 근거가 전혀 없음",
+      "anchor_1": "선택한 방식의 장점만 단편적으로 언급됨",
+      "anchor_2": "2개 이상 구체적 대안(A vs B)의 장단점·비용·리스크를 비교하고 현재 방식을 택한 논리적 근거가 명확함",
+      "probe_hint": "지금 방식 외에 검토했다가 포기한 대안은 무엇이었고, 어떤 트레이드오프를 비교해 현재 안을 선택했는지 물어보세요."
+    },
+    {
+      "id": "A3",
+      "axis": "action",
+      "label": "본인 주도성 (I vs We)",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "ownership_drilldown",
+      "anchor_0": "'우리가 했다' 중심이며 본인만의 핵심 기여가 드러나지 않음",
+      "anchor_1": "본인 참여는 보이나 지시 이행인지 주도적 돌파구인지 불분명",
+      "anchor_2": "팀 작업과 뚜렷이 구분되는 본인 주도의 핵심 의사결정·제안·기술/기획 돌파구가 입증됨",
+      "probe_hint": "팀원들과 함께한 일 중, '내가 없었다면 달라졌을' 본인만의 결정적 판단이나 직접 실행한 부분은 무엇인지 물어보세요."
+    },
+    {
+      "id": "A4",
+      "axis": "action",
+      "label": "장애물·예외·실패 돌파",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "micro_behavioral",
+      "anchor_0": "실행 중 발생한 난관·시행착오·예외 상황 언급 없음",
+      "anchor_1": "'어려움이 있었지만 해결했다' 수준으로 과정 생략",
+      "anchor_2": "실행 중 예상치 못한 실패·병목·반발을 감지하고 계획을 수정·돌파한 구체 사례가 있음",
+      "probe_hint": "실행 과정에서 계획대로 안 풀렸던 가장 큰 장애물이나 시행착오는 무엇이었고, 그 순간 어떻게 방향을 수정했는지 물어보세요."
+    },
+    {
+      "id": "A5",
+      "axis": "action",
+      "label": "일정·스코프·리스크 관리",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "counter_factual",
+      "anchor_0": "일정 준수·범위 조정(MVP 절단)·리스크 대응 언급 없음",
+      "anchor_1": "'기한 내에 마쳤다' 등 단순 결과만 언급됨",
+      "anchor_2": "제한된 기간 내 스코프를 조정하거나 사전 리스크·롤백·단계적 배포/검증 계획을 세워 완결함",
+      "probe_hint": "제한된 일정 안에서 어떤 기능을 과감히 줄이거나(스코프 조정), 실패 리스크를 줄이기 위해 어떤 안전장치를 두었는지 물어보세요."
+    },
+    {
+      "id": "A6",
+      "axis": "action",
+      "label": "협업·이해관계자 조율",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "micro_behavioral",
+      "anchor_0": "타 팀원·타 직군·고객·이해관계자와의 소통/조율 근거 없음",
+      "anchor_1": "'팀원들과 소통했다', '협의했다' 수준으로 추상적",
+      "anchor_2": "의견 차이·요구사항 충돌을 데이터·프로토타입·문서 등으로 설득하고 합의에 이른 구체 과정이 있음",
+      "probe_hint": "타 직군·팀원·고객과 의견이나 우선순위가 달랐던 지점은 무엇이었고, 어떤 근거로 설득·조율했는지 물어보세요."
+    },
+    {
+      "id": "R1",
+      "axis": "result",
+      "label": "정량 수치 지표",
+      "weight": 8,
+      "partial_weight": 2,
+      "technique": "xyz_quantification",
+      "anchor_0": "객관적 수치 지표가 전혀 없고 정성적 느낌만 존재",
+      "anchor_1": "단편적 숫자만 있으나 측정 단위·의미가 불분명함",
+      "anchor_2": "%, ms, 건수, 사용자 수, 매출, 절감 시간 등 명확한 단위의 객관적 정량 수치가 제시됨",
+      "probe_hint": "성과를 객관적으로 보여줄 수 있는 구체적 수치(응답시간, 전환율, 절감 시간, 처리 건수, 사용자 수 등)를 물어보세요."
+    },
+    {
+      "id": "R2",
+      "axis": "result",
+      "label": "비교 기준선 (Before/After)",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "xyz_quantification",
+      "anchor_0": "개선 전 상태나 비교 대상 없이 단일 결과만 언급됨",
+      "anchor_1": "'빨라졌다/줄었다' 등 방향만 있고 전후 비교 기준선 부재",
+      "anchor_2": "적용 전 vs 후 또는 목표 대비 변화량(Before → After)이 선명하게 비교 제시됨",
+      "probe_hint": "개선하기 전 상태(Before)와 적용 후 상태(After)를 나란히 비교하면 수치가 어떻게 달라졌는지 물어보세요."
+    },
+    {
+      "id": "R3",
+      "axis": "result",
+      "label": "행동→결과 인과관계",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "counter_factual",
+      "anchor_0": "결과가 본인의 행동 때문에 발생했는지 연결이 끊겨 있음",
+      "anchor_1": "행동과 결과가 나열되나 인과 검증 근거가 약함",
+      "anchor_2": "A/B 테스트·벤치마크·로그 비교·단계별 검증 등으로 내 행동이 결과를 만든 인과가 입증됨",
+      "probe_hint": "그 성과가 다른 외부 요인이 아니라 본인이 취한 행동 덕분이라는 점을 어떤 측정·테스트·로그로 확인했는지 물어보세요."
+    },
+    {
+      "id": "R4",
+      "axis": "result",
+      "label": "외부 검증·확산 효과",
+      "weight": 6,
+      "partial_weight": 2,
+      "technique": "xyz_quantification",
+      "anchor_0": "개인 완료 선언 외 외부 반응·배포·채택 근거 없음",
+      "anchor_1": "단순 제출/완료 사실만 언급됨",
+      "anchor_2": "실서비스 배포·운영 반영, 팀 표준 채택, 고객/현업 피드백, 수상·정식 평가 등 제3자 검증이 있음",
+      "probe_hint": "이 결과물이 실제 운영·배포되었거나 팀 표준 채택, 고객 피드백, 수상 등 외부로부터 검증받은 사실이 있는지 물어보세요."
+    },
+    {
+      "id": "L1",
+      "axis": "learning",
+      "label": "한계·아쉬움 메타인지",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "learning_transfer",
+      "anchor_0": "성공담만 있거나 회고 자체가 없음",
+      "anchor_1": "'시간이 부족해 아쉬웠다' 등 피상적 소감만 있음",
+      "anchor_2": "당시 의사결정·설계·검증의 구체적 한계나 놓친 리스크를 객관적으로 성찰함",
+      "probe_hint": "지금 다시 돌아간다면 당시 판단이나 설계에서 가장 아쉬웠던 한계·놓친 리스크는 무엇이었는지 물어보세요."
+    },
+    {
+      "id": "L2",
+      "axis": "learning",
+      "label": "일반화된 원칙·인사이트",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "learning_transfer",
+      "anchor_0": "'많이 배웠다', '소통이 중요하다' 등 뻔한 감상문 수준이거나 부재",
+      "anchor_1": "이번 건에만 국한된 단편 교훈만 언급됨",
+      "anchor_2": "이 경험에서 추출한 재사용 가능한 나만의 설계 원칙·의사결정 기준·프로세스 인사이트가 명확함",
+      "probe_hint": "단순 소감 대신, 이 경험을 통해 앞으로도 계속 지킬 나만의 일하는 기준이나 재발 방지 원칙이 무엇인지 물어보세요."
+    },
+    {
+      "id": "L3",
+      "axis": "learning",
+      "label": "후속 적용·재현성",
+      "weight": 4,
+      "partial_weight": 1,
+      "technique": "learning_transfer",
+      "anchor_0": "배운 점을 이후 프로젝트나 직무에 어떻게 쓸지 연결 없음",
+      "anchor_1": "'앞으로 잘 적용하겠다'는 막연한 다짐만 있음",
+      "anchor_2": "배운 원칙을 후속 프로젝트·팀 프로세스에 실제 적용한 사례 또는 구체적 재현 계획이 명시됨",
+      "probe_hint": "그때 정립한 원칙이나 구조를 이후 다른 프로젝트·업무에 실제로 적용해 본 사례나 구체적 적용 계획이 있는지 물어보세요."
+    }
+  ],
+  "track_hints": {
+    "engineering": "시스템 아키텍처, 성능/지연(ms·TPS), 트러블슈팅, 코드/DB/인프라 트레이드오프, 테스트·장애 대응 관점으로 근거를 판별하세요.",
+    "product_planning": "사용자 문제 정의, 리서치·퍼널·전환율/리텐션, MVP 스코프 절단, 우선순위 프레임워크, 디자인·개발 이해관계자 설득 관점으로 근거를 판별하세요.",
+    "data_research": "문제 수식화·가설, 데이터 파이프라인·품질 검증, 베이스라인 vs 실험 모델 비교(AUC/F1/RMSE/p-value), 오류 분석·비즈니스 반영 관점으로 근거를 판별하세요.",
+    "operations_leadership": "운영 병목 진단, 프로세스/매뉴얼 표준화, 리드타임·비용·오류율 개선, 갈등 중재·조직 확산 및 지속 운영 관점으로 근거를 판별하세요."
+  }
+}

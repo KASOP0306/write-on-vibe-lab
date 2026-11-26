@@ -54,6 +54,34 @@ class ExperienceFeedbackSubmitRequest(BaseModel):
     turn_count: int = Field(default=0, ge=0)
 
 
+class ExperienceCreateRequest(BaseModel):
+    project_id: int | None = Field(default=None)
+    title: str = Field(..., min_length=2, max_length=300)
+    situation: str = Field(default="")
+    task: str = Field(default="")
+    action: str = Field(default="")
+    result: str = Field(default="")
+    learning: str = Field(default="")
+    quantified_metrics: str = Field(default="")
+    raw_notes: str = Field(default="")
+
+
+class ExperienceUpdateRequest(BaseModel):
+    project_id: int | None = Field(default=None)
+    clear_project_id: bool = Field(default=False, description="true이면 연결된 project_id를 해제")
+    title: str | None = Field(default=None, min_length=2, max_length=300)
+    situation: str | None = Field(default=None)
+    task: str | None = Field(default=None)
+    action: str | None = Field(default=None)
+    result: str | None = Field(default=None)
+    learning: str | None = Field(default=None)
+    quantified_metrics: str | None = Field(default=None)
+    re_evaluate: bool = Field(
+        default=True,
+        description="수정 후 21지표 하이브리드 평가 엔진으로 즉시 재채점할지 여부",
+    )
+
+
 # --- 워크플로우 ②: 목표 기업 리서치 & 신념 3각 매칭 ---
 class CompanyResearchRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)

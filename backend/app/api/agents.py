@@ -25,6 +25,7 @@ from app.core.database import (
     CoverLetter,
     Experience,
     ExperienceFeedbackLog,
+    Project,
     QuestionFeedbackLog,
     VectorDocument,
     get_db_session,
@@ -33,10 +34,11 @@ from app.core.database import (
 from app.core.star_rubric import (
     CURRENT_RUBRIC_VERSION,
     STAR_CHECKPOINTS,
+    evaluate_star_experience_rubric,
     list_rubric_versions,
     normalize_star_scores,
 )
-from app.core.vector_store import DocType, delete_document, upsert_document
+from app.core.vector_store import DocType, delete_document, try_upsert_document, upsert_document
 from app.graphs.company_graph import build_company_graph
 from app.graphs.copilot_agent_graph import (
     get_copilot_thread_history,
@@ -63,7 +65,9 @@ from app.schemas.agents import (
     CoverLetterResponse,
     CoverLetterSaveRequest,
     CoverLetterUpdateRequest,
+    ExperienceCreateRequest,
     ExperienceFeedbackSubmitRequest,
+    ExperienceUpdateRequest,
     InterestClipResponse,
     InterestClipSaveRequest,
     InterestSearchRequest,
@@ -780,6 +784,139 @@ async def list_experiences(
         stmt = stmt.where(Experience.project_id == project_id)
     rows = (await session.execute(stmt)).scalars().all()
     return [ExperienceSummary.model_validate(row) for row in rows]
+
+
+async def _sync_experience_vector(session: AsyncSession, exp: Experience) -> bool:
+    vector_content = (
+        f"[경험 제목] {exp.title}\n"
+        f"[Situation] {exp.situation}\n"
+        f"[Task] {exp.task}\n"
+        f"[Action] {exp.action}\n"
+        f"[Result] {exp.result}\n"
+        f"[Learning] {exp.learning}\n"
+        f"[정량 지표] {exp.quantified_metrics}"
+    )
+    return await try_upsert_document(
+        session,
+        doc_type=DocType.EXPERIENCE,
+        ref_id=f"exp-{exp.id}",
+        content=vector_content,
+        metadata={
+            "experience_id": exp.id,
+            "project_id": exp.project_id,
+            "title": exp.title,
+            "completeness_score": exp.completeness_score,
+            "rubric_version": str((exp.star_scores or {}).get("rubric_version") or CURRENT_RUBRIC_VERSION),
+        },
+    )
+
+
+@router.post("/experiences", response_model=ExperienceSummary, status_code=status.HTTP_201_CREATED)
+async def create_experience_manual(
+    payload: ExperienceCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> ExperienceSummary:
+    """사용자가 직접 작성한 STAR-L 경험을 21지표 하이브리드 평가 엔진으로 채점·저장한다."""
+    project_types: list[str] | None = None
+    if payload.project_id is not None:
+        proj = await session.get(Project, payload.project_id)
+        if proj is not None:
+            project_types = list(proj.project_types or ["engineering"])
+
+    star_dict = {
+        "title": payload.title.strip(),
+        "situation": payload.situation.strip(),
+        "task": payload.task.strip(),
+        "action": payload.action.strip(),
+        "result": payload.result.strip(),
+        "learning": payload.learning.strip(),
+        "quantified_metrics": payload.quantified_metrics.strip(),
+    }
+    grade = await evaluate_star_experience_rubric(
+        star_dict,
+        context_text=payload.raw_notes.strip(),
+        project_types=project_types,
+    )
+    exp = Experience(
+        project_id=payload.project_id,
+        title=star_dict["title"][:300],
+        situation=star_dict["situation"],
+        task=star_dict["task"],
+        action=star_dict["action"],
+        result=star_dict["result"],
+        learning=star_dict["learning"],
+        quantified_metrics=star_dict["quantified_metrics"],
+        completeness_score=int(grade["completeness_score"]),
+        star_scores=dict(grade["star_scores"]),
+        raw_notes=payload.raw_notes.strip() or "[직접 입력된 STAR-L 경험]",
+    )
+    session.add(exp)
+    await session.commit()
+    await session.refresh(exp)
+    await _sync_experience_vector(session, exp)
+    return ExperienceSummary.model_validate(exp)
+
+
+@router.put("/experiences/{experience_id}", response_model=ExperienceSummary)
+async def update_experience(
+    experience_id: int,
+    payload: ExperienceUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> ExperienceSummary:
+    """저장된 STAR-L 경험을 수정하고 21지표 하이브리드 평가 엔진으로 즉시 재채점·벡터 재동기화한다."""
+    exp = await session.get(Experience, experience_id)
+    if exp is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experience {experience_id} not found.",
+        )
+
+    if payload.clear_project_id:
+        exp.project_id = None
+    elif payload.project_id is not None:
+        exp.project_id = payload.project_id
+
+    if payload.title is not None:
+        exp.title = payload.title.strip()[:300]
+    if payload.situation is not None:
+        exp.situation = payload.situation.strip()
+    if payload.task is not None:
+        exp.task = payload.task.strip()
+    if payload.action is not None:
+        exp.action = payload.action.strip()
+    if payload.result is not None:
+        exp.result = payload.result.strip()
+    if payload.learning is not None:
+        exp.learning = payload.learning.strip()
+    if payload.quantified_metrics is not None:
+        exp.quantified_metrics = payload.quantified_metrics.strip()
+
+    if payload.re_evaluate:
+        project_types: list[str] | None = None
+        if exp.project_id is not None:
+            proj = await session.get(Project, exp.project_id)
+            if proj is not None:
+                project_types = list(proj.project_types or ["engineering"])
+        grade = await evaluate_star_experience_rubric(
+            {
+                "title": exp.title,
+                "situation": exp.situation,
+                "task": exp.task,
+                "action": exp.action,
+                "result": exp.result,
+                "learning": exp.learning,
+                "quantified_metrics": exp.quantified_metrics,
+            },
+            context_text=exp.raw_notes,
+            project_types=project_types,
+        )
+        exp.completeness_score = int(grade["completeness_score"])
+        exp.star_scores = dict(grade["star_scores"])
+
+    await session.commit()
+    await session.refresh(exp)
+    await _sync_experience_vector(session, exp)
+    return ExperienceSummary.model_validate(exp)
 
 
 @router.delete("/experiences/{experience_id}", status_code=status.HTTP_204_NO_CONTENT)

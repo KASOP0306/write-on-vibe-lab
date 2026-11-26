@@ -29,7 +29,7 @@ from app.prompts import build_chat_prompt
 logger = logging.getLogger(__name__)
 
 RUBRICS_DIR = Path(__file__).resolve().parent.parent / "rubrics"
-CURRENT_RUBRIC_VERSION = "v2.0"
+CURRENT_RUBRIC_VERSION = "v2.1"
 
 STAR_AXIS_ORDER = ["situation", "task", "action", "result", "learning"]
 STAR_CHECKPOINT_IDS = [
@@ -279,6 +279,38 @@ _CLICHE_LEARNING_RE = re.compile(
 _PRINCIPLE_SIGNAL_RE = re.compile(
     r"(원칙|기준|체크리스트|프로세스|구조|재발\s*방지|자동화|검증|모니터링|벤치마크|문서화|설계|사전|먼저|우선|트레이드오프|기준선|표준|템플릿|룰|가이드|다음\s*프로젝트|이후\s*프로젝트)"
 )
+_TRADEOFF_SIGNAL_RE = re.compile(
+    r"(vs\.?|대신|대안|비교|포기|트레이드오프|trade-?off|장단점|비용.*비교|대비|대체|검토.*선택|두\s*가지|선택지|우선\s*적용)",
+    re.IGNORECASE,
+)
+_OBSTACLE_SIGNAL_RE = re.compile(
+    r"(장애|오류|에러|실패|반발|이슈|충돌|버그|병목|누수|leakage|오탐|오분류|한계|예외|트러블|돌파|롤백|피벗|지연\s*발생|블로킹|편향|막혀|난관|시행착오)",
+    re.IGNORECASE,
+)
+_SCOPE_RISK_SIGNAL_RE = re.compile(
+    r"(일정|마감|기한|스프린트|주차|스코프|범위|MVP|제외|절단|리스크|롤백|카나리|단계적|플래그|안전장치|타임아웃|서킷|멱등|파일럿|섀도우|중단\s*기준)",
+    re.IGNORECASE,
+)
+_COLLAB_SIGNAL_RE = re.compile(
+    r"(합의|설득|조율|협의|리뷰|공유|논의|프론트|백엔드|디자이너|PM|QA|추천팀|리스크팀|운영팀|상담원|고객|현업|팀원|이해관계자|타\s*직군|엔지니어)",
+    re.IGNORECASE,
+)
+_CAUSAL_VERIFY_RE = re.compile(
+    r"(A/B|테스트|벤치마크|실험|대조군|실험군|로그|모니터링|프로파일|단계별|단독\s*적용|측정|검증|k6|Datadog|Amplitude|Sentry|섀도우|오프라인\s*평가)",
+    re.IGNORECASE,
+)
+_EXTERNAL_VALID_RE = re.compile(
+    r"(배포|운영|채택|표준|가이드|수상|선정|피드백|고객|사용자|사내|정식|매뉴얼|프로덕션|무중단|템플릿|우수\s*사례|100%)",
+    re.IGNORECASE,
+)
+_METACOG_SIGNAL_RE = re.compile(
+    r"(아쉬|한계|실수|놓친|부족|반성|성찰|편중|허비|늦게|미흡|문제점|머물렀|뒤늦게|덜\s*반영|깨닫|되돌아보)",
+    re.IGNORECASE,
+)
+_TRANSFER_SIGNAL_RE = re.compile(
+    r"(후속|다음|이후|다른\s*프로젝트|적용했|적용해|도입했|체크리스트로\s*고정|의무화|재사용|개편에|알림\s*서비스|결제\s*API|결제\s*퍼널)",
+    re.IGNORECASE,
+)
 
 
 def _normalize_for_match(text: str) -> str:
@@ -349,6 +381,14 @@ def verify_and_score_checkpoints(
     has_ownership_signal = bool(_OWNERSHIP_SIGNAL_RE.search(f"{t_txt} {a_txt} {context_text}"))
     has_cliche_learning = bool(_CLICHE_LEARNING_RE.search(l_txt))
     has_principle_learning = bool(_PRINCIPLE_SIGNAL_RE.search(f"{l_txt} {r_txt}"))
+    has_tradeoff_signal = bool(_TRADEOFF_SIGNAL_RE.search(f"{a_txt} {t_txt} {context_text}"))
+    has_obstacle_signal = bool(_OBSTACLE_SIGNAL_RE.search(f"{a_txt} {s_txt} {context_text}"))
+    has_scope_risk_signal = bool(_SCOPE_RISK_SIGNAL_RE.search(f"{a_txt} {s_txt} {t_txt} {context_text}"))
+    has_collab_signal = bool(_COLLAB_SIGNAL_RE.search(f"{a_txt} {t_txt} {context_text}"))
+    has_causal_verify = bool(_CAUSAL_VERIFY_RE.search(f"{r_txt} {a_txt} {context_text}"))
+    has_external_valid = bool(_EXTERNAL_VALID_RE.search(f"{r_txt} {context_text}"))
+    has_metacog_signal = bool(_METACOG_SIGNAL_RE.search(f"{l_txt} {context_text}"))
+    has_transfer_signal = bool(_TRANSFER_SIGNAL_RE.search(f"{l_txt} {context_text}"))
 
     checkpoints_out: dict[str, dict[str, Any]] = {}
     cap_events: list[dict[str, Any]] = []
@@ -357,6 +397,7 @@ def verify_and_score_checkpoints(
         cid = cp["id"]
         axis_id = cp["axis"]
         weight = int(cp["weight"])
+        partial_weight = int(cp.get("partial_weight", weight // 2))
         raw = raw_checkpoints.get(cid) or {}
 
         raw_status = max(0, min(2, int(raw.get("status", 0) or 0)))
@@ -368,32 +409,31 @@ def verify_and_score_checkpoints(
         grounding_overlap = 0.0
         capped_reason = ""
 
-        # 1) Quote Grounding 검증 (Rulers Evidence-Anchored Scoring)
+        # 1) Quote Grounding 검증 (Rulers Evidence-Anchored Scoring — v2.1 엄격 기준)
         if status >= 1:
             grounded, grounding_overlap = verify_quote_grounding(quote, full_source)
-            if not quote:
+            q_len = len(_normalize_for_match(quote))
+            if not quote or q_len < 4:
                 if status == 2:
                     status = 1
-                    capped_reason = "missing_quote"
+                    capped_reason = "missing_or_short_quote"
                 elif len(axis_texts.get(axis_id, "")) < 15:
                     status = 0
                     capped_reason = "empty_quote_and_short_axis"
-            elif not grounded:
-                # 원문에 없는 환각 인용구 → 강등
+            elif not grounded or (status == 2 and grounding_overlap < 0.52):
                 status = 0 if grounding_overlap < 0.25 else min(status, 1)
                 capped_reason = f"ungrounded_quote(overlap={grounding_overlap})"
 
         # 2) 빈 축/극단적 단문 가드
-        if len(axis_texts.get(axis_id, "")) < 10 and len(full_source) < 60 and status == 2:
+        if len(axis_texts.get(axis_id, "")) < 12 and len(full_source) < 80 and status == 2:
             status = 1
             capped_reason = capped_reason or "too_short_axis"
         if axis_id == "learning" and not l_txt and status > 0:
-            # Learning 원문이 완전히 비어있고 Result에도 원칙/회고가 없으면 0
             if not has_principle_learning:
                 status = 0
                 capped_reason = capped_reason or "empty_learning"
 
-        # 3) 핵심 체크포인트별 결정론적 코드 하드 캡
+        # 3) 핵심 체크포인트별 결정론적 코드 하드 캡 (v2.1 확장 엄격 컷)
         if cid == "R1":
             if not has_any_digit_result:
                 if status > 0:
@@ -410,14 +450,49 @@ def verify_and_score_checkpoints(
                 elif not has_any_digit_result and status == 1 and len(result_combined) < 25:
                     status = 0
                     capped_reason = "R2_no_baseline"
+        elif cid == "R3":
+            if not has_causal_verify and status == 2:
+                status = 1
+                capped_reason = "R3_no_causal_verification_signal"
+        elif cid == "R4":
+            if not has_external_valid and status == 2:
+                status = 1
+                capped_reason = "R4_no_external_validation_signal"
+        elif cid == "A2":
+            if not has_tradeoff_signal and status == 2:
+                status = 1
+                capped_reason = "A2_no_alternative_tradeoff_signal"
         elif cid == "A3":
             if has_team_phrase and not has_ownership_signal and status == 2:
                 status = 1
                 capped_reason = "A3_team_only_without_I_signal"
+        elif cid == "A4":
+            if not has_obstacle_signal and status == 2:
+                status = 1
+                capped_reason = "A4_no_obstacle_failure_signal"
+        elif cid == "A5":
+            if not has_scope_risk_signal and status == 2:
+                status = 1
+                capped_reason = "A5_no_schedule_scope_risk_signal"
+        elif cid == "A6":
+            if not has_collab_signal and status == 2:
+                status = 1
+                capped_reason = "A6_no_stakeholder_alignment_signal"
+        elif cid == "L1":
+            if not has_metacog_signal and status == 2:
+                status = 1
+                capped_reason = "L1_no_limitation_metacognition_signal"
         elif cid == "L2":
-            if has_cliche_learning and not has_principle_learning and len(l_txt) < 55 and status > 0:
+            if has_cliche_learning and not has_principle_learning and len(l_txt) < 60 and status > 0:
                 status = 0
                 capped_reason = "L2_cliche_only_learning"
+            elif not has_principle_learning and status == 2:
+                status = 1
+                capped_reason = "L2_no_reusable_principle_signal"
+        elif cid == "L3":
+            if not has_transfer_signal and status == 2:
+                status = 1
+                capped_reason = "L3_no_followup_transfer_signal"
 
         if capped_reason and status < raw_status:
             cap_events.append(
@@ -431,8 +506,8 @@ def verify_and_score_checkpoints(
             if not tip:
                 tip = cp.get("probe_hint", "")
 
-        # 4) 짝수 배점 정수 점수 산출 (0 / weight//2 / weight)
-        earned = int(status * (weight // 2))
+        # 4) 결정론적 정수 점수 산출 (v2.1: status=0 -> 0, status=1 -> partial_weight(~30%), status=2 -> weight)
+        earned = weight if status == 2 else (partial_weight if status == 1 else 0)
         checkpoints_out[cid] = {
             "id": cid,
             "axis": axis_id,
@@ -689,6 +764,7 @@ def compute_cumulative_portfolio_xp(
     project_cap = int(xp_cfg["project_cap"])
     max_selected = int(xp_cfg["max_selected_projects"])
     max_total_xp = int(xp_cfg["max_total_xp"])
+    rank_decay_weights: list[float] = list(xp_cfg.get("rank_decay_weights") or [1.0, 0.8, 0.5, 0.2])
     levels_cfg: list[dict[str, Any]] = xp_cfg["levels"]
     cp_defs: list[dict[str, Any]] = bundle["checkpoints"]
 
@@ -702,14 +778,12 @@ def compute_cumulative_portfolio_xp(
     for proj in projects:
         pid = proj["id"]
         p_exps = exps_by_proj.get(pid, [])
-        raw_xp_sum = 0
         best_score = 0
         exp_summaries: list[dict[str, Any]] = []
         for exp in p_exps:
             norm = normalize_star_scores(exp.get("star_scores"))
             sc = norm["weighted_score"] if norm else int(exp.get("completeness_score") or 0)
             xp_info = compute_experience_xp(sc, rubric_version=rubric_version)
-            raw_xp_sum += xp_info["xp"]
             best_score = max(best_score, sc)
             exp_summaries.append(
                 {
@@ -720,6 +794,15 @@ def compute_cumulative_portfolio_xp(
                     "xp": xp_info["xp"],
                 }
             )
+        # 체감 가중치(Diminishing Returns): 상위 4개 경험만 [100%, 80%, 50%, 20%] 반영 -> 최대 100+80+50+20 = 250 XP
+        exp_summaries.sort(key=lambda x: (-x["xp"], -x["score"]))
+        raw_xp_sum = 0
+        for rank_idx, es in enumerate(exp_summaries):
+            decay = float(rank_decay_weights[rank_idx]) if rank_idx < len(rank_decay_weights) else 0.0
+            contrib = int(round(es["xp"] * decay))
+            es["decay_weight"] = decay
+            es["contributed_xp"] = contrib
+            raw_xp_sum += contrib
         capped_xp = min(raw_xp_sum, project_cap)
         project_entries.append(
             {

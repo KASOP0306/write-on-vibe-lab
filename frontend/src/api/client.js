@@ -267,6 +267,16 @@ export const api = {
 
   listExperiences: (projectId = null) =>
     apiRequest(projectId ? `/api/experiences?project_id=${projectId}` : "/api/experiences"),
+  createExperience: (data) =>
+    apiRequest("/api/experiences", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateExperience: (id, data) =>
+    apiRequest(`/api/experiences/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   deleteExperience: (id) =>
     apiRequest(`/api/experiences/${id}`, { method: "DELETE" }),
 

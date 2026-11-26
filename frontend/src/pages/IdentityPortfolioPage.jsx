@@ -301,9 +301,6 @@ export default function IdentityPortfolioPage({
     if (!autoDraft || autoImporting) return;
     setAutoImporting(true);
     try {
-      const selectedExps = (autoDraft.suggested_experiences || []).filter((_, idx) =>
-        autoSelectedExpIndices.has(idx)
-      );
       const srcInfo = autoDraft._sourceInfo || {};
       const res = await api.importStructuredProject({
         project: {
@@ -321,7 +318,7 @@ export default function IdentityPortfolioPage({
           artifact_links: autoProjectEdit.artifact_links || [],
         },
         sections: autoDraft.sections || [],
-        experiences: selectedExps,
+        experiences: [],
         source_filename: srcInfo.source_filename || "",
         source_type: srcInfo.source_type || "file_upload",
         source_format: srcInfo.source_format || "md",
@@ -1179,17 +1176,6 @@ export default function IdentityPortfolioPage({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setAutoPreviewTab("star")}
-                    className={`rounded-md px-3 py-1 ${
-                      autoPreviewTab === "star"
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    STAR 경험 ({autoDraft.suggested_experiences?.length || 0})
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setAutoPreviewTab("markdown")}
                     className={`rounded-md px-3 py-1 ${
                       autoPreviewTab === "markdown"
@@ -1245,39 +1231,6 @@ export default function IdentityPortfolioPage({
                     </div>
                   ))}
                 </div>
-              ) : autoPreviewTab === "star" ? (
-                <div className="space-y-2.5">
-                  {(autoDraft.suggested_experiences || []).map((exp, idx) => (
-                    <label
-                      key={idx}
-                      className={`block rounded-xl border p-3.5 text-xs space-y-1 cursor-pointer ${
-                        autoSelectedExpIndices.has(idx)
-                          ? "border-indigo-300 bg-indigo-50/40"
-                          : "border-slate-200 bg-slate-50/50 opacity-65"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-bold text-slate-900">
-                        <input
-                          type="checkbox"
-                          checked={autoSelectedExpIndices.has(idx)}
-                          onChange={() =>
-                            setAutoSelectedExpIndices((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(idx)) next.delete(idx);
-                              else next.add(idx);
-                              return next;
-                            })
-                          }
-                        />
-                        <span>{exp.title}</span>
-                      </div>
-                      <p className="text-slate-700 pl-5">
-                        <strong>A:</strong> {exp.action} / <strong>R:</strong>{" "}
-                        {exp.result}
-                      </p>
-                    </label>
-                  ))}
-                </div>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 max-h-80 overflow-y-auto prose prose-sm prose-slate max-w-none">
                   <ReactMarkdown>{autoDraft.portfolio_markdown || ""}</ReactMarkdown>
@@ -1285,27 +1238,32 @@ export default function IdentityPortfolioPage({
               )}
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setAutoDraft(null)}
-                className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-slate-700"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                disabled={autoImporting || !autoProjectEdit.name.trim()}
-                onClick={handleImportAutoDraft}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>
-                  {autoImporting
-                    ? "저장 중..."
-                    : `프로젝트 + 섹션 ${autoDraft.sections?.length || 0}개 + STAR ${autoSelectedExpIndices.size}건 저장 후 열기`}
-                </span>
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <span className="text-[11px] text-slate-500">
+                * 경험(STAR-L)은 자동 생성되지 않으며, 저장 후 <strong>3. 경험 채굴</strong>에서 직접 입력하거나 PR·커밋 Diff로 채굴합니다.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAutoDraft(null)}
+                  className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-slate-700"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={autoImporting || !autoProjectEdit.name.trim()}
+                  onClick={handleImportAutoDraft}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>
+                    {autoImporting
+                      ? "저장 중..."
+                      : `프로젝트 + 섹션 ${autoDraft.sections?.length || 0}개 저장 후 열기`}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         )}

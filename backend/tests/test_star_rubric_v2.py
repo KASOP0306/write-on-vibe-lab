@@ -21,17 +21,20 @@ from eval.run_rubric_eval import compute_calibration_metrics, compute_spearman_r
 class TestStarRubricV2(unittest.TestCase):
     def test_rubric_bundle_integrity(self):
         bundle = load_rubric_bundle(CURRENT_RUBRIC_VERSION)
-        self.assertEqual(bundle["version"], "v2.0")
+        self.assertEqual(bundle["version"], "v2.1")
         checkpoints = bundle["checkpoints"]
         self.assertEqual(len(checkpoints), 21)
         self.assertEqual([c["id"] for c in checkpoints], STAR_CHECKPOINT_IDS)
 
-        # 모든 배점은 짝수 정수이며 합계는 정확히 100점
+        # 모든 배점은 짝수 정수이며 합계는 정확히 100점, partial_weight는 엄격 보수화
         total_weight = 0
         axis_sums = {ax: 0 for ax in STAR_AXIS_ORDER}
         for cp in checkpoints:
             w = int(cp["weight"])
+            pw = int(cp["partial_weight"])
             self.assertEqual(w % 2, 0, f"{cp['id']} weight must be even integer")
+            self.assertGreaterEqual(pw, 1)
+            self.assertLessEqual(pw, w // 2)
             total_weight += w
             axis_sums[cp["axis"]] += w
 
@@ -113,14 +116,14 @@ class TestStarRubricV2(unittest.TestCase):
         scored = verify_and_score_checkpoints(perfect_llm, star=strong_star)
         self.assertEqual(scored["weighted_score"], 100)
         self.assertEqual(scored["grade"], "S")
-        self.assertEqual(scored["xp"], 150)
+        self.assertEqual(scored["xp"], 100)
 
         # Zero-LLM 재채점 일관성 확인
-        rescored = rescore_experience_with_rubric(scored, strong_star, rubric_version="v2.0")
+        rescored = rescore_experience_with_rubric(scored, strong_star, rubric_version="v2.1")
         self.assertEqual(rescored["weighted_score"], 100)
 
     def test_cumulative_portfolio_xp_project_cap_and_4_slot_selection(self):
-        # 5개 프로젝트 보유: 1번 프로젝트에 S등급 경험 3개(각 135 XP = 405 XP)가 있어도 150 XP 캡에 막혀야 함!
+        # 5개 프로젝트 보유: 1번 프로젝트에 S등급 경험 5개(각 90 XP)가 있어도 체감 가중치(1.0/0.8/0.5/0.2/0.0)로 90+72+45+18+0 = 225 XP!
         projects = [
             {"id": 1, "name": "P1", "is_portfolio_selected": True},
             {"id": 2, "name": "P2", "is_portfolio_selected": False},
@@ -129,27 +132,33 @@ class TestStarRubricV2(unittest.TestCase):
             {"id": 5, "name": "P5", "is_portfolio_selected": False},
         ]
         experiences = [
-            {"id": 10, "project_id": 1, "title": "E1", "completeness_score": 90, "star_scores": {}},
-            {"id": 11, "project_id": 1, "title": "E2", "completeness_score": 90, "star_scores": {}},
-            {"id": 12, "project_id": 1, "title": "E3", "completeness_score": 90, "star_scores": {}},
-            {"id": 20, "project_id": 2, "title": "E4", "completeness_score": 80, "star_scores": {}},  # 104 XP
-            {"id": 30, "project_id": 3, "title": "E5", "completeness_score": 60, "star_scores": {}},  # 60 XP
-            {"id": 40, "project_id": 4, "title": "E6", "completeness_score": 40, "star_scores": {}},  # 24 XP
-            {"id": 50, "project_id": 5, "title": "E7", "completeness_score": 20, "star_scores": {}},  # 5 XP (5위라 제외)
+            {"id": 10, "project_id": 1, "title": "E1", "completeness_score": 90, "star_scores": {}},  # 90 * 1.0 = 90
+            {"id": 11, "project_id": 1, "title": "E2", "completeness_score": 90, "star_scores": {}},  # 90 * 0.8 = 72
+            {"id": 12, "project_id": 1, "title": "E3", "completeness_score": 90, "star_scores": {}},  # 90 * 0.5 = 45
+            {"id": 13, "project_id": 1, "title": "E4", "completeness_score": 90, "star_scores": {}},  # 90 * 0.2 = 18
+            {"id": 14, "project_id": 1, "title": "E5", "completeness_score": 90, "star_scores": {}},  # 5th -> 0
+            {"id": 20, "project_id": 2, "title": "E6", "completeness_score": 80, "star_scores": {}},  # A: round(80*0.85)=68
+            {"id": 30, "project_id": 3, "title": "E7", "completeness_score": 60, "star_scores": {}},  # B: round(60*0.60)=36
+            {"id": 40, "project_id": 4, "title": "E8", "completeness_score": 40, "star_scores": {}},  # C: round(40*0.30)=12
+            {"id": 50, "project_id": 5, "title": "E9", "completeness_score": 20, "star_scores": {}},  # D: 2 (5위 제외)
         ]
         mastery = compute_cumulative_portfolio_xp(projects, experiences)
-        self.assertEqual(mastery["max_total_xp"], 600)
+        self.assertEqual(mastery["max_total_xp"], 1000)
+        self.assertEqual(mastery["project_cap"], 250)
         self.assertEqual(len(mastery["selected_projects"]), 4)
-        # P1은 150 캡, P2(104), P3(60), P4(24) -> 합계 338 XP (P5 5 XP 제외)
         self.assertEqual(mastery["selected_projects"][0]["project_id"], 1)
-        self.assertEqual(mastery["selected_projects"][0]["capped_xp"], 150)
-        self.assertTrue(mastery["selected_projects"][0]["cap_reached"])
-        self.assertEqual(mastery["total_xp"], 150 + 104 + 60 + 24)
-        self.assertEqual(mastery["level"]["code"], "Lv.3")
+        self.assertEqual(mastery["selected_projects"][0]["capped_xp"], 225)
+        self.assertEqual(mastery["total_xp"], 225 + 68 + 36 + 12)
+        self.assertEqual(mastery["level"]["code"], "Lv.2")
 
-        # 단일 프로젝트만 있는 경우 아무리 S등급이 많아도 150 XP (Lv.2) 한계
-        single_mastery = compute_cumulative_portfolio_xp([projects[0]], experiences[:3])
-        self.assertEqual(single_mastery["total_xp"], 150)
+        # 100점 S급 4개가 모여야 단일 프로젝트 250 XP 만점 (100+80+50+20=250)
+        perfect_4 = [
+            {"id": i, "project_id": 1, "title": f"S{i}", "completeness_score": 100, "star_scores": {}}
+            for i in range(4)
+        ]
+        single_mastery = compute_cumulative_portfolio_xp([projects[0]], perfect_4)
+        self.assertEqual(single_mastery["total_xp"], 250)
+        self.assertTrue(single_mastery["selected_projects"][0]["cap_reached"])
         self.assertEqual(single_mastery["level"]["code"], "Lv.2")
 
     def test_conservative_critic_threshold_and_interview_start_schema(self):

@@ -87,6 +87,54 @@ export default function ExperienceMinerPage({
   const [showGithubPicker, setShowGithubPicker] = useState(false);
   const [loadedGithubDiffStats, setLoadedGithubDiffStats] = useState(null);
 
+  // Direct manual STAR-L entry mode ("interview" | "manual")
+  const [inputMode, setInputMode] = useState("interview");
+  const [manualForm, setManualForm] = useState({
+    title: "",
+    situation: "",
+    task: "",
+    action: "",
+    result: "",
+    learning: "",
+    quantified_metrics: "",
+  });
+  const [savingManual, setSavingManual] = useState(false);
+  const [manualError, setManualError] = useState("");
+
+  const handleCreateManual = async (e) => {
+    e.preventDefault();
+    if (!manualForm.title.trim() || savingManual) return;
+    setSavingManual(true);
+    setManualError("");
+    try {
+      const created = await api.createExperience({
+        project_id: selectedProjectId ? Number(selectedProjectId) : null,
+        title: manualForm.title.trim(),
+        situation: manualForm.situation.trim(),
+        task: manualForm.task.trim(),
+        action: manualForm.action.trim(),
+        result: manualForm.result.trim(),
+        learning: manualForm.learning.trim(),
+        quantified_metrics: manualForm.quantified_metrics.trim(),
+      });
+      setManualForm({
+        title: "",
+        situation: "",
+        task: "",
+        action: "",
+        result: "",
+        learning: "",
+        quantified_metrics: "",
+      });
+      await onRefresh();
+      setDetailExp(created);
+    } catch (err) {
+      setManualError(`직접 경험 저장·채점 실패: ${err.message}`);
+    } finally {
+      setSavingManual(false);
+    }
+  };
+
   useEffect(() => {
     if (initialPrefill) {
       if (initialPrefill.projectId) {
@@ -573,6 +621,119 @@ export default function ExperienceMinerPage({
           )}
 
           {!threadId && !savedResult && (
+            <div className="space-y-3">
+              {/* Mode Switcher: AI Active Interviewer vs Direct STAR-L Entry */}
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setInputMode("interview")}
+                  className={`rounded-lg px-3.5 py-1.5 transition ${
+                    inputMode === "interview"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  AI 역질문으로 경험 채굴
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode("manual")}
+                  className={`rounded-lg px-3.5 py-1.5 transition ${
+                    inputMode === "manual"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  직접 STAR-L 경험 입력
+                </button>
+              </div>
+
+              {inputMode === "manual" ? (
+                <form
+                  onSubmit={handleCreateManual}
+                  className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3.5 shadow-sm text-xs"
+                >
+                  <div className="text-xs text-slate-600">
+                    경험을 직접 작성해 등록하면 <strong>21지표 엄격 하이브리드 평가(v2.1)</strong>로 즉시 채점되어 저장됩니다. 저장 후 언제든 수정·재채점할 수 있습니다.
+                  </div>
+
+                  {manualError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-rose-800">
+                      {manualError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="block space-y-1">
+                      <span className="font-semibold text-slate-700">연결할 프로젝트 (선택)</span>
+                      <select
+                        value={selectedProjectId}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs bg-white"
+                      >
+                        <option value="">프로젝트 미지정</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="font-semibold text-slate-700">경험 제목 *</span>
+                      <input
+                        type="text"
+                        required
+                        value={manualForm.title}
+                        onChange={(e) => setManualForm((p) => ({ ...p, title: e.target.value }))}
+                        placeholder="예: 검색 API p95 지연 1.8s→180ms 단축"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
+                      />
+                    </label>
+                  </div>
+
+                  {[
+                    { key: "situation", label: "S · 상황·제약·규모", rows: 2, ph: "언제, 어떤 환경에서 무엇이 병목이었고 어떤 제약조건이 있었는지" },
+                    { key: "task", label: "T · 목표·본인 책임·원인 진단", rows: 2, ph: "본인이 단독 책임진 목표 기준과 핵심 원인 진단 과정" },
+                    { key: "action", label: "A · 구체 실행·대안 비교·주도성·장애물 돌파·협업", rows: 3, ph: "직접 수행한 실행 단계, A vs B 대안 트레이드오프, 난관 해결 및 조율" },
+                    { key: "result", label: "R · 정량 수치·Before/After·인과 검증·외부 반응", rows: 2, ph: "개선 전후 비교 수치, 벤치마크/테스트 검증, 실배포·채택 결과" },
+                    { key: "learning", label: "L · 한계 성찰·일반화 원칙·후속 적용", rows: 2, ph: "아쉬웠던 한계, 정립한 업무 원칙, 이후 프로젝트 적용" },
+                  ].map((f) => (
+                    <label key={f.key} className="block space-y-1">
+                      <span className="font-semibold text-slate-700">{f.label}</span>
+                      <textarea
+                        rows={f.rows}
+                        value={manualForm[f.key]}
+                        onChange={(e) => setManualForm((p) => ({ ...p, [f.key]: e.target.value }))}
+                        placeholder={f.ph}
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
+                      />
+                    </label>
+                  ))}
+
+                  <label className="block space-y-1">
+                    <span className="font-semibold text-emerald-800">확인된 정량 지표 (선택)</span>
+                    <input
+                      type="text"
+                      value={manualForm.quantified_metrics}
+                      onChange={(e) => setManualForm((p) => ({ ...p, quantified_metrics: e.target.value }))}
+                      placeholder="예: 응답시간 1,800ms → 180ms (-90%), 오류율 4.2% → 0.3%"
+                      className="w-full rounded-lg border border-emerald-200 bg-emerald-50/30 px-3 py-2 text-xs"
+                    />
+                  </label>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingManual || !manualForm.title.trim()}
+                      className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {savingManual ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                      <span>{savingManual ? "저장 및 21지표 엄격 채점 중..." : "직접 경험 저장 및 21지표 채점"}</span>
+                    </button>
+                  </div>
+                </form>
+              ) : (
             <form
               onSubmit={handleStart}
               className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
@@ -666,6 +827,8 @@ export default function ExperienceMinerPage({
                 </button>
               </div>
             </form>
+              )}
+            </div>
           )}
 
           {/* Conversation History */}
@@ -1096,9 +1259,10 @@ export default function ExperienceMinerPage({
         )}
       </div>
 
-      {/* Experience Full Detail Modal */}
+      {/* Experience Full Detail Modal (with Inline Edit & Re-score) */}
       <ExperienceDetailModal
         experience={detailExp}
+        projects={projects}
         projectName={detailExp?.project_id ? projectNameById[detailExp.project_id] : ""}
         onClose={() => setDetailExp(null)}
         onOpenProjectSync={
@@ -1109,6 +1273,10 @@ export default function ExperienceMinerPage({
               }
             : null
         }
+        onUpdated={async (updated) => {
+          setDetailExp(updated);
+          await onRefresh();
+        }}
       />
 
       {/* Reverse-Sync Experience & Q&A -> Project Sections Modal */}

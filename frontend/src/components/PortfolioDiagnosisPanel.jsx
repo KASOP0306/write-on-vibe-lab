@@ -120,8 +120,9 @@ export default function PortfolioDiagnosisPanel({
     description: "첫 대표 프로젝트의 STAR-L 경험 채굴을 시작한 단계",
   };
   const totalXp = mastery?.total_xp ?? 0;
-  const maxTotalXp = mastery?.max_total_xp ?? 600;
+  const maxTotalXp = mastery?.max_total_xp ?? 1000;
   const xpPct = mastery?.xp_pct ?? 0;
+  const projectCap = mastery?.project_cap ?? 250;
   const selectedProjects = mastery?.selected_projects || [];
   const allProjects = mastery?.all_projects || [];
   const starAvg = mastery?.star_averages || {};
@@ -138,7 +139,7 @@ export default function PortfolioDiagnosisPanel({
         >
           <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
             <Award className="w-4 h-4" />
-            <span>STAR-L 누적 포트폴리오 마스터리 ({mastery?.rubric_version || "v2.0"})</span>
+            <span>STAR-L 누적 포트폴리오 마스터리 ({mastery?.rubric_version || "v2.1"})</span>
             {mastery && !expanded && (
               <span className="ml-1 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800">
                 {level.code} {level.name} · {totalXp} / {maxTotalXp} XP
@@ -146,11 +147,11 @@ export default function PortfolioDiagnosisPanel({
             )}
           </div>
           <h3 className="text-lg font-bold text-slate-900 mt-0.5">
-            대표 4개 프로젝트 누적 XP (프로젝트당 최대 150 XP · 만점 600 XP)
+            대표 4개 프로젝트 누적 XP (프로젝트당 최대 {projectCap} XP · 만점 {maxTotalXp.toLocaleString()} XP)
           </h3>
           {expanded && (
             <p className="text-xs text-slate-500 mt-0.5">
-              21개 Atomic 체크포인트 하이브리드 채점(LLM 근거 판별 + Python 원문 대조·하드캡)으로 단일 프로젝트 고득점 착시를 차단하고 정직하게 누적합니다.
+              21지표 엄격 하이브리드 채점(v2.1) + 프로젝트당 상위 4개 경험 체감 합산(100%·80%·50%·20%)으로 거품 없는 진짜 실력을 측정합니다.
             </p>
           )}
         </div>
@@ -213,7 +214,7 @@ export default function PortfolioDiagnosisPanel({
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs text-indigo-950">
-                  <strong>대표 프로젝트 최대 4개 선택:</strong> 포트폴리오 600 XP 점수에 반영할 핵심 프로젝트 4개를 고르세요. (4개 미만 선택 시 남은 슬롯은 XP 상위 프로젝트로 자동 채워집니다.)
+                  <strong>대표 프로젝트 최대 4개 선택:</strong> 포트폴리오 {maxTotalXp.toLocaleString()} XP 점수에 반영할 핵심 프로젝트 4개를 고르세요. (4개 미만 선택 시 남은 슬롯은 XP 상위 프로젝트로 자동 채워집니다.)
                 </div>
                 <span className="text-xs font-bold text-indigo-800">
                   선택됨: {draftSelectedIds.length} / 4
@@ -331,9 +332,9 @@ export default function PortfolioDiagnosisPanel({
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-slate-300">
                     <span>Lv.1 Seed (0)</span>
-                    <span>Lv.2 Builder (150)</span>
-                    <span>Lv.3 Proven (300)</span>
-                    <span>Lv.4 Bar Raiser (480~600)</span>
+                    <span>Lv.2 Builder (250)</span>
+                    <span>Lv.3 Proven (500)</span>
+                    <span>Lv.4 Bar Raiser (800~1000)</span>
                   </div>
                   {mastery?.next_level && (
                     <div className="text-[11px] text-indigo-200">
@@ -349,7 +350,7 @@ export default function PortfolioDiagnosisPanel({
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Layers className="w-4 h-4 text-indigo-600" />
-                    <span>대표 4개 프로젝트 슬롯 (프로젝트당 최대 150 XP 캡)</span>
+                    <span>대표 4개 프로젝트 슬롯 (프로젝트당 최대 {projectCap} XP 캡 · 상위 4경험 체감 합산)</span>
                   </div>
                   {mastery?.unlinked_experience_count > 0 && (
                     <span className="text-[11px] text-amber-700">
@@ -371,7 +372,7 @@ export default function PortfolioDiagnosisPanel({
                             슬롯 #{slotIdx + 1} (비어 있음)
                           </div>
                           <p className="text-[11px] text-slate-400">
-                            프로젝트를 추가하고 경험을 채굴하면 최대 150 XP가 누적됩니다.
+                            프로젝트를 추가하고 경험을 채굴하면 최대 {projectCap} XP가 누적됩니다.
                           </p>
                         </div>
                       );
@@ -394,7 +395,7 @@ export default function PortfolioDiagnosisPanel({
                             </span>
                             {proj.cap_reached && (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                                150 CAP 달성
+                                {proj.cap} CAP 달성
                               </span>
                             )}
                           </div>
@@ -633,8 +634,9 @@ export default function PortfolioDiagnosisPanel({
                   <div className="font-bold text-slate-900">산출 공식 &amp; 누적 XP 규칙</div>
                   <p className="text-slate-700">{rubricRef.star_rubric?.formula}</p>
                   <p className="text-slate-600">
-                    • 경험 XP = STAR-L 점수 × 등급 배수 (S:1.5 / A:1.3 / B:1.0 / C:0.6 / D:0.25)
-                    <br />• 대표 4개 프로젝트 × 프로젝트당 상한 150 XP = 포트폴리오 만점 600 XP
+                    • 경험 XP = STAR-L 점수 × 엄격 등급 배수 (S:1.0 / A:0.85 / B:0.6 / C:0.3 / D:0.1, 단일 경험 최대 100 XP)
+                    <br />• 프로젝트 XP = 상위 4개 경험 체감 합산 (100% · 80% · 50% · 20%, 5번째 이후 0% → 프로젝트당 상한 250 XP)
+                    <br />• 포트폴리오 XP = 대표 4개 프로젝트 합산 = 만점 1,000 XP
                   </p>
                 </div>
 
