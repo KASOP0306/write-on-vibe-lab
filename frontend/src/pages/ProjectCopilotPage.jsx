@@ -167,7 +167,7 @@ export default function ProjectCopilotPage({
   }, [initialTopic]);
 
   // Extract live STAR-L weak checkpoints TOP 5 & unproven belief pillars
-  const cpStats = masteryData?.checkpoint_stats || [];
+  const cpStats = masteryData?.checkpoint_heatmap || masteryData?.checkpoint_stats || [];
   const evaluatedCps = cpStats.filter((c) => (c.evaluated_count || 0) > 0);
   const weakCheckpoints = [...(evaluatedCps.length > 0 ? evaluatedCps : cpStats)]
     .sort((a, b) => (a.mastery_pct || 0) - (b.mastery_pct || 0) || (b.weight || 0) - (a.weight || 0))

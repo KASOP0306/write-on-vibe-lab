@@ -110,6 +110,7 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
         self.assertIn("/ 1000 XP", summary)
         self.assertIn("빈 대표 프로젝트 슬롯 3개", summary)
         self.assertIn("21지표 취약 체크포인트 TOP 5", summary)
+        self.assertIn("[R1]", summary)
         self.assertIn("미증명 신념", summary)
         self.assertIn("장애 복구 기준을 코드로 고정한다", summary)
         self.assertNotIn("6축 포트폴리오 캐릭터", summary)

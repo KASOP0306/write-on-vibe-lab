@@ -155,7 +155,7 @@ def format_star_mastery_summary(
     max_sel = int(mastery.get("max_selected_projects") or 4)
     sel_projs = mastery.get("selected_projects") or []
     star_avg = (mastery.get("star_averages") or {}).get("axes") or {}
-    cp_stats = mastery.get("checkpoint_stats") or []
+    cp_stats = mastery.get("checkpoint_heatmap") or mastery.get("checkpoint_stats") or []
 
     axis_lines = [
         f"  - {STAR_AXES[ax]['label']}({ax.upper()}): {(star_avg.get(ax) or {}).get('score', 0)}%"
