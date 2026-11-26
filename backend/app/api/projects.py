@@ -54,8 +54,12 @@ from app.schemas.projects import (
     DocumentIngestProposalResponse,
     DocumentToProjectResponse,
     ExperienceSummary,
+    GitHubActivityRequest,
+    GitHubActivityResponse,
     GitHubAnalyzeRequest,
     GitHubAnalyzeResponse,
+    GitHubDiffContextRequest,
+    GitHubDiffContextResponse,
     GitHubImportResponse,
     GitHubSyncRequest,
     LearningLoopItem,
@@ -91,6 +95,8 @@ from app.tools.document_parser import DocumentParseError, parse_uploaded_file
 from app.tools.github_analyzer import (
     GitHubAnalyzerError,
     analyze_github_to_portfolio,
+    fetch_github_changes_diff,
+    fetch_github_recent_activity,
     fetch_github_repo_context,
     format_repo_context_as_document,
     synthesize_portfolio_from_context,
@@ -1360,6 +1366,79 @@ async def propose_project_sync_from_experience(
         parse_info=f"STAR-L {exp.completeness_score}점 · 역질문 채굴 역반영",
         **proposal,
     )
+
+
+@router.post(
+    "/{project_id}/github-activity",
+    response_model=GitHubActivityResponse,
+)
+async def get_project_github_activity(
+    project_id: int,
+    payload: GitHubActivityRequest | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubActivityResponse:
+    """프로젝트에 연결된 GitHub 저장소의 최근 Pull Request 및 Push 커밋 목록을 온디맨드 조회한다."""
+    project = await _load_project_full(session, project_id)
+    repo_url = (payload.repo_url.strip() if payload and payload.repo_url else "") or (project.repo_url or "").strip()
+    if not repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="프로젝트에 연결된 GitHub 저장소 URL이 없습니다. 프로젝트 정보에 repo_url을 등록해 주세요.",
+        )
+
+    try:
+        res = await fetch_github_recent_activity(
+            repo_url,
+            github_token=(payload.github_token.strip() if payload and payload.github_token else None),
+            limit=(payload.limit if payload else 15),
+        )
+    except GitHubAnalyzerError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except Exception as exc:
+        logger.exception("GitHub activity fetch failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"GitHub PR·커밋 조회 중 오류가 발생했습니다: {exc}",
+        )
+
+    return GitHubActivityResponse(**res)
+
+
+@router.post(
+    "/{project_id}/github-diff-context",
+    response_model=GitHubDiffContextResponse,
+)
+async def get_project_github_diff_context(
+    project_id: int,
+    payload: GitHubDiffContextRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> GitHubDiffContextResponse:
+    """선택된 PR·커밋의 실제 변경 파일과 코드 Diff·리뷰 코멘트를 경험 채굴용 컨텍스트로 추출한다."""
+    project = await _load_project_full(session, project_id)
+    repo_url = payload.repo_url.strip() or (project.repo_url or "").strip()
+    if not repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="프로젝트에 연결된 GitHub 저장소 URL이 없습니다.",
+        )
+
+    try:
+        res = await fetch_github_changes_diff(
+            repo_url,
+            pr_numbers=payload.pr_numbers,
+            commit_shas=payload.commit_shas,
+            github_token=payload.github_token.strip() or None,
+        )
+    except GitHubAnalyzerError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except Exception as exc:
+        logger.exception("GitHub diff fetch failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"GitHub 코드 Diff 추출 중 오류가 발생했습니다: {exc}",
+        )
+
+    return GitHubDiffContextResponse(**res)
 
 
 @router.post(

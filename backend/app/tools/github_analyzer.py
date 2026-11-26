@@ -588,3 +588,313 @@ async def analyze_github_to_portfolio(
         extra_context=extra_context,
         profile_context=profile_context,
     )
+
+
+# ==============================================================================
+# 온디맨드 GitHub PR · Push 커밋 변경 이력 및 코드 Diff 추출 (경험 채굴 연동용)
+# ==============================================================================
+def is_ignored_diff_file(filename: str) -> bool:
+    """lockfile, 빌드 산출물, 바이너리 등 Diff 노이즈 파일을 필터링한다."""
+    lower = (filename or "").lower()
+    if any(part in lower for part in IGNORE_PATH_PARTS):
+        return True
+    if lower.endswith((".min.js", ".min.css", ".map", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".woff", ".woff2", ".pdf")):
+        return True
+    return False
+
+
+def _raise_github_http_error(resp: httpx.Response, context_label: str) -> None:
+    if resp.status_code == 404:
+        raise GitHubAnalyzerError(
+            f"GitHub 저장소({context_label})를 찾을 수 없습니다. Private 저장소라면 1회용 PAT(Personal Access Token)를 입력해 주세요.",
+            status_code=404,
+        )
+    if resp.status_code == 401:
+        raise GitHubAnalyzerError(
+            "입력하신 GitHub Token이 유효하지 않거나 만료되었습니다.",
+            status_code=401,
+        )
+    if resp.status_code == 403:
+        remaining = resp.headers.get("X-RateLimit-Remaining", "")
+        if remaining == "0":
+            raise GitHubAnalyzerError(
+                "GitHub Public API 시간당 호출 한도(60회)에 도달했습니다. 1회용 PAT를 입력하면 시간당 5,000회로 즉시 조회할 수 있습니다.",
+                status_code=429,
+            )
+        raise GitHubAnalyzerError(
+            f"GitHub 접근 권한이 없습니다 ({context_label}). Private 저장소인 경우 repo 권한이 포함된 PAT를 입력해 주세요.",
+            status_code=403,
+        )
+    if resp.status_code >= 400:
+        raise GitHubAnalyzerError(
+            f"GitHub API 오류 (HTTP {resp.status_code}): {context_label}",
+            status_code=502,
+        )
+
+
+async def fetch_github_recent_activity(
+    repo_url: str,
+    *,
+    github_token: str | None = None,
+    limit: int = 15,
+) -> dict[str, Any]:
+    """연결된 GitHub 저장소의 최근 Pull Request 및 Push 커밋 목록을 온디맨드로 조회한다."""
+    owner, repo = parse_github_url(repo_url)
+    per_page = max(1, min(30, int(limit or 15)))
+    headers = _build_github_headers(token=github_token)
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        pulls_task = client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls",
+            params={"state": "all", "sort": "updated", "direction": "desc", "per_page": per_page},
+            headers=headers,
+        )
+        commits_task = client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
+            params={"per_page": per_page},
+            headers=headers,
+        )
+        pulls_resp, commits_resp = await asyncio.gather(pulls_task, commits_task)
+
+    if commits_resp.status_code >= 400:
+        _raise_github_http_error(commits_resp, f"{owner}/{repo}")
+    if pulls_resp.status_code >= 400 and pulls_resp.status_code != 404:
+        _raise_github_http_error(pulls_resp, f"{owner}/{repo}/pulls")
+
+    raw_pulls = pulls_resp.json() if pulls_resp.status_code == 200 else []
+    raw_commits = commits_resp.json() if commits_resp.status_code == 200 else []
+
+    pull_requests: list[dict[str, Any]] = []
+    for pr in raw_pulls if isinstance(raw_pulls, list) else []:
+        merged_at = pr.get("merged_at")
+        state = "merged" if merged_at else str(pr.get("state") or "open")
+        body_raw = str(pr.get("body") or "").strip()
+        pull_requests.append(
+            {
+                "number": int(pr.get("number") or 0),
+                "title": str(pr.get("title") or "").strip(),
+                "state": state,
+                "merged_at": str(merged_at or ""),
+                "updated_at": str(pr.get("updated_at") or pr.get("created_at") or ""),
+                "author": str((pr.get("user") or {}).get("login") or ""),
+                "html_url": str(pr.get("html_url") or ""),
+                "head_ref": str((pr.get("head") or {}).get("ref") or ""),
+                "base_ref": str((pr.get("base") or {}).get("ref") or ""),
+                "body_preview": body_raw[:240],
+                "labels": [str(lb.get("name") or "") for lb in (pr.get("labels") or []) if isinstance(lb, dict)][:5],
+            }
+        )
+
+    commits: list[dict[str, Any]] = []
+    for cm in raw_commits if isinstance(raw_commits, list) else []:
+        sha = str(cm.get("sha") or "")
+        c_obj = cm.get("commit") or {}
+        msg = str(c_obj.get("message") or "").strip()
+        first_line = msg.splitlines()[0].strip() if msg else ""
+        author_obj = c_obj.get("author") or {}
+        author_login = str((cm.get("author") or {}).get("login") or author_obj.get("name") or "")
+        commits.append(
+            {
+                "sha": sha,
+                "short_sha": sha[:7],
+                "first_line": first_line[:180],
+                "message": msg[:400],
+                "author": author_login,
+                "date": str(author_obj.get("date") or ""),
+                "html_url": str(cm.get("html_url") or ""),
+            }
+        )
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "full_name": f"{owner}/{repo}",
+        "repo_url": f"https://github.com/{owner}/{repo}",
+        "pull_requests": pull_requests,
+        "commits": commits,
+    }
+
+
+def format_github_changes_for_mining(
+    owner: str,
+    repo: str,
+    pr_details: list[dict[str, Any]],
+    commit_details: list[dict[str, Any]],
+    *,
+    max_patch_per_file: int = 550,
+    max_total_chars: int = 5200,
+) -> dict[str, Any]:
+    """선택된 PR 및 커밋의 파일 변경·Diff 패치·리뷰 코멘트를 경험 채굴용 구조화 텍스트로 포맷한다."""
+    md_lines: list[str] = [f"### GitHub 변경 이력 분석 ({owner}/{repo})"]
+    selected_items: list[dict[str, Any]] = []
+    total_files = 0
+    total_additions = 0
+    total_deletions = 0
+
+    def _format_files_block(files: list[dict[str, Any]], max_files: int = 8) -> list[str]:
+        nonlocal total_files, total_additions, total_deletions
+        relevant = [f for f in files if not is_ignored_diff_file(str(f.get("filename") or ""))]
+        # 변경량(additions + deletions)이 큰 핵심 소스 파일 우선
+        relevant.sort(
+            key=lambda f: (
+                int(f.get("additions") or 0) + int(f.get("deletions") or 0),
+                _score_repo_file(str(f.get("filename") or "")),
+            ),
+            reverse=True,
+        )
+        out: list[str] = []
+        for f in relevant[:max_files]:
+            fname = str(f.get("filename") or "")
+            adds = int(f.get("additions") or 0)
+            dels = int(f.get("deletions") or 0)
+            status = str(f.get("status") or "modified")
+            total_files += 1
+            total_additions += adds
+            total_deletions += dels
+            out.append(f"- `{fname}` ({status}, +{adds}/-{dels})")
+            patch = str(f.get("patch") or "").strip()
+            if patch:
+                snippet = patch[:max_patch_per_file]
+                if len(patch) > max_patch_per_file:
+                    snippet += "\n... (생략)"
+                out.append(f"```diff\n{snippet}\n```")
+        if len(relevant) > max_files:
+            out.append(f"- 외 {len(relevant) - max_files}개 파일 변경")
+        return out
+
+    for pr in pr_details:
+        num = pr.get("number")
+        title = str(pr.get("title") or "").strip()
+        state = "merged" if pr.get("merged_at") else str(pr.get("state") or "open")
+        body = str(pr.get("body") or "").strip()
+        files = pr.get("files") or []
+        comments = pr.get("review_comments") or []
+
+        selected_items.append(
+            {
+                "kind": "pr",
+                "id": f"PR #{num}",
+                "title": title,
+                "state": state,
+                "url": str(pr.get("html_url") or ""),
+            }
+        )
+        md_lines.append(f"\n#### [PR #{num} · {state}] {title}")
+        if body:
+            md_lines.append(f"- PR 설명: {body[:500]}")
+        if files:
+            md_lines.append("- 주요 변경 파일 & 코드 Diff:")
+            md_lines.extend(_format_files_block(files, max_files=7))
+        if comments:
+            md_lines.append("- 코드 리뷰 주요 논의:")
+            for c in comments[:4]:
+                c_path = str(c.get("path") or "")
+                c_body = str(c.get("body") or "").strip()[:200]
+                if c_body:
+                    md_lines.append(f"  - ({c_path}) {c_body}")
+
+    for cm in commit_details:
+        sha = str(cm.get("sha") or "")
+        short_sha = sha[:7]
+        c_obj = cm.get("commit") or {}
+        msg = str(c_obj.get("message") or cm.get("message") or "").strip()
+        first_line = msg.splitlines()[0].strip() if msg else short_sha
+        files = cm.get("files") or []
+
+        selected_items.append(
+            {
+                "kind": "commit",
+                "id": short_sha,
+                "title": first_line,
+                "state": "pushed",
+                "url": str(cm.get("html_url") or ""),
+            }
+        )
+        md_lines.append(f"\n#### [Commit `{short_sha}`] {first_line}")
+        if len(msg.splitlines()) > 1:
+            rest = "\n".join(msg.splitlines()[1:]).strip()[:300]
+            if rest:
+                md_lines.append(f"- 커밋 상세: {rest}")
+        if files:
+            md_lines.append("- 주요 변경 파일 & 코드 Diff:")
+            md_lines.extend(_format_files_block(files, max_files=6))
+
+    summary_markdown = "\n".join(md_lines)
+    if len(summary_markdown) > max_total_chars:
+        summary_markdown = summary_markdown[:max_total_chars] + "\n\n... (길어 일부 Diff 생략됨)"
+
+    mining_prompt_notes = (
+        "[GitHub 실제 PR·커밋 코드 변경 이력 기반 경험 채굴]\n"
+        "아래는 내가 실제로 반영한 GitHub Pull Request / Push 커밋의 변경 파일과 코드 Diff입니다.\n"
+        "코드 변경 내용(What)은 이미 확인되었으니, 이 변경을 하게 된 문제 상황(S)·원인 진단(T)·포기한 대안과 트레이드오프(A2)·"
+        "장애물 돌파(A4)·전후 정량 변화(R1/R2)·배운 원칙(L)을 날카롭게 역질문해 주세요.\n\n"
+        f"{summary_markdown}"
+    )
+
+    return {
+        "summary_markdown": summary_markdown,
+        "mining_prompt_notes": mining_prompt_notes,
+        "selected_items": selected_items,
+        "stats": {
+            "pr_count": len(pr_details),
+            "commit_count": len(commit_details),
+            "files_changed": total_files,
+            "additions": total_additions,
+            "deletions": total_deletions,
+        },
+    }
+
+
+async def fetch_github_changes_diff(
+    repo_url: str,
+    *,
+    pr_numbers: list[int] | None = None,
+    commit_shas: list[str] | None = None,
+    github_token: str | None = None,
+) -> dict[str, Any]:
+    """선택된 PR 번호(최대 3개) 및 커밋 SHA(최대 5개)의 실제 코드 Diff와 리뷰 코멘트를 조회한다."""
+    owner, repo = parse_github_url(repo_url)
+    clean_prs = list(dict.fromkeys(int(n) for n in (pr_numbers or []) if int(n) > 0))[:3]
+    clean_shas = list(dict.fromkeys(str(s).strip() for s in (commit_shas or []) if str(s).strip()))[:5]
+    if not clean_prs and not clean_shas:
+        raise GitHubAnalyzerError("분석할 PR 또는 커밋을 1개 이상 선택해 주세요.", status_code=400)
+
+    headers = _build_github_headers(token=github_token)
+    pr_details: list[dict[str, Any]] = []
+    commit_details: list[dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        for num in clean_prs:
+            pr_meta_resp, pr_files_resp, pr_comments_resp = await asyncio.gather(
+                client.get(f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{num}", headers=headers),
+                client.get(
+                    f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{num}/files",
+                    params={"per_page": 30},
+                    headers=headers,
+                ),
+                client.get(
+                    f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{num}/comments",
+                    params={"per_page": 15},
+                    headers=headers,
+                ),
+            )
+            if pr_meta_resp.status_code >= 400:
+                _raise_github_http_error(pr_meta_resp, f"{owner}/{repo} PR #{num}")
+            meta = pr_meta_resp.json()
+            meta["files"] = pr_files_resp.json() if pr_files_resp.status_code == 200 else []
+            meta["review_comments"] = pr_comments_resp.json() if pr_comments_resp.status_code == 200 else []
+            pr_details.append(meta)
+
+        if clean_shas:
+            cm_resps = await asyncio.gather(
+                *[
+                    client.get(f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{sha}", headers=headers)
+                    for sha in clean_shas
+                ]
+            )
+            for sha, resp in zip(clean_shas, cm_resps):
+                if resp.status_code >= 400:
+                    _raise_github_http_error(resp, f"{owner}/{repo} commit {sha[:7]}")
+                commit_details.append(resp.json())
+
+    return format_github_changes_for_mining(owner, repo, pr_details, commit_details)

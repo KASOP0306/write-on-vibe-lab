@@ -198,6 +198,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  getProjectGithubActivity: (projectId, data = {}) =>
+    apiRequest(`/api/projects/${projectId}/github-activity`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getProjectGithubDiffContext: (projectId, data = {}) =>
+    apiRequest(`/api/projects/${projectId}/github-diff-context`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   ingestProjectDocument: (projectId, formData) =>
     apiRequest(`/api/projects/${projectId}/ingest-document`, {

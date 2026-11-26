@@ -166,6 +166,59 @@ class GitHubSyncRequest(BaseModel):
     instruction: str = Field(default="", description="선택: 반영 시 강조할 지시사항")
 
 
+class GitHubActivityRequest(BaseModel):
+    repo_url: str = Field(default="", description="미입력 시 프로젝트에 저장된 repo_url 사용")
+    github_token: str = Field(default="", description="선택: 1회용 PAT (Private 레포/Rate Limit 우회, DB 미저장)")
+    limit: int = Field(default=15, ge=1, le=30)
+
+
+class GitHubPullRequestItem(BaseModel):
+    number: int
+    title: str
+    state: str = "open"
+    merged_at: str = ""
+    updated_at: str = ""
+    author: str = ""
+    html_url: str = ""
+    head_ref: str = ""
+    base_ref: str = ""
+    body_preview: str = ""
+    labels: list[str] = Field(default_factory=list)
+
+
+class GitHubCommitItem(BaseModel):
+    sha: str
+    short_sha: str
+    first_line: str
+    message: str = ""
+    author: str = ""
+    date: str = ""
+    html_url: str = ""
+
+
+class GitHubActivityResponse(BaseModel):
+    owner: str
+    repo: str
+    full_name: str
+    repo_url: str
+    pull_requests: list[GitHubPullRequestItem] = Field(default_factory=list)
+    commits: list[GitHubCommitItem] = Field(default_factory=list)
+
+
+class GitHubDiffContextRequest(BaseModel):
+    repo_url: str = Field(default="", description="미입력 시 프로젝트에 저장된 repo_url 사용")
+    github_token: str = Field(default="", description="선택: 1회용 PAT (DB 미저장)")
+    pr_numbers: list[int] = Field(default_factory=list, max_length=3)
+    commit_shas: list[str] = Field(default_factory=list, max_length=5)
+
+
+class GitHubDiffContextResponse(BaseModel):
+    summary_markdown: str
+    mining_prompt_notes: str
+    selected_items: list[dict[str, Any]] = Field(default_factory=list)
+    stats: dict[str, int] = Field(default_factory=dict)
+
+
 class SuggestedExperienceDraft(BaseModel):
     title: str
     situation: str = ""

@@ -31,6 +31,7 @@ import {
 import { api } from "../api/client.js";
 import ExperienceDetailModal from "./ExperienceDetailModal.jsx";
 import ExperienceProjectSyncModal from "./ExperienceProjectSyncModal.jsx";
+import GitHubActivityPickerModal from "./GitHubActivityPickerModal.jsx";
 import RadarChart, { RubricReferenceModal } from "./RadarChart.jsx";
 import StarMeter from "./StarMeter.jsx";
 import {
@@ -153,6 +154,7 @@ export default function ProjectWorkspaceView({
   const [evaluatingStars, setEvaluatingStars] = useState(false);
   const [detailExp, setDetailExp] = useState(null);
   const [syncExp, setSyncExp] = useState(null);
+  const [showGithubActivityModal, setShowGithubActivityModal] = useState(false);
   const [rubricRef, setRubricRef] = useState(null);
   const [showRubricModal, setShowRubricModal] = useState(false);
 
@@ -1070,6 +1072,18 @@ export default function ProjectWorkspaceView({
               <Sparkles className="w-3.5 h-3.5" />
               <span>이 프로젝트로 경험 채굴 →</span>
             </button>
+
+            {project.repo_url && (
+              <button
+                type="button"
+                onClick={() => setShowGithubActivityModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                title="최근 GitHub PR·커밋 Diff를 선택해 경험 채굴 역질문을 시작합니다"
+              >
+                <Github className="w-3.5 h-3.5" />
+                <span>PR·커밋 Diff 채굴</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -2833,6 +2847,17 @@ export default function ProjectWorkspaceView({
         onSynced={async () => {
           await loadProject(true);
           await onGlobalRefresh();
+        }}
+      />
+
+      <GitHubActivityPickerModal
+        open={showGithubActivityModal}
+        project={project}
+        onClose={() => setShowGithubActivityModal(false)}
+        onDiffReady={(diffRes) => {
+          if (onJumpToMiner) {
+            onJumpToMiner(projectId, diffRes.mining_prompt_notes || "");
+          }
         }}
       />
 

@@ -8,6 +8,7 @@ import {
   Eye,
   FolderOpen,
   FolderSync,
+  Github,
   Loader2,
   RotateCcw,
   Save,
@@ -21,6 +22,7 @@ import {
 import { api } from "../api/client.js";
 import ExperienceDetailModal from "../components/ExperienceDetailModal.jsx";
 import ExperienceProjectSyncModal from "../components/ExperienceProjectSyncModal.jsx";
+import GitHubActivityPickerModal from "../components/GitHubActivityPickerModal.jsx";
 import StarMeter from "../components/StarMeter.jsx";
 import StepIndicator from "../components/StepIndicator.jsx";
 
@@ -79,9 +81,11 @@ export default function ExperienceMinerPage({
   const [metricsData, setMetricsData] = useState(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
 
-  // Detail viewer & Reverse-sync to project modals
+  // Detail viewer, Reverse-sync to project & GitHub PR/Commit diff picker modals
   const [detailExp, setDetailExp] = useState(null);
   const [syncExp, setSyncExp] = useState(null);
+  const [showGithubPicker, setShowGithubPicker] = useState(false);
+  const [loadedGithubDiffStats, setLoadedGithubDiffStats] = useState(null);
 
   useEffect(() => {
     if (initialPrefill) {
@@ -592,16 +596,36 @@ export default function ExperienceMinerPage({
               </label>
 
               {selectedProjectObj && (
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 text-xs space-y-1">
-                  <div className="font-bold text-indigo-950">
-                    선택된 프로젝트 요약 미리보기 · {selectedProjectObj.name}
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 text-xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-indigo-950">
+                      선택된 프로젝트 요약 미리보기 · {selectedProjectObj.name}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowGithubPicker(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
+                    >
+                      <Github className="w-3.5 h-3.5 text-slate-900" />
+                      <span>GitHub 최근 PR · 커밋 Diff 불러오기</span>
+                    </button>
                   </div>
                   <p className="text-slate-600 line-clamp-2">
                     {selectedProjectObj.summary || "요약 없음 — 작성된 프로젝트 섹션 내용을 자동으로 불러와 분석합니다."}
                   </p>
-                  <div className="text-[11px] text-indigo-700">
-                    메모 없이 바로 <strong>[경험 채굴 시작]</strong>을 눌러도 프로젝트 요약 전체에서 빈틈 체크포인트를 찾아 역질문을 시작합니다!
-                  </div>
+                  {loadedGithubDiffStats ? (
+                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">
+                      ✅ GitHub 변경 Diff 로드 완료 (PR {loadedGithubDiffStats.pr_count || 0}건 · 커밋{" "}
+                      {loadedGithubDiffStats.commit_count || 0}건 · 파일 {loadedGithubDiffStats.files_changed || 0}개 ·{" "}
+                      +{loadedGithubDiffStats.additions || 0}/-{loadedGithubDiffStats.deletions || 0}) — 바로{" "}
+                      <strong>[프로젝트 요약으로 경험 채굴 시작]</strong>을 누르세요!
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-indigo-700">
+                      메모 없이 바로 <strong>[경험 채굴 시작]</strong>을 누르거나, 우측{" "}
+                      <strong>[GitHub 최근 PR · 커밋 Diff 불러오기]</strong>로 실제 코드 변경점을 가져와 역질문을 시작할 수 있습니다.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1095,6 +1119,17 @@ export default function ExperienceMinerPage({
         onClose={() => setSyncExp(null)}
         onSynced={async () => {
           await onRefresh();
+        }}
+      />
+
+      {/* On-Demand GitHub PR / Commit Diff Picker Modal */}
+      <GitHubActivityPickerModal
+        open={showGithubPicker}
+        project={selectedProjectObj || null}
+        onClose={() => setShowGithubPicker(false)}
+        onDiffReady={(diffRes) => {
+          setRawNotes(diffRes.mining_prompt_notes || "");
+          setLoadedGithubDiffStats(diffRes.stats || null);
         }}
       />
     </div>
