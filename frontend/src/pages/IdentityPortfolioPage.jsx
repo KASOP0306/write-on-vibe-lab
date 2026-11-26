@@ -41,7 +41,7 @@ const EMPTY_PROJECT_FORM = {
   artifact_links: [],
 };
 
-export default function IdentityPortfolioPage({ profile, projects, onRefresh }) {
+export default function IdentityPortfolioPage({ profile, projects, onRefresh, onJumpToMiner }) {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [tracks, setTracks] = useState(DEFAULT_TRACKS);
   const [filterTrack, setFilterTrack] = useState("all");
@@ -124,6 +124,7 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
         projectId={activeProjectId}
         onBack={() => setActiveProjectId(null)}
         onGlobalRefresh={onRefresh}
+        onJumpToMiner={onJumpToMiner}
       />
     );
   }
@@ -448,7 +449,11 @@ export default function IdentityPortfolioPage({ profile, projects, onRefresh }) 
       </div>
 
       {/* 6-Axis Portfolio Character & Dual Radar Diagnosis Dashboard */}
-      <PortfolioDiagnosisPanel projectCount={projects.length} />
+      <PortfolioDiagnosisPanel
+        projectCount={projects.length}
+        onJumpToMiner={onJumpToMiner}
+        onOpenProject={(pid) => setActiveProjectId(pid)}
+      />
 
       {/* Registered Portfolio Projects Hub with Multi-Track Filter */}
       <div className="space-y-4">

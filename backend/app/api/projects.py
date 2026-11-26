@@ -40,6 +40,7 @@ from app.core.project_templates import (
 )
 from app.core.star_rubric import (
     compute_average_star_axes,
+    compute_cumulative_portfolio_xp,
     evaluate_star_experience_rubric,
     get_rubric_reference_payload,
     normalize_star_scores,
@@ -61,6 +62,7 @@ from app.schemas.projects import (
     LearningLoopResponse,
     PortfolioDiagnosisRequest,
     PortfolioDiagnosisResponse,
+    PortfolioSelectionRequest,
     ProjectCreateRequest,
     ProjectDetailResponse,
     ProjectDocumentResponse,
@@ -296,24 +298,91 @@ async def get_projects_learning_loop(
     return LearningLoopResponse(items=items, total_try_count=total_try)
 
 
+async def _build_portfolio_mastery_payload(session: AsyncSession) -> dict[str, Any]:
+    """대표 4개 프로젝트 × 150 XP 캡 = 600 XP 누적 STAR-L 마스터리 집계 헬퍼."""
+    all_projects = (
+        (
+            await session.execute(
+                select(Project).order_by(Project.created_at.desc(), Project.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    all_exps = (
+        (
+            await session.execute(
+                select(Experience).order_by(Experience.created_at.desc(), Experience.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    proj_dicts = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "period": p.period,
+            "project_types": normalize_project_types(p.project_types),
+            "is_portfolio_selected": bool(p.is_portfolio_selected),
+        }
+        for p in all_projects
+    ]
+    exp_dicts = [
+        {
+            "id": e.id,
+            "project_id": e.project_id,
+            "title": e.title,
+            "completeness_score": e.completeness_score,
+            "star_scores": e.star_scores,
+        }
+        for e in all_exps
+    ]
+    return compute_cumulative_portfolio_xp(proj_dicts, exp_dicts)
+
+
+@router.get("/portfolio-mastery")
+async def get_portfolio_mastery(
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """대표 4개 프로젝트 × 150 XP 캡 = 600 XP 누적 STAR-L 마스터리 및 21지표 히트맵을 반환한다."""
+    return await _build_portfolio_mastery_payload(session)
+
+
+@router.put("/portfolio-selection")
+async def update_portfolio_selection(
+    payload: PortfolioSelectionRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """포트폴리오 600 XP 산정에 반영할 대표 프로젝트(최대 4개)를 지정한다."""
+    unique_ids = list(dict.fromkeys(payload.project_ids))
+    if len(unique_ids) > 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="대표 프로젝트는 최대 4개까지 선택할 수 있습니다.",
+        )
+    all_projects = (await session.execute(select(Project))).scalars().all()
+    valid_ids = {p.id for p in all_projects}
+    selected_set = {pid for pid in unique_ids if pid in valid_ids}
+    for proj in all_projects:
+        proj.is_portfolio_selected = proj.id in selected_set
+    await session.commit()
+    return await _build_portfolio_mastery_payload(session)
+
+
 @router.get("/portfolio-diagnosis", response_model=PortfolioDiagnosisResponse)
 async def get_portfolio_diagnosis(
     session: AsyncSession = Depends(get_db_session),
 ) -> PortfolioDiagnosisResponse:
-    """캐시된 전체 포트폴리오 캐릭터 진단 + 전체 평균 STAR-L 5축 점수를 반환한다."""
+    """누적식 STAR-L 600 XP 마스터리 + 전체 평균 STAR-L 5축 점수를 반환한다."""
     profile = await session.get(UserProfile, 1)
-    projects = (
-        (await session.execute(select(Project.id))).scalars().all()
-    )
-    all_exps = (await session.execute(select(Experience))).scalars().all()
-    star_avg = compute_average_star_axes(
-        [{"star_scores": e.star_scores} for e in all_exps]
-    )
+    mastery = await _build_portfolio_mastery_payload(session)
     return PortfolioDiagnosisResponse(
         diagnosis=dict(profile.portfolio_diagnosis or {}) if profile else {},
         external_notes=dict(profile.external_competency_notes or {}) if profile else {},
-        overall_star_averages=star_avg,
-        project_count=len(projects),
+        overall_star_averages=mastery.get("star_averages", {}),
+        portfolio_xp=mastery,
+        project_count=len(mastery.get("all_projects") or []),
     )
 
 
@@ -1787,6 +1856,7 @@ async def evaluate_project_stars(
                 "quantified_metrics": exp.quantified_metrics,
             },
             context_text=exp.raw_notes,
+            project_types=normalize_project_types(project.project_types),
         )
         exp.completeness_score = grade["completeness_score"]
         exp.star_scores = grade["star_scores"]

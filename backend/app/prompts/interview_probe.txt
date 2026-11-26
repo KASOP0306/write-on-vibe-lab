@@ -6,6 +6,10 @@
 [현재 프로빙 단계] {depth_guide}
 </context>
 
+<user_feedback_rules>
+{user_feedback_rules}
+</user_feedback_rules>
+
 <rules>
 사용 가능한 프로빙 기법(`technique`):
 - `ownership_drilldown`: 팀이 아닌 본인의 고유 의사결정·실행 경계 확인 ('I' Rule)
@@ -16,8 +20,10 @@
 
 필수 규칙:
 1. 이전에 물어본 질문은 절대 반복하지 마세요.
-2. 현재 점수가 가장 낮은 STAR-L 축 2개를 서로 다른 기법으로 공략하는 짧고 답변하기 쉬운 역질문 2개를 만드세요.
-3. 각 질문마다 면접관이 무엇을 검증하려는지 `interviewer_intent`에 1줄로 명시하세요.
+2. [연결된 프로젝트 요약]이나 [현재 STAR-L 요약]에 이미 적힌 사실은 절대 다시 묻지 마세요.
+3. [우선 공략할 미충족 체크포인트] 중 상위 2개 항목을 서로 다른 기법으로 정조준하는 짧고 답변하기 쉬운 개방형 역질문 2개를 만드세요.
+4. 각 질문에는 반드시 `target_checkpoint_id`(예: `R1`, `A2`)와 면접관 검증 의도(`interviewer_intent`, 1줄)를 명시하세요.
+5. 한 질문에 물음표는 1개만, 110자 이내의 간결한 한국어 1문장으로 작성하세요.
 </rules>
 
 <output_format>

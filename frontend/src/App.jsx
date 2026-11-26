@@ -16,6 +16,7 @@ export default function App() {
   const [experiences, setExperiences] = useState([]);
   const [beliefNotes, setBeliefNotes] = useState([]);
   const [copilotPrefill, setCopilotPrefill] = useState("");
+  const [minerPrefill, setMinerPrefill] = useState(null);
   const [globalError, setGlobalError] = useState("");
 
   const refreshSharedData = async () => {
@@ -43,6 +44,15 @@ export default function App() {
   const handleJumpToCopilot = (topic) => {
     setCopilotPrefill(topic || "");
     setActiveTab("copilot");
+  };
+
+  const handleJumpToMiner = (projectId, focusHint = "") => {
+    setMinerPrefill({
+      projectId: projectId ? String(projectId) : "",
+      focusHint: focusHint || "",
+      ts: Date.now(),
+    });
+    setActiveTab("experience");
   };
 
   const handleBlueprintCreated = async () => {
@@ -87,6 +97,7 @@ export default function App() {
             profile={profile}
             projects={projects}
             onRefresh={refreshSharedData}
+            onJumpToMiner={handleJumpToMiner}
           />
         )}
         {activeTab === "experience" && (
@@ -94,6 +105,8 @@ export default function App() {
             projects={projects}
             experiences={experiences}
             onRefresh={refreshSharedData}
+            initialPrefill={minerPrefill}
+            onConsumeInitialPrefill={() => setMinerPrefill(null)}
           />
         )}
         {activeTab === "company" && (

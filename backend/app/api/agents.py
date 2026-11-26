@@ -24,10 +24,17 @@ from app.core.database import (
     CompanyProfile,
     CoverLetter,
     Experience,
+    ExperienceFeedbackLog,
     QuestionFeedbackLog,
     VectorDocument,
     get_db_session,
     get_session_factory,
+)
+from app.core.star_rubric import (
+    CURRENT_RUBRIC_VERSION,
+    STAR_CHECKPOINTS,
+    list_rubric_versions,
+    normalize_star_scores,
 )
 from app.core.vector_store import DocType, delete_document, upsert_document
 from app.graphs.company_graph import build_company_graph
@@ -56,12 +63,14 @@ from app.schemas.agents import (
     CoverLetterResponse,
     CoverLetterSaveRequest,
     CoverLetterUpdateRequest,
+    ExperienceFeedbackSubmitRequest,
     InterestClipResponse,
     InterestClipSaveRequest,
     InterestSearchRequest,
     InterviewReplyRequest,
     InterviewStartRequest,
     NewProjectBlueprintsRequest,
+    QuestionFeedbackSubmitRequest,
 )
 from app.schemas.projects import ExperienceSummary
 from app.tools.web_search import search_interest_sources
@@ -103,14 +112,26 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                 continue
 
             for node_name, update in chunk.items():
-                if node_name == "extract_star":
+                if node_name == "load_project_context":
+                    if update.get("project_name"):
+                        yield sse_node_end(
+                            "load_project_context",
+                            {
+                                "project_name": update.get("project_name", ""),
+                                "project_types": update.get("project_types", []),
+                                "project_context_preview": str(update.get("project_context", ""))[:420],
+                            },
+                        )
+                elif node_name == "extract_star":
                     yield sse_node_end("extract_star", {"star": update.get("star", {})})
-                    yield sse_node_start("grade_gaps", "STAR 완성도와 정량 근거 빈틈을 평가하는 중...")
+                    yield sse_node_start("grade_gaps", "21개 Atomic 체크포인트로 하이브리드 채점 중...")
                 elif node_name == "grade_gaps":
                     yield sse_node_end(
                         "grade_gaps",
                         {
                             "completeness_score": update.get("completeness_score", 0),
+                            "initial_score": update.get("initial_score", 0),
+                            "last_unlocked_checkpoints": update.get("last_unlocked_checkpoints", 0),
                             "star_scores": update.get("star_scores", {}),
                             "is_sufficient": update.get("is_sufficient", False),
                             "missing_points": update.get("missing_points", []),
@@ -122,6 +143,8 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                         {
                             "questions": update.get("questions", []),
                             "structured_questions": update.get("structured_questions", []),
+                            "question_critic_score": update.get("question_critic_score", 0),
+                            "question_critic_revisions": update.get("question_critic_revisions", 0),
                         },
                     )
                 elif node_name == "save_experience":
@@ -133,13 +156,18 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                         },
                     )
 
+        turn_count = len(final_state.get("qa_history") or [])
         if final_state.get("saved_experience_id") is not None:
             yield sse_done(
                 {
                     "thread_id": thread_id,
                     "experience_id": final_state.get("saved_experience_id"),
+                    "project_id": final_state.get("project_id"),
+                    "project_name": final_state.get("project_name", ""),
                     "star": final_state.get("star", {}),
                     "completeness_score": final_state.get("completeness_score", 0),
+                    "initial_score": final_state.get("initial_score", 0),
+                    "turn_count": turn_count,
                     "star_scores": final_state.get("star_scores", {}),
                     "vector_synced": final_state.get("vector_synced", False),
                 }
@@ -151,6 +179,12 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                     "questions": final_state.get("questions", []),
                     "structured_questions": final_state.get("structured_questions", []),
                     "completeness_score": final_state.get("completeness_score", 0),
+                    "initial_score": final_state.get("initial_score", 0),
+                    "last_unlocked_checkpoints": final_state.get("last_unlocked_checkpoints", 0),
+                    "turn_count": turn_count,
+                    "project_name": final_state.get("project_name", ""),
+                    "project_types": final_state.get("project_types", []),
+                    "project_context_preview": str(final_state.get("project_context", ""))[:420],
                     "star_scores": final_state.get("star_scores", {}),
                     "missing_points": final_state.get("missing_points", []),
                     "star": final_state.get("star", {}),
@@ -942,6 +976,284 @@ async def get_question_quality_stats(
         else 0.0,
         "by_technique": _agg(by_technique),
         "by_axis": _agg(by_axis),
+    }
+
+
+@router.post("/agents/question-feedback")
+async def submit_question_feedback(
+    payload: QuestionFeedbackSubmitRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """턴별 역질문 사용자 평가(👍/👎 + 사유 칩)를 기록한다."""
+    log_row = await session.get(QuestionFeedbackLog, payload.feedback_log_id)
+    if log_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Question feedback log {payload.feedback_log_id} not found.",
+        )
+    log_row.user_vote = int(payload.vote)
+    log_row.user_reason = str(payload.reason or "").strip()[:80] if payload.vote == -1 else ""
+    await session.commit()
+    return {
+        "id": log_row.id,
+        "vote": log_row.user_vote,
+        "reason": log_row.user_reason,
+    }
+
+
+@router.post("/agents/experience-feedback")
+async def submit_experience_feedback(
+    payload: ExperienceFeedbackSubmitRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """경험 채굴 완료 후 만족도(1~5★) 및 점수 체감(박함/적절/후함) 피드백을 저장한다."""
+    rubric_ver = CURRENT_RUBRIC_VERSION
+    cp_snapshot: dict[str, Any] = {}
+    final_score = int(payload.final_score)
+
+    if payload.experience_id is not None:
+        exp = await session.get(Experience, payload.experience_id)
+        if exp is not None:
+            norm = normalize_star_scores(exp.star_scores)
+            rubric_ver = str(norm.get("rubric_version") or CURRENT_RUBRIC_VERSION)
+            final_score = int(exp.completeness_score or final_score)
+            cps = norm.get("checkpoints") if isinstance(norm, dict) else None
+            if isinstance(cps, dict):
+                cp_snapshot = {
+                    cid: int(item.get("status", 0))
+                    for cid, item in cps.items()
+                    if isinstance(item, dict)
+                }
+
+    row = ExperienceFeedbackLog(
+        experience_id=payload.experience_id,
+        project_id=payload.project_id,
+        thread_id=payload.thread_id.strip()[:120],
+        rubric_version=rubric_ver,
+        satisfaction_rating=int(payload.satisfaction_rating),
+        score_perception=int(payload.score_perception),
+        comment=payload.comment.strip(),
+        initial_score=int(payload.initial_score),
+        final_score=final_score,
+        score_gain=final_score - int(payload.initial_score),
+        turn_count=int(payload.turn_count),
+        checkpoint_snapshot=cp_snapshot,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "id": row.id,
+        "rubric_version": row.rubric_version,
+        "satisfaction_rating": row.satisfaction_rating,
+        "score_perception": row.score_perception,
+        "score_gain": row.score_gain,
+    }
+
+
+@router.get("/agents/experience-mining/metrics")
+async def get_experience_mining_metrics(
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """경험 채굴 품질·성장·캘리브레이션 및 21개 체크포인트 문항 분석(Item Analysis) 통합 지표."""
+    q_rows = (
+        (
+            await session.execute(
+                select(QuestionFeedbackLog)
+                .order_by(QuestionFeedbackLog.created_at.desc())
+                .limit(300)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    e_rows = (
+        (
+            await session.execute(
+                select(ExperienceFeedbackLog)
+                .order_by(ExperienceFeedbackLog.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    all_exps = (
+        (
+            await session.execute(
+                select(Experience).order_by(Experience.created_at.desc()).limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # 1) 질문 품질 지표
+    voted = [r for r in q_rows if r.user_vote in (1, -1)]
+    thumbs_up = sum(1 for r in voted if r.user_vote == 1)
+    answered_qs = [r for r in q_rows if r.score_after != r.score_before or r.delta_score != 0 or r.unlocked_checkpoints > 0]
+    neg_reason_counts: dict[str, int] = {}
+    by_technique: dict[str, dict[str, Any]] = {}
+    cp_neg_votes: dict[str, int] = {}
+    cp_total_votes: dict[str, int] = {}
+
+    for r in q_rows:
+        t_bucket = by_technique.setdefault(
+            r.technique,
+            {"count": 0, "deltas": [], "up": 0, "down": 0},
+        )
+        t_bucket["count"] += 1
+        t_bucket["deltas"].append(int(r.delta_score))
+        if r.user_vote == 1:
+            t_bucket["up"] += 1
+        elif r.user_vote == -1:
+            t_bucket["down"] += 1
+            if r.user_reason:
+                neg_reason_counts[r.user_reason] = neg_reason_counts.get(r.user_reason, 0) + 1
+        for cid in (r.target_checkpoints or []):
+            if r.user_vote in (1, -1):
+                cp_total_votes[cid] = cp_total_votes.get(cid, 0) + 1
+                if r.user_vote == -1:
+                    cp_neg_votes[cid] = cp_neg_votes.get(cid, 0) + 1
+
+    tech_summary = {
+        tech: {
+            "count": b["count"],
+            "avg_delta_score": round(sum(b["deltas"]) / max(1, len(b["deltas"])), 2),
+            "thumbs_up_rate": round((b["up"] / (b["up"] + b["down"])) * 100, 1)
+            if (b["up"] + b["down"]) > 0
+            else None,
+        }
+        for tech, b in by_technique.items()
+    }
+    top_neg_reasons = [
+        {"reason": k, "count": v}
+        for k, v in sorted(neg_reason_counts.items(), key=lambda x: -x[1])[:4]
+    ]
+
+    # 2) 경험 만족도 & 성장 지표
+    harsh_cnt = sum(1 for r in e_rows if r.score_perception == -1)
+    fair_cnt = sum(1 for r in e_rows if r.score_perception == 0)
+    lenient_cnt = sum(1 for r in e_rows if r.score_perception == 1)
+    fb_total = len(e_rows)
+
+    # 3) 21개 체크포인트 문항 분석 (Item Analysis) & 코드 하드 캡 집계
+    hard_cap_counts: dict[str, int] = {}
+    cp_statuses: dict[str, list[int]] = {cp["id"]: [] for cp in STAR_CHECKPOINTS}
+    for exp in all_exps:
+        norm = normalize_star_scores(exp.star_scores)
+        if not norm:
+            continue
+        for ev in (norm.get("cap_events") or []):
+            reason = str(ev.get("reason") or "unknown")
+            hard_cap_counts[reason] = hard_cap_counts.get(reason, 0) + 1
+        cps_map = norm.get("checkpoints")
+        if isinstance(cps_map, dict):
+            for cid, item in cps_map.items():
+                if cid in cp_statuses and isinstance(item, dict):
+                    cp_statuses[cid].append(int(item.get("status", 0)))
+
+    item_analysis: list[dict[str, Any]] = []
+    for cp in STAR_CHECKPOINTS:
+        cid = cp["id"]
+        vals = cp_statuses[cid]
+        n = len(vals)
+        pass_rate = round((sum(1 for v in vals if v == 2) / n) * 100, 1) if n else 0.0
+        partial_rate = round((sum(1 for v in vals if v == 1) / n) * 100, 1) if n else 0.0
+        miss_rate = round((sum(1 for v in vals if v == 0) / n) * 100, 1) if n else 0.0
+        v_tot = cp_total_votes.get(cid, 0)
+        neg_rate = round((cp_neg_votes.get(cid, 0) / v_tot) * 100, 1) if v_tot else 0.0
+
+        health = "healthy"
+        if v_tot >= 3 and neg_rate >= 40.0:
+            health = "high_friction"
+        elif n >= 5 and pass_rate >= 90.0:
+            health = "too_easy"
+        elif n >= 5 and pass_rate <= 10.0 and miss_rate >= 80.0:
+            health = "too_hard"
+
+        item_analysis.append(
+            {
+                "id": cid,
+                "axis": cp["axis"],
+                "label": cp["label"],
+                "weight": int(cp["weight"]),
+                "sample_count": n,
+                "pass_rate": pass_rate,
+                "partial_rate": partial_rate,
+                "miss_rate": miss_rate,
+                "negative_vote_rate": neg_rate,
+                "vote_count": v_tot,
+                "health": health,
+            }
+        )
+
+    return {
+        "rubric_version": CURRENT_RUBRIC_VERSION,
+        "available_versions": list_rubric_versions(),
+        "question_quality": {
+            "total_questions": len(q_rows),
+            "voted_count": len(voted),
+            "thumbs_up_count": thumbs_up,
+            "thumbs_up_rate": round((thumbs_up / len(voted)) * 100, 1) if voted else None,
+            "avg_delta_score": round(
+                sum(r.delta_score for r in answered_qs) / max(1, len(answered_qs)), 2
+            )
+            if answered_qs
+            else 0.0,
+            "avg_unlocked_checkpoints": round(
+                sum(r.unlocked_checkpoints for r in answered_qs) / max(1, len(answered_qs)), 2
+            )
+            if answered_qs
+            else 0.0,
+            "by_technique": tech_summary,
+            "top_negative_reasons": top_neg_reasons,
+        },
+        "experience_growth": {
+            "total_feedback_count": fb_total,
+            "avg_satisfaction": round(
+                sum(r.satisfaction_rating for r in e_rows) / max(1, fb_total), 2
+            )
+            if fb_total
+            else None,
+            "avg_initial_score": round(
+                sum(r.initial_score for r in e_rows) / max(1, fb_total), 1
+            )
+            if fb_total
+            else 0.0,
+            "avg_final_score": round(
+                sum(r.final_score for r in e_rows) / max(1, fb_total), 1
+            )
+            if fb_total
+            else 0.0,
+            "avg_score_gain": round(
+                sum(r.score_gain for r in e_rows) / max(1, fb_total), 1
+            )
+            if fb_total
+            else 0.0,
+            "avg_turns": round(
+                sum(r.turn_count for r in e_rows) / max(1, fb_total), 1
+            )
+            if fb_total
+            else 0.0,
+        },
+        "rubric_calibration": {
+            "perception_counts": {
+                "harsh": harsh_cnt,
+                "fair": fair_cnt,
+                "lenient": lenient_cnt,
+            },
+            "perception_rates": {
+                "harsh": round((harsh_cnt / fb_total) * 100, 1) if fb_total else 0.0,
+                "fair": round((fair_cnt / fb_total) * 100, 1) if fb_total else 0.0,
+                "lenient": round((lenient_cnt / fb_total) * 100, 1) if fb_total else 0.0,
+            },
+            "hard_cap_triggers": [
+                {"reason": k, "count": v}
+                for k, v in sorted(hard_cap_counts.items(), key=lambda x: -x[1])[:8]
+            ],
+            "item_analysis": item_analysis,
+        },
     }
 
 

@@ -15,7 +15,7 @@ from app.prompts import build_chat_prompt
 logger = logging.getLogger(__name__)
 
 MAX_QUESTION_REVISIONS = 2
-PASS_SCORE_THRESHOLD = 80
+PASS_SCORE_THRESHOLD = 70
 MAX_QUESTION_LENGTH = 135
 
 _OPEN_INTERROGATIVE_RE = re.compile(
@@ -41,6 +41,7 @@ class QuestionCriticSchema(BaseModel):
 class RefinedQuestionItem(BaseModel):
     technique: str = Field(default="micro_behavioral")
     target_axis: str = Field(default="action")
+    target_checkpoint_id: str = Field(default="")
     question: str = Field(description="개선된 간결하고 날카로운 한국어 개방형 역질문 1문장")
     interviewer_intent: str = Field(default="")
     example_hint: str = Field(default="")
@@ -209,6 +210,9 @@ async def critique_and_refine_questions(
         if attempt >= max_revisions:
             break
 
+        # 보수적 개입: 린트 결함이 없고 점수가 pass_threshold 이상이면 리라이트하지 않음
+        # (실측에서 무분별한 리라이트 시 specificity 하락 방지)
+
         # Refiner 호출 (최대 max_revisions=2회)
         refine_msgs = build_chat_prompt(
             "question_refiner",
@@ -246,6 +250,8 @@ async def critique_and_refine_questions(
                         **base,
                         "technique": item.technique.strip() or base.get("technique", "micro_behavioral"),
                         "target_axis": item.target_axis.strip() or base.get("target_axis", "action"),
+                        "target_checkpoint_id": item.target_checkpoint_id.strip()
+                        or base.get("target_checkpoint_id", ""),
                         "question": item.question.strip() or base.get("question", ""),
                         "interviewer_intent": item.interviewer_intent.strip()
                         or base.get("interviewer_intent", ""),

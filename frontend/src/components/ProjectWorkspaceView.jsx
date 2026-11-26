@@ -58,7 +58,12 @@ const DEFAULT_SEC_AI = {
   applying: false,
 };
 
-export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefresh }) {
+export default function ProjectWorkspaceView({
+  projectId,
+  onBack,
+  onGlobalRefresh,
+  onJumpToMiner = null,
+}) {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -944,21 +949,21 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
             <HelpCircle className="w-4 h-4 text-violet-600 shrink-0 mt-0.5" />
             <div className="text-xs text-slate-700">
               <strong className="text-violet-950">
-                STAR 경험이 아직 비어 있거나 보강 여지가 있습니다 (선택)
+                이 프로젝트 요약으로 21지표 STAR-L 경험을 채굴해 보세요
               </strong>
               <p className="text-slate-600 mt-0.5">
-                코드·문서에 없는 본인 역할(T), 의사결정 대안(A), 정량 성과(R)를 AI 역질문 3~4개로 가볍게 채워 보세요.
+                프로젝트 요약·섹션을 자동 불러온 뒤, 빠진 체크포인트(대안 비교·본인 주도성·전후 수치·회고)만 멀티턴 역질문으로 정밀 채굴합니다.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={handleOpenStarOnboarding}
+              onClick={() => onJumpToMiner && onJumpToMiner(projectId, "")}
               className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>STAR 역질문 시작 (선택)</span>
+              <span>경험 채굴 시작 →</span>
             </button>
             <button
               type="button"
@@ -1054,11 +1059,11 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={handleOpenStarOnboarding}
+              onClick={() => onJumpToMiner && onJumpToMiner(projectId, "")}
               className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-900 hover:bg-violet-100"
             >
-              <HelpCircle className="w-3.5 h-3.5" />
-              <span>STAR-L 역질문</span>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>이 프로젝트로 경험 채굴 →</span>
             </button>
 
             <button
@@ -1707,11 +1712,11 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   </button>
                   <button
                     type="button"
-                    onClick={handleOpenStarOnboarding}
+                    onClick={() => onJumpToMiner && onJumpToMiner(projectId, "")}
                     className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-900 hover:bg-violet-100"
                   >
-                    <HelpCircle className="w-3.5 h-3.5" />
-                    <span>STAR 역질문 보강</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>경험 채굴 시작 →</span>
                   </button>
                   {(project.experiences || []).length > 0 && (
                     <button
@@ -1725,7 +1730,7 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                       ) : (
                         <RefreshCw className="w-3.5 h-3.5" />
                       )}
-                      <span>{evaluatingStars ? "5축 채점 중..." : "5축 BARS 재채점"}</span>
+                      <span>{evaluatingStars ? "21지표 채점 중..." : "21지표 하이브리드 재채점"}</span>
                     </button>
                   )}
                 </div>
@@ -1782,11 +1787,11 @@ export default function ProjectWorkspaceView({ projectId, onBack, onGlobalRefres
                   </p>
                   <button
                     type="button"
-                    onClick={handleOpenStarOnboarding}
+                    onClick={() => onJumpToMiner && onJumpToMiner(projectId, "")}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-violet-700"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>AI 역질문 3~4개로 STAR 바로 채우기 (선택)</span>
+                    <span>이 프로젝트 요약으로 경험 채굴 시작 →</span>
                   </button>
                 </div>
               ) : (

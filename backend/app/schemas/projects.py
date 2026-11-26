@@ -112,6 +112,7 @@ class ProjectResponse(BaseModel):
     repo_url: str
     project_types: list[str] = Field(default_factory=lambda: ["engineering"])
     artifact_links: list[dict[str, str]] = Field(default_factory=list)
+    is_portfolio_selected: bool = False
     created_at: datetime
     experience_count: int = 0
     filled_section_count: int = 0
@@ -359,10 +360,19 @@ class PortfolioDiagnosisRequest(BaseModel):
     )
 
 
+class PortfolioSelectionRequest(BaseModel):
+    project_ids: list[int] = Field(
+        default_factory=list,
+        max_length=4,
+        description="대표 포트폴리오 600 XP 산정에 포함할 프로젝트 ID 목록 (최대 4개)",
+    )
+
+
 class PortfolioDiagnosisResponse(BaseModel):
     diagnosis: dict[str, Any] = Field(default_factory=dict)
     external_notes: dict[str, str] = Field(default_factory=dict)
     overall_star_averages: dict[str, Any] = Field(default_factory=dict)
+    portfolio_xp: dict[str, Any] = Field(default_factory=dict)
     project_count: int = 0
 
 

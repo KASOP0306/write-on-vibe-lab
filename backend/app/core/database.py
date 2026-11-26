@@ -9,6 +9,7 @@ from langgraph.store.postgres.aio import AsyncPostgresStore
 from pgvector.sqlalchemy import Vector
 from psycopg import AsyncConnection
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -106,6 +107,7 @@ class Project(Base):
     )
     artifact_links: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     retrospective: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    is_portfolio_selected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -227,20 +229,51 @@ class ApplicationLog(Base):
 
 
 class QuestionFeedbackLog(Base):
-    """루프 A(질문 퀄리티 상승 루프): 역질문 기법·축별 실제 ΔSTAR-L 효용 누적 로그."""
+    """루프 A(질문 퀄리티 상승 루프): 역질문 기법·축·21지표별 ΔSTAR-L 효용 & 사용자 👍/👎 피드백 누적 로그."""
 
     __tablename__ = "question_feedback_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_flow: Mapped[str] = mapped_column(String(50), default="interview", nullable=False, index=True)
+    thread_id: Mapped[str] = mapped_column(String(120), default="", nullable=False, index=True)
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     technique: Mapped[str] = mapped_column(String(50), default="micro_behavioral", nullable=False, index=True)
     target_axis: Mapped[str] = mapped_column(String(30), default="action", nullable=False, index=True)
+    target_checkpoints: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     question_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     score_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     score_after: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     delta_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unlocked_checkpoints: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     critic_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     critic_revisions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    user_vote: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 (👍) | -1 (👎) | None
+    user_reason: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExperienceFeedbackLog(Base):
+    """경험 채굴 완료 시 사용자 만족도(1~5★) 및 점수 체감 캘리브레이션(후함/적절/박함) 로그."""
+
+    __tablename__ = "experience_feedback_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experience_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("experiences.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    thread_id: Mapped[str] = mapped_column(String(120), default="", nullable=False, index=True)
+    rubric_version: Mapped[str] = mapped_column(String(20), default="v2.0", nullable=False)
+    satisfaction_rating: Mapped[int] = mapped_column(Integer, default=5, nullable=False)  # 1..5
+    score_perception: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # -1(박함) | 0(적절) | 1(후함)
+    comment: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    initial_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    final_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    score_gain: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    checkpoint_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -372,6 +405,12 @@ async def init_db() -> None:
         )
         await conn.execute(
             text(
+                "ALTER TABLE projects "
+                "ADD COLUMN IF NOT EXISTS is_portfolio_selected BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
                 "ALTER TABLE project_sections "
                 "ADD COLUMN IF NOT EXISTS track VARCHAR(40) NOT NULL DEFAULT 'core'"
             )
@@ -404,6 +443,42 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE user_profile "
                 "ADD COLUMN IF NOT EXISTS external_competency_notes JSONB NOT NULL DEFAULT '{}'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS thread_id VARCHAR(120) NOT NULL DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS project_id INTEGER"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS target_checkpoints JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS unlocked_checkpoints INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS user_vote INTEGER"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE question_feedback_logs "
+                "ADD COLUMN IF NOT EXISTS user_reason VARCHAR(80) NOT NULL DEFAULT ''"
             )
         )
         # Unit 5: pgvector HNSW 코사인 유사도 인덱스 (검색 속도·확장성 확보)

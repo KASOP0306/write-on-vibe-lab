@@ -3,15 +3,21 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # --- 워크플로우 ①: 경험 채굴 (Active Interviewer) ---
 class InterviewStartRequest(BaseModel):
-    raw_notes: str = Field(..., min_length=5, description="경험 메모 원문")
+    raw_notes: str = Field(default="", description="경험 메모 원문 (프로젝트 연결 시 생략 또는 짧은 초점 메모 가능)")
     project_id: int | None = Field(default=None, description="연결할 프로젝트 ID (선택)")
     thread_id: str | None = Field(default=None, description="세션 식별자 (미지정 시 자동 생성)")
     force_save: bool = Field(default=False, description="즉시 저장 여부")
+
+    @model_validator(mode="after")
+    def _validate_notes_or_project(self) -> "InterviewStartRequest":
+        if self.project_id is None and len((self.raw_notes or "").strip()) < 5:
+            raise ValueError("프로젝트를 선택하거나 5자 이상의 경험 메모를 입력해 주세요.")
+        return self
 
 
 class InterviewReplyRequest(BaseModel):
@@ -21,6 +27,31 @@ class InterviewReplyRequest(BaseModel):
     force_save: bool = Field(
         default=False, description="true이면 완성도와 무관하게 즉시 저장 노드로 라우팅"
     )
+
+
+class QuestionFeedbackSubmitRequest(BaseModel):
+    feedback_log_id: int = Field(..., ge=1, description="역질문 생성 시 발급된 question_feedback_logs.id")
+    vote: Literal[1, -1] = Field(..., description="1 = 도움됨(👍), -1 = 아쉬움(👎)")
+    reason: str = Field(
+        default="",
+        max_length=80,
+        description="👎 사유 코드 (already_answered | too_abstract | role_mismatch | too_complex)",
+    )
+
+
+class ExperienceFeedbackSubmitRequest(BaseModel):
+    experience_id: int | None = Field(default=None)
+    project_id: int | None = Field(default=None)
+    thread_id: str = Field(default="", max_length=120)
+    satisfaction_rating: int = Field(..., ge=1, le=5, description="최종 완성 경험 만족도 (1~5★)")
+    score_perception: Literal[-1, 0, 1] = Field(
+        default=0,
+        description="점수 체감 캘리브레이션 (-1=너무 박함, 0=적절함, 1=점수가 후함)",
+    )
+    comment: str = Field(default="", max_length=500)
+    initial_score: int = Field(default=0, ge=0, le=100)
+    final_score: int = Field(default=0, ge=0, le=100)
+    turn_count: int = Field(default=0, ge=0)
 
 
 # --- 워크플로우 ②: 목표 기업 리서치 & 신념 3각 매칭 ---

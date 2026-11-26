@@ -121,6 +121,12 @@ export const api = {
   getProjectTemplates: () => apiRequest("/api/projects/templates"),
   getRubricReference: () => apiRequest("/api/projects/rubric-reference"),
   getProjectsLearningLoop: () => apiRequest("/api/projects/learning-loop"),
+  getPortfolioMastery: () => apiRequest("/api/projects/portfolio-mastery"),
+  updatePortfolioSelection: (projectIds) =>
+    apiRequest("/api/projects/portfolio-selection", {
+      method: "PUT",
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
   getPortfolioDiagnosis: () => apiRequest("/api/projects/portfolio-diagnosis"),
   runPortfolioDiagnosis: (externalNotes = null) =>
     apiRequest("/api/projects/portfolio-diagnosis", {
@@ -286,11 +292,23 @@ export const api = {
   deleteApplication: (id) =>
     apiRequest(`/api/applications/${id}`, { method: "DELETE" }),
 
-  // SSE Agent Streams
+  // SSE Agent Streams & Experience Mining Feedback/Metrics
   startInterview: (body, onEvent) =>
     streamSSE("/api/agents/interview/start", body, onEvent),
   replyInterview: (body, onEvent) =>
     streamSSE("/api/agents/interview/reply", body, onEvent),
+  submitQuestionFeedback: (data) =>
+    apiRequest("/api/agents/question-feedback", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  submitExperienceFeedback: (data) =>
+    apiRequest("/api/agents/experience-feedback", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getExperienceMiningMetrics: () =>
+    apiRequest("/api/agents/experience-mining/metrics"),
   researchCompany: (body, onEvent) =>
     streamSSE("/api/agents/company/research", body, onEvent),
   searchInterests: (body, onEvent) =>

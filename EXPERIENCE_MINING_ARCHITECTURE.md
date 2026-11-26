@@ -1,8 +1,8 @@
-# EXPERIENCE_MINING_ARCHITECTURE.md — 핵심 엔진: 경험 채굴 (Active Interviewer) 심층 아키텍처
+# EXPERIENCE_MINING_ARCHITECTURE.md — 핵심 엔진: 경험 채굴 (Active Interviewer) & STAR-L 21지표 하이브리드 아키텍처 (v2.0)
 
 > **우리 프로젝트의 심장(Core Engine):**  
 > 모든 AI 자소서·포트폴리오 도구의 진짜 병목은 "글을 못 써서"가 아니라, **지원자가 자신의 모호한 경험 메모에서 면접관이 검증하려는 핵심 의사결정·기여도·정량 근거를 스스로 끌어내지 못하는 것(Garbage In, Garbage Out)**입니다.  
-> `write-on-vibe-lab`의 핵심 엔진인 **경험 채굴 (`Active Interviewer`)**은 거친 메모 한 줄을 **Stateful LangGraph Human-in-the-Loop(HITL) 인터뷰 루프**로 파고들어, 객관적으로 검증된 **5축 STAR-L 1급 데이터**로 정련한 뒤 서비스 전체(캐릭터 진단·기업 매칭·자소서·코파일럿)에 공급합니다.
+> `write-on-vibe-lab`의 핵심 엔진인 **경험 채굴 (`Active Interviewer`)**은 프로젝트 요약과 거친 메모를 **Stateful LangGraph Human-in-the-Loop(HITL) 인터뷰 루프**로 파고들어, **21개 Atomic 체크포인트 기반 3단계 하이브리드 평가 엔진(`rubric_v2.0`)**으로 객관 채점·보강한 뒤, **대표 4개 프로젝트 누적식 600 XP 포트폴리오**와 다운스트림 AI 워크플로우 전체에 공급합니다.
 
 ---
 
@@ -10,160 +10,138 @@
 
 ```mermaid
 flowchart LR
-    RAW["거친 경험 메모\n('Redis 붙여서 빨라졌어요')"] --> CORE["★ 핵심 엔진: 경험 채굴\n(Active Interviewer · LangGraph HITL)\n5축 STAR-L 추출 · BARS 채점 · 역질문 루프"]
-    CORE -->|"정형 DB 저장"| EXP[("experiences 테이블\n5축 STAR-L + star_scores")]
-    CORE -->|"효용 로그"| QLOG[("question_feedback_logs\n기법·축별 ΔSTAR-L 추적")]
-    CORE -->|"Parent/Child 청킹"| VDB[("pgvector HNSW DB\ndoc_type='experience' 격리")]
+    PROJ["2. 포트폴리오 프로젝트 요약<br/>(project_sections · recap · project_type)"] --> CORE
+    RAW["거친 경험 메모<br/>('Redis 붙여서 빨라졌어요')"] --> CORE["★ 핵심 엔진: 경험 채굴 (방식 B)<br/>LangGraph HITL + 21지표 하이브리드 평가<br/>+ 보수적 Critic/Refiner + 2중 피드백 루프"]
 
-    EXP --> CHAR["2. 6축 포트폴리오 캐릭터 진단\n(내적3×외적3 · 강점50:약점50)"]
-    VDB --> COMP["4. 기업 리서치 3각 매칭\n(기업 비전 × 신념 × 증명 경험)"]
-    VDB --> CL["5. 자소서 공방 v2\n(유일한 1급 사실 근거 · 환각 차단)"]
-    VDB --> COP["7. 새 프로젝트 코파일럿\n(Agentic RAG Hybrid+MMR 검색)"]
+    CORE -->|"정형 DB + 21지표 스냅샷"| EXP[("experiences 테이블<br/>STAR-L + rubric_version + 21개 판정")]
+    CORE -->|"턴별 👍/👎 + ΔSTAR-L"| QLOG[("question_feedback_logs<br/>+ experience_feedback_logs")]
+    QLOG -->|"동적 피드백 메모리 & 문항 분석"| CORE
+    CORE -->|"Parent/Child 청킹"| VDB[("pgvector HNSW DB<br/>doc_type='experience' 격리")]
+
+    EXP --> PORT["2. STAR-L 마스터리 보드<br/>(대표 4개 프로젝트 × 150 XP = 600 XP<br/>+ 5축 게이지 + 21지표 히트맵)"]
+    VDB --> COMP["4. 기업 리서치 3각 매칭<br/>(기업 비전 × 신념 × 증명 경험)"]
+    VDB --> CL["5. 자소서 공방 v2<br/>(유일한 1급 사실 근거 · 환각 차단)"]
+    VDB --> COP["7. 새 프로젝트 코파일럿<br/>(Agentic RAG Hybrid+MMR 검색)"]
 ```
 
-- **왜 핵심인가?** 경험 채굴에서 확보된 **사실 밀도 높은 STAR-L 1건**이 아래 4개 다운스트림 AI 워크플로우의 품질 상한선을 결정합니다.
+- **단일 진입 파이프라인:** `2. 포트폴리오`의 1회성 온보딩 역질문을 제거하고, 프로젝트 요약에서 **`[이 프로젝트 요약으로 경험 채굴 시작 →]`**으로 방식 B(`interview_graph.py`)에 직결합니다.
+- **포트폴리오 점수 일원화:** 기존 6축 육각형 레이더 및 캐릭터 아키타입 진단을 제거하고, **STAR-L 21지표 + 대표 4개 프로젝트 누적식 600 XP 체계**로 단일화합니다.
 
 ---
 
-## 2. End-to-End 작동 과정 (실시간 SSE & 멀티턴 체크포인터 시퀀스)
+## 2. 설계 레퍼런스 (학술 · 빅테크 채용 검증 근거)
 
-사용자가 메모를 입력하고 역질문에 답해 저장하기까지의 전체 실행 흐름입니다.
-
-```mermaid
-sequenceDiagram
-    actor User as 지원자 (Browser)
-    participant UI as ExperienceMinerPage.jsx
-    participant Nginx as Nginx (/api/ SSE\nproxy_buffering off)
-    participant API as FastAPI (agents.py)
-    participant Graph as LangGraph\n(interview_graph.py)
-    participant PG as PostgreSQL\n(checkpoints / experiences /\nquestion_feedback_logs / pgvector)
-    participant BR as AWS Bedrock\n(Nova Lite + Titan Embed v2)
-
-    Note over User,BR: [1턴] 거친 메모 입력 → 분석 → 역질문 대기 (Interrupt)
-    User->>UI: 거친 메모 입력 & [채굴 시작]
-    UI->>Nginx: POST /api/agents/interview/start (SSE)
-    Nginx->>API: Stream Proxy
-    API->>Graph: astream(input_state, thread_id="exp-xxxx", recursion_limit=12)
-    Graph->>BR: extract_star (interview_extract.txt, Structured Output)
-    BR-->>Graph: 5축 STAR-L + 정량 지표 (날조 엄금)
-    Graph-->>UI: SSE node_end("extract_star") → 실시간 STAR-L 카드 갱신
-    Graph->>BR: grade_gaps (DDI BARS 5축 채점)
-    Graph->>Graph: 코드 레벨 관대화 방지 하드 캡 적용 (S~D 등급)
-    Graph-->>UI: SSE node_end("grade_gaps") → 5축 레이더 & 점수 게이지 갱신
-    alt 완성도 < 80점 AND force_save=false
-        Graph->>BR: generate_questions (DDI Funnel × Bar Raiser 역질문 2개)
-        Graph->>BR: 루프 A: 코드 린터 + Question Critic-Refiner (최대 2회)
-        Graph->>PG: AsyncPostgresSaver 체크포인트 저장 (thread_id)
-        Graph-->>UI: SSE interrupt(thread_id, questions, structured_questions)
-        UI-->>User: 프로빙 기법 배지 + 면접관 의도 + 역질문 2개 표시
-    end
-
-    Note over User,BR: [2턴+] 사용자 답변 → 체크포인트 복원 → ΔSTAR-L 기록 → 재채점 또는 저장
-    User->>UI: 역질문 답변 입력 (또는 [이 상태로 저장하기])
-    UI->>API: POST /api/agents/interview/reply (thread_id, user_reply, force_save)
-    API->>Graph: AsyncPostgresSaver에서 thread_id 상태 자동 복원
-    Graph->>Graph: prepare_turn (직전 점수 스냅샷 · 답변 병합 · 단축 경로 판별)
-    Graph->>BR: extract_star (누적 Q&A 통합 재추출)
-    Graph->>BR: grade_gaps (5축 재채점)
-    Graph->>PG: question_feedback_logs에 ΔSTAR-L(답변후 - 답변전) 기록
-    alt score >= 80 & is_sufficient OR force_save=true
-        Graph->>PG: experiences 테이블 영속 저장
-        Graph->>BR: Titan Embed v2 (1024차원) 임베딩
-        Graph->>PG: vector_documents 업서트 (doc_type='experience', HNSW)
-        Graph-->>UI: SSE done(experience_id, star, star_scores, vector_synced)
-    end
-```
-
----
-
-## 3. LangGraph 내부 상태 머신 아키텍처 (`backend/app/graphs/interview_graph.py`)
-
-### 3.1 노드 · 조건부 엣지 그래프
-
-```mermaid
-flowchart TD
-    S((START)) --> P["1. prepare_turn\n· latest_reply를 qa_history에 병합\n· 직전 점수/질문 스냅샷(ΔSTAR-L 계산용)\n· force_save 단축 경로 여부 판단"]
-
-    P -->|"skip_extraction=true\n(force_save=true & 기존 STAR 존재 &\n추가 답변 없음)"| SAVE
-    P -->|"일반 실행"| EXT["2. extract_star\n· Fast LLM (Nova Lite, temp=0.1)\n· prompts/interview_extract.txt\n· 최근 6턴 원문 + 오래된 턴 압축\n· 미언급 수치/성과 날조 엄금"]
-
-    EXT --> GRADE["3. grade_gaps\n· 5축 STAR-L BARS 객관 채점\n· 코드 레벨 관대화 방지 하드 캡\n· 직전 턴 존재 시 ΔSTAR-L DB 기록"]
-
-    GRADE -->|"force_save=true OR\n(score >= 80 AND is_sufficient)"| SAVE["5. save_experience\n· experiences 테이블 저장\n· Titan Embed v2 선행 임베딩\n· experience 청킹 벡터 업서트"]
-    GRADE -->|"빈틈 존재 (< 80점)"| Q["4. generate_questions\n· 가장 약한 축 2개 자동 선별\n· DDI Funnel × Bar Raiser 5기법 매칭\n· 루프 A: 코드 린터 + Critic-Refiner(max 2)"]
-
-    Q --> INT(("END (SSE interrupt)\nAsyncPostgresSaver에\nthread_id 상태 영속화"))
-    SAVE --> DONE(("END (SSE done)"))
-```
-
-### 3.2 `InterviewState` 핵심 필드 설계
-
-| 필드 | 역할 | 설계 포인트 |
+### 2.1 STAR-L 루브릭 & 역질문 프로빙 근거
+| 레퍼런스 | 핵심 근거 | 본 서비스 반영 |
 | :--- | :--- | :--- |
-| `raw_notes`, `qa_history`, `latest_reply` | 초기 메모 및 멀티턴 질의응답 누적 | 6턴 초과 시 오래된 턴은 핵심 180자 요약으로 자동 압축해 토큰 폭증 방지(`_build_context_text`) |
-| `star`, `completeness_score`, `star_scores` | 5축 STAR-L 본문 및 축별 BARS 점수·등급 | 매 턴 전체 누적 맥락을 재통합해 S·T·A·R·L이 점진적으로 고밀도화됨 |
-| `prev_completeness_score`, `prev_structured_questions` | 직전 턴 스냅샷 | 답변 직후 `ΔSTAR-L = new_score - prev_score`를 정확히 산출해 `question_feedback_logs`에 저장 |
-| `force_save`, `skip_extraction` | 사용자 즉시 탈출 제어 | 사용자가 `[이 상태로 저장하기]` 클릭 시 추가 답변이 없으면 LLM 호출 없이 즉시 `save_experience`로 단축 라우팅 |
-| `question_critic_score`, `question_critic_revisions` | 루프 A 품질 메타 | 질문 비평 점수 및 리라이트 횟수(최대 2회) 추적 |
+| **Sackett, Zhang, Berry, & Lievens (2022)** (*JAP*) | 메타분석 결과 **구조화 면접(`r = 0.42`)이 직무 성과 예측 타당도 1위**(비구조화 `0.19`의 2배 이상) | 표준 STAR 구조 + 21개 행동 체크포인트 + 원문 근거 인용 채점 |
+| **Google re:Work Structured Interviewing & BARS** | 형용사 대신 **관찰 가능한 행동 앵커(BARS)**, verbatim 근거 기록, **Action·Result 중심 배분** | 21개 항목별 `0/1/2` 앵커 + **`S 12 · T 14 · A 36 · R 26 · L 12`** (`A+R = 62%`) |
+| **Amazon Bar Raiser STAR Probing** | **`"I vs We"` 원칙**(팀 공로 시그널 0), 대안 비교·트레이드오프·실패 투명성·리스크 대응 프로빙 | `A2(대안 비교)` · `A3(본인 주도성)` · `A4(장애물 돌파)` · `A5(일정·스코프·리스크)` 체크포인트화 |
 
-### 3.3 운영 안전장치 (Guardrails)
-1. **체크포인터 영속화 (`AsyncPostgresSaver`):** 서버가 재시작되거나 네트워크가 잠시 끊겨도 `thread_id`로 직전 노드 상태에서 대화를 이어갈 수 있습니다.
-2. **실행 상한 (`recursion_limit=12`):** 그래프 레벨 무한 순환을 원천 차단합니다.
-3. **트랜잭션 격리 업서트 (`try_upsert_document`):** `save_experience`에서 Bedrock 임베딩 호출을 DB 벡터 쓰기보다 먼저 수행해, 임베딩 장애가 발생해도 이미 저장된 `experiences` 정형 레코드와 ORM 세션이 롤백/만료되지 않습니다.
-
----
-
-## 4. 객관화 채점 엔진 해부 (`backend/app/core/star_rubric.py`)
-
-일반 LLM에게 "이 경험 몇 점이야?"라고 물으면 대부분 **80~90점의 관대화 편향(Leniency Bias)**을 보입니다. 이를 해결하기 위해 **글로벌 채용 평가 프레임워크 3종 + 코드 레벨 하드 캡**을 결합했습니다.
-
-### 4.1 5축 STAR-L 가중치 공식 & 레퍼런스
-
-$$\text{종합 점수} = 0.15 \times S + 0.15 \times T + 0.35 \times A + 0.25 \times R + 0.10 \times L$$
-
-| 축 | 가중치 | 레퍼런스 기준 | 핵심 검증 포인트 |
-| :---: | :---: | :--- | :--- |
-| **S (Situation)** | 15% | DDI Targeted Selection BARS | 배경·제약조건·문제 심각성(규모·긴급도)이 명확한가 |
-| **T (Task)** | 15% | Amazon Bar Raiser ('I' Rule) | 팀 목표가 아니라 **본인 고유 책임 범위**와 달성 목표가 분리되었는가 |
-| **A (Action)** | **35%** | Amazon Bar Raiser × Google GCA | "우리가" 아닌 **"내가" 직접 내린 의사결정, 대안 비교, 트레이드오프, 실행 행동**인가 |
-| **R (Result)** | **25%** | Google XYZ Formula | 전/후 비교 정량 지표(`Accomplished X as measured by Y`) 또는 객관 검증 근거가 있는가 |
-| **L (Learning)** | 10% | Post-Mortem / Learning Agility | 단순 소감이 아니라 **재발 방지 설계·다음 프로젝트 적용 원칙**으로 일반화되었는가 |
-
-### 4.2 5단계 행동 앵커(BARS Lv.1~5) & S~D 캘리브레이션 + 코드 하드 캡
-- **S (90+)** Bar Raiser Top 10% / **A (80~89)** 면접 즉시 활용 가능 / **B (65~79)** 핵심 구조 양호·정량 보강 필요 / **C (50~64)** 서술 추상적·본인 기여 불명확 / **D (< 50)** 메모 초안 수준
-- **코드 레벨 관대화 방지 하드 캡 (Post-Validation):**
-  - `quantified_metrics`가 비어 있고 `Result`에 정량 수치가 전혀 없으면, LLM이 높은 점수를 주더라도 코드가 `Result` 상한을 강제 제한
-  - `Learning`이 비어 있거나 너무 짧으면 `Learning` 상한 강제 제한
-  - `Action`·`Result`에 치명적 공백이 있으면 `is_sufficient=False`를 유지해 역질문 루프로 유도
+### 2.2 3단계 하이브리드 LLM 평가 & 버전 루브릭 근거
+| 레퍼런스 | 핵심 근거 | 본 서비스 반영 |
+| :--- | :--- | :--- |
+| **CheckEval** (Lee et al., 2024, `arXiv:2403.18771`) | Likert 자유 점수 대신 **분해된 체크리스트 평가**로 인간 상관도 `+0.10`, 모델 간 일치도 `+0.45` 향상 | 자유 채점 폐지 → **21개 Atomic 체크포인트 `0/1/2` 판별** |
+| **Rulers** (2026, `LabRAI/Rulers`) | **버전 고정 루브릭(Locked Rubric) + 원문 근거 앵커링 + 결정론적 검증 + 사후 캘리브레이션** | `rubric_v2.0.json` 버전 번들 + LLM `quote` 추출 + Python 원문 대조·하드캡·합산 |
+| **FActScore** (Min et al., EMNLP 2023, `arXiv:2305.14251`) | 긴 서술을 원자적 사실 단위로 분해해 근거 지지 여부 판별 후 수식 집계 | 21개 체크포인트별 `evidence_quote` 원문 지지 검증 후 정수 합산 |
+| **FLASK** (Ye et al., ICLR 2024, `arXiv:2307.10928`) | 단일 총점 대신 세부 역량 프로파일로 분해해야 정밀 약점 진단 가능 | 5축 게이지 + 21개 체크리스트 히트맵(`○ / ◐ / ✅`) |
+| **Rubrics as Rewards — RaR** (2025, `arXiv:2507.17746`) | 개방형 도메인에서도 체크리스트 루브릭 변화량을 신뢰할 수 있는 품질/보상 신호로 활용 가능 | 턴 전/후 **`ΔSTAR-L` + 해금된 체크포인트 수**를 역질문 보상 신호로 추적 |
 
 ---
 
-## 5. 2단계 에스컬레이션 프로빙 & 루프 A(질문 퀄리티 상승 루프)
+## 3. 3단계 하이브리드 평가 엔진 (`backend/app/core/star_rubric.py` & `rubrics/rubric_v2.0.json`)
 
-### 5.1 턴 깊이에 따른 질문 전략 전환 (`interview_graph.py`)
-1. **1턴 (Directed Probe):** 5축 점수 중 **가장 낮은 축 2개**를 자동 정렬해, 먼저 `'우리가 했다' → '내가 했다'` 경계 분리(`ownership_drilldown`)와 핵심 빈틈 사실부터 끌어냅니다.
-2. **2턴 이상 (Micro-Behavioral & Counter-Factual Drill-Down):** 직전 답변에서 아직 모호한 지점을 파고들어 포기한 대안·트레이드오프(`counter_factual`), 구체 행동 장면(`micro_behavioral`), 전후 비교 수치(`xyz_quantification`), 재발 방지 원칙(`learning_transfer`)을 서로 다른 기법으로 공략합니다.
-3. **반복 차단:** `prev_qs`(이미 물어본 질문 목록)를 프롬프트와 코드 린터 양쪽에 전달해 동일 질문 재출제를 방지합니다.
-
-### 5.2 루프 A: 질문 사전 비평 & 실전 효용 추적 (`question_critic.py`)
+> **비유:** LLM 혼자 면접관과 채점표를 다 처리하면 늘 75~85점으로 후하게(Leniency Bias) 채점합니다.  
+> 하이브리드 구조에서는 **LLM = "형광펜 치는 조교"(근거 유무 판별)**, **Python 코드 = "깐깐한 채점기"(원문 대조·하드캡·점수 합산)**로 역할을 완전히 분리합니다.
 
 ```mermaid
 flowchart LR
-    GEN["역질문 후보 2개 생성\n(DDI/Bar-Raiser 5기법)"] --> LINT["1차: 코드 린터 (비용 0원)\n· 예/아니오 폐쇄형 차단\n· 물음표 2개+ 복합 질문 차단\n· 135자 초과 차단\n· 2-gram 중복(>=0.55) 차단\n· 최약 축 미적중 차단"]
-    LINT --> CRIT["2차: Fast LLM 4축 비평\n(비반복·용이성·날카로움·적중도)\n총 100점"]
-    CRIT -->|"< 80점 또는 린트 결함\n(최대 2회)"| REF["Question Refiner\n핀포인트 리라이트"]
-    REF --> LINT
-    CRIT -->|">= 80점 & 린트 0건"| USER["사용자에게 제시"]
-    USER -->|"답변 입력"| DELTA["ΔSTAR-L 계산\nquestion_feedback_logs 누적\nGET /api/agents/question-quality/stats"]
+    EXP["경험 텍스트 + 프로젝트 맥락"] --> L1
+
+    subgraph L1["Layer 1: LLM 근거 판별기 (단일 JSON 호출)"]
+        P1["Locked Rubric v2.0 (rubric_v2.0.json)<br/>21개 체크포인트별 status(0/1/2) + evidence_quote 추출<br/>(LLM 점수 합산 금지)"]
+    end
+
+    subgraph L2["Layer 2: Python 결정론적 검증·채점기"]
+        V1["① Quote Grounding 검증<br/>원문 토큰 대조 실패 시 강등"]
+        V2["② Code Guardrails (하드 캡)<br/>R1 숫자·단위 / R2 전후비교 / A3 I-vs-We /<br/>L2 빈 감상문 차단"]
+        V3["③ Deterministic Integer Scorer<br/>score = Σ(status/2 × weight)<br/>100% 정수 산출 + 0점 고배점 타겟 추출"]
+        V1 --> V2 --> V3
+    end
+
+    subgraph L3["Layer 3: 버전 진화 & 캘리브레이션 루프"]
+        C1["사용자 피드백 (👍/👎 · 만족도 · 점수체감)"]
+        C2["21항목 문항 분석 (통과율 · 반발율)"]
+        C3["오프라인 골든셋 5대 지표 검증<br/>(v2.0 → v2.1 Zero-LLM 재채점 비교)"]
+        C1 --> C2 --> C3
+    end
+
+    L1 --> L2
+    L2 -->|"0점 고배점 타겟"| Q["LangGraph Active Interviewer"]
+    L2 --> L3
 ```
+
+### 3.1 STAR-L 21개 Atomic 체크포인트 & 짝수 정수 배점표 (총 100점)
+
+| 축 (만점) | ID | 체크포인트 | 배점 (`0/1/2`) | 판정 기준 (`2 = 입증`) & Python 하드 캡 |
+| :--- | :---: | :--- | :---: | :--- |
+| **S. 상황·맥락**<br>**12점 (4항목)** | `S1` | 배경·환경 구체성 | `0 / 2 / 4` | 시기·조직/팀·서비스·도메인 맥락 명시 |
+| | `S2` | 문제·결핍의 구체화 | `0 / 2 / 4` | 구체적 병목·장애·이탈·비효율 사실 명시 |
+| | `S3` | 제약조건·난이도 | `0 / 1 / 2` | 마감·인력·예산·기술 제약·갈등 등 난이도 조건 |
+| | `S4` | 규모·중요도 | `0 / 1 / 2` | 트래픽·사용자·매출·팀 규모·영향 범위 제시 |
+| **T. 과제·책임**<br>**14점 (4항목)** | `T1` | 목표·성공 기준 | `0 / 2 / 4` | 정량 목표 또는 관찰 가능한 완료 기준(DoD) |
+| | `T2` | 본인 역할·책임 경계 | `0 / 2 / 4` | 팀 과제 중 본인이 오너십을 가진 범위 분리 |
+| | `T3` | 원인 진단·가설 수립 | `0 / 2 / 4` | 해결 전 핵심 원인을 데이터·로그·인터뷰로 진단 |
+| | `T4` | 우선순위 판단 기준 | `0 / 1 / 2` | 여러 후보 중 해당 과제를 최우선 선택한 근거 |
+| **A. 행동·실행**<br>**36점 (6항목)** | `A1` | 실행 방법·절차 구체성 | `0 / 3 / 6` | 실제 수행한 구현·실험·도구·프로세스 단계 |
+| | `A2` | 대안 비교·트레이드오프 | `0 / 3 / 6` | 대안 A vs B 비교 및 현재 방식 선택 근거 |
+| | `A3` | 본인 주도성 (`I vs We`) | `0 / 3 / 6` | 본인 고유 기여 *(하드캡: "우리/팀"만 있고 개인 단서 없으면 최대 1)* |
+| | `A4` | 장애물·예외·실패 돌파 | `0 / 3 / 6` | 난관·시행착오·반발을 감지하고 수정·돌파한 과정 |
+| | `A5` | 일정·스코프·리스크 관리 | `0 / 3 / 6` | 기한 내 범위 조정, 마일스톤, 리스크 사전 대비 |
+| | `A6` | 협업·이해관계자 조율 | `0 / 3 / 6` | 타 직군/팀원/고객과의 합의 과정 및 설득 근거 |
+| **R. 결과·검증**<br>**26점 (4항목)** | `R1` | 정량 수치 지표 | `0 / 4 / 8` | 객관적 수치+단위 *(하드캡: 숫자+단위 없으면 최대 0)* |
+| | `R2` | 비교 기준선 (`Before/After`) | `0 / 3 / 6` | 개선 전/후 또는 목표 대비 변화량 *(하드캡: 비교 신호 없으면 최대 1)* |
+| | `R3` | 행동→결과 인과관계 | `0 / 3 / 6` | 내 Action이 결과로 이어졌음을 뒷받침하는 인과 설명 |
+| | `R4` | 외부 검증·확산 효과 | `0 / 3 / 6` | 실배포·조직 채택·고객 반응·수상 등 제3자 검증 |
+| **L. 회고·전이**<br>**12점 (3항목)** | `L1` | 한계·아쉬움 메타인지 | `0 / 2 / 4` | 당시 판단의 한계·놓친 리스크·개선 여지 성찰 |
+| | `L2` | 일반화된 원칙·인사이트 | `0 / 2 / 4` | 일하는 기준·설계 원칙 도출 *(하드캡: "많이 배웠다" 빈 감상문 0)* |
+| | `L3` | 후속 적용·재현성 | `0 / 2 / 4` | 배운 원칙을 후속 프로젝트/업무에 적용·계획 |
+
+### 3.2 보수적 등급 체계 & 누적식 600 XP 포트폴리오
+
+- **경험 등급 및 품질 게이트 XP 배수:**
+  - **S (85~100):** `× 1.50` / **A (70~84):** `× 1.30` / **B (50~69):** `× 1.00` / **C (30~49):** `× 0.60` / **D (0~29):** `× 0.25`
+- **단일 프로젝트 캡 (`150 XP`) × 대표 4개 프로젝트 선택 (`총 600 XP 만점`):**
+  - 보유한 여러 프로젝트 중 **최대 4개를 대표 프로젝트로 선택** (`projects.is_portfolio_selected`; 4개 미만 선택 시 XP 상위 프로젝트 자동 충원).
+  - 프로젝트 1개가 아무리 고득점이어도 `150 XP` 상한에 막혀 Lv.2 초반을 넘지 못하며, **4개 대표 프로젝트가 고르게 A~S등급을 달성해야 `Lv.4 Bar Raiser (480~600 XP)`**에 도달합니다.
+  - 레벨 구간: `Lv.1 Seed (0~149)` · `Lv.2 Builder (150~299)` · `Lv.3 Proven (300~479)` · `Lv.4 Bar Raiser (480~600)`.
 
 ---
 
-## 6. 포트폴리오·발표·면접용 핵심 Q&A 포인트
+## 4. LangGraph 상태 머신 & 닫힌 피드백 루프 (`interview_graph.py` & `question_critic.py`)
 
-| 예상 질문 | 핵심 답변 (우리 아키텍처 근거) |
-| :--- | :--- |
-| **Q1. 그냥 ChatGPT 멀티턴 대화로 STAR 정리하면 되지 않나요?** | 일반 챗봇은 ① 매 턴 점수가 객관화되지 않아 관대하게 넘어가고 ② 대화가 길어지면 앞 문맥을 놓치거나 같은 질문을 반복하며 ③ 결과가 텍스트로 흩어집니다. 우리는 **LangGraph `StateGraph` + `AsyncPostgresSaver` + 5축 BARS 코드 하드 캡 + 5종 구조화 프로빙**으로 "빈틈이 채워질 때까지 정조준"하고, 결과를 **정형 DB + HNSW 격리 벡터 DB**로 즉시 자산화합니다. |
-| **Q2. LLM 채점의 관대화 편향과 환각은 어떻게 통제했나요?** | ① `extract_star`에서 미언급 수치·기술 날조 금지 프롬프트 외부화(`interview_extract.txt`) ② `grade_gaps`에서 BARS Lv.1~5 풀 앵커 제공 + **코드 레벨 정량/회고 미기재 하드 캡**으로 LLM 점수를 결정론적으로 보정했습니다. |
-| **Q3. 질문 퀄리티 루프(루프 A)를 도입하고 숫자로 검증해 보셨나요?** | 네. 10종 빈약 메모 골든셋(`question_golden_dataset.json`)으로 Nova Pro Judge 실측을 돌린 결과, **코드 린터가 결함을 `1 → 0건`으로 제거**한 반면, `Nova Lite` Critic이 이미 좋은 1차 질문까지 과도하게 리라이트해 `specificity`가 `0.74 → 0.56`으로 하락하는 트레이드오프를 숫자로 발견했습니다. 덕분에 "무조건 루프를 돌리는 것보다 코드 린트 결함·저점수(`< 70`) 핀포인트 개입이 최적"이라는 데이터 기반 설계 결론을 도출했습니다. |
-| **Q4. 채굴한 경험이 이후 서비스에서 어떻게 재활용되나요?** | 저장 즉시 Parent/Child 청킹(500자/겹침 100자)으로 `doc_type='experience'` 벡터에 색인되어, **자소서 공방의 유일한 팩트 근거**, **기업 3각 매칭의 증명 소재**, **6축 캐릭터 진단의 근거**, **코파일럿 Agentic RAG의 한국어 2-gram BM25+Vector RRF 검색 대상(`MRR 1.000`, 토큰 `-35%`)**으로 연결됩니다. |
+```mermaid
+flowchart TD
+    S((START)) --> LP["0. load_project_context<br/>· project_id 연결 시 프로젝트 요약·섹션·직무 트랙 로드<br/>· 최근 question_feedback_logs에서 동적 피드백 규칙 로드"]
+    LP --> P["1. prepare_turn<br/>· 답변 병합 · 직전 21지표/점수 스냅샷 · force_save 단축 경로"]
+
+    P -->|"skip_extraction=true"| SAVE
+    P -->|"일반 실행"| EXT["2. extract_star<br/>· 프로젝트 요약 + 누적 Q&A 통합 STAR-L 추출"]
+
+    EXT --> GRADE["3. grade_gaps (3단계 하이브리드 평가)<br/>· LLM 21지표 근거 판별 → Python 원문 대조·하드캡·정수 합산<br/>· 직전 턴 존재 시 ΔSTAR-L + 해금 체크포인트 수 DB 기록"]
+
+    GRADE -->|"force_save=true OR<br/>(score >= 80 AND is_sufficient)"| SAVE["5. save_experience<br/>· experiences 저장 (rubric_version + 21지표 스냅샷)<br/>· pgvector(doc_type='experience') 업서트"]
+    GRADE -->|"빈틈 존재 (< 80점)"| Q["4. generate_questions<br/>· 0점 고배점 체크포인트 TOP 2 정조준<br/>· user_feedback_rules 동적 반영<br/>· 보수적 루프 A (린트 결함 OR Critic < 70만 핀포인트 수정)"]
+
+    Q --> INT(("END (SSE interrupt)<br/>AsyncPostgresSaver 영속화<br/>UI: 질문별 👍/👎 + 사유 칩 수집"))
+    SAVE --> DONE(("END (SSE done)<br/>UI: 완료 만족도 1~5★ + 점수 체감 수집"))
+```
+
+### 4.1 닫힌 피드백 루프 (Closed Loop) & 체크표 버전 진화
+1. **사전 검수 보수화 (`question_critic.py`):** EC2 실측에서 과잉 수정 시 `specificity`가 하락(`0.74 → 0.56`)했던 교훈을 반영해 **코드 린트 결함(복합·장황·폐쇄·중복·타겟 축 누락) 또는 Critic `< 70점`**일 때만 수정합니다.
+2. **2중 사용자 피드백 수집:**
+   - **턴별(`question_feedback_logs`):** 질문 카드별 `👍/👎` + 4종 사유 칩(`이미 답한 내용`, `너무 추상적`, `직무/맥락 불일치`, `길고 복잡함`) + 자동 `ΔSTAR-L` 및 해금 체크포인트 수.
+   - **완료별(`experience_feedback_logs`):** 최종 만족도(`1~5★`) + 점수 체감(`후함 +1 / 적절 0 / 박함 -1`) + 초안→최종 상승폭.
+3. **동적 프롬프트 주입 & 문항 분석(`GET /api/agents/experience-mining/metrics`):**
+   - 최근 `👎` 최다 사유와 `👍 + 높은 Δ` 패턴을 `<user_feedback_rules>`로 실시간 주입.
+   - 21개 체크포인트별 통과율(`>90%` 너무 쉬움 / `<10%` 과도하게 빡셈)과 `👎` 반발율을 자동 진단해 `rubric_v2.0.json` → `v2.1` 업그레이드 및 **Zero-LLM 재채점 + 오프라인 5대 캘리브레이션 지표(`Spearman ρ`, `MAE`, `Leniency Bias`, `Fluff Trap`, `Monotonicity`)** 회귀 검증으로 연결합니다.

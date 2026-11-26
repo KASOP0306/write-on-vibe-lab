@@ -1,93 +1,76 @@
 import { useEffect, useState } from "react";
 import {
-  AlertTriangle,
+  ArrowRight,
   Award,
   BookOpen,
+  Check,
   ChevronDown,
   ChevronUp,
-  Compass,
+  Layers,
   Loader2,
-  RefreshCw,
-  ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
   Target,
+  X,
 } from "lucide-react";
 import { api } from "../api/client.js";
-import RadarChart, { RubricReferenceModal } from "./RadarChart.jsx";
 
-const PORTFOLIO_AXIS_LIST = [
-  { id: "problem_depth", label: "문제해결 깊이", domain: "internal" },
-  { id: "evidence_impact", label: "증거력·성과", domain: "internal" },
-  { id: "narrative_coherence", label: "서사 일관성", domain: "internal" },
-  { id: "time_execution", label: "시간·우선순위", domain: "external" },
-  { id: "people_collaboration", label: "인적·협업관리", domain: "external" },
-  { id: "adaptability_growth", label: "적응·학습력", domain: "external" },
+const STAR_AXIS_META = [
+  { id: "situation", code: "S", label: "상황·맥락", maxPoints: 12 },
+  { id: "task", code: "T", label: "과제·책임", maxPoints: 14 },
+  { id: "action", code: "A", label: "행동·실행·운영", maxPoints: 36 },
+  { id: "result", code: "R", label: "결과·검증", maxPoints: 26 },
+  { id: "learning", code: "L", label: "회고·전이", maxPoints: 12 },
 ];
 
-const STAR_AXIS_LIST = [
-  { id: "situation", label: "S 상황" },
-  { id: "task", label: "T 책임" },
-  { id: "action", label: "A 행동" },
-  { id: "result", label: "R 성과" },
-  { id: "learning", label: "L 회고" },
-];
+const LEVEL_BADGE_CLASSES = {
+  emerald: "bg-emerald-500/20 text-emerald-200 border-emerald-400/40",
+  indigo: "bg-indigo-500/20 text-indigo-200 border-indigo-400/40",
+  amber: "bg-amber-500/20 text-amber-200 border-amber-400/40",
+  slate: "bg-white/10 text-slate-200 border-white/20",
+};
 
-const EXTERNAL_NOTE_FIELDS = [
-  {
-    key: "time_execution",
-    label: "시간 · 일정 · 우선순위 관리 경험 (선택)",
-    placeholder:
-      "예: 3주 마감 해커톤에서 핵심 기능 3개로 스코프를 절단하고 주간 마일스톤을 관리해 기한 내 배포",
-  },
-  {
-    key: "people_collaboration",
-    label: "인적 · 이해관계자 협업 경험 (선택)",
-    placeholder:
-      "예: 디자이너·백엔드 간 API 스펙 충돌 시 데이터 계약서(OpenAPI)를 선제안해 주 2회 싱크로 조율",
-  },
-  {
-    key: "adaptability_growth",
-    label: "적응력 · 실패 복구 · 학습 민첩성 경험 (선택)",
-    placeholder:
-      "예: 중간 시연 피드백 후 핵심 UX를 48시간 만에 피벗하거나 장애 원인을 포스트모템으로 정리해 재발 방지",
-  },
-];
-
-export default function PortfolioDiagnosisPanel({ projectCount = 0 }) {
+export default function PortfolioDiagnosisPanel({
+  projectCount = 0,
+  onJumpToMiner = null,
+  onOpenProject = null,
+}) {
   const [expanded, setExpanded] = useState(true);
-  const [data, setData] = useState(null);
+  const [mastery, setMastery] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
-  const [showExternalForm, setShowExternalForm] = useState(false);
-  const [externalNotes, setExternalNotes] = useState({
-    time_execution: "",
-    people_collaboration: "",
-    adaptability_growth: "",
-  });
+
+  // Representative 4-project selector
+  const [showSelector, setShowSelector] = useState(false);
+  const [draftSelectedIds, setDraftSelectedIds] = useState([]);
+  const [savingSelection, setSavingSelection] = useState(false);
+
+  // 21-checkpoint heatmap toggle
+  const [showHeatmap, setShowHeatmap] = useState(false);
+
+  // Rubric v2.0 Reference Modal
   const [rubricRef, setRubricRef] = useState(null);
   const [showRubricModal, setShowRubricModal] = useState(false);
 
-  const loadCached = async () => {
+  const loadMastery = async () => {
     setLoading(true);
+    setError("");
     try {
-      const res = await api.getPortfolioDiagnosis();
-      setData(res);
-      if (res?.external_notes) {
-        setExternalNotes((prev) => ({
-          ...prev,
-          ...res.external_notes,
-        }));
-      }
+      const res = await api.getPortfolioMastery();
+      setMastery(res);
+      const manualIds = (res?.all_projects || [])
+        .filter((p) => p.is_selected)
+        .map((p) => p.project_id);
+      setDraftSelectedIds(manualIds);
     } catch (err) {
-      console.warn("Failed to load cached diagnosis:", err);
+      setError(`STAR-L 마스터리 조회 실패: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadCached();
+    loadMastery();
   }, [projectCount]);
 
   const handleOpenRubric = async () => {
@@ -102,67 +85,71 @@ export default function PortfolioDiagnosisPanel({ projectCount = 0 }) {
     }
   };
 
-  const handleRunDiagnosis = async () => {
-    if (running) return;
-    setRunning(true);
+  const toggleProjectSelection = (pid) => {
+    setDraftSelectedIds((prev) => {
+      if (prev.includes(pid)) {
+        return prev.filter((id) => id !== pid);
+      }
+      if (prev.length >= 4) {
+        return prev;
+      }
+      return [...prev, pid];
+    });
+  };
+
+  const handleSaveSelection = async () => {
+    if (savingSelection) return;
+    setSavingSelection(true);
     setError("");
     try {
-      const res = await api.runPortfolioDiagnosis(externalNotes);
-      setData(res);
-      setShowExternalForm(false);
+      const updated = await api.updatePortfolioSelection(draftSelectedIds);
+      setMastery(updated);
+      setShowSelector(false);
     } catch (err) {
-      setError(err.message);
+      setError(`대표 프로젝트 저장 실패: ${err.message}`);
     } finally {
-      setRunning(false);
+      setSavingSelection(false);
     }
   };
 
-  const diag = data?.diagnosis && data.diagnosis.character_archetype ? data.diagnosis : null;
-  const starAvg = data?.overall_star_averages || {};
-
-  const portfolioRadarItems = PORTFOLIO_AXIS_LIST.map((ax) => {
-    const entry = diag?.axes?.[ax.id] || {};
-    return {
-      id: ax.id,
-      label: ax.label,
-      domain: ax.domain,
-      score: entry.score || 0,
-      status: entry.evidence_status || "verified",
-    };
-  });
-
-  const starRadarItems = STAR_AXIS_LIST.map((ax) => ({
-    id: ax.id,
-    label: ax.label,
-    score: starAvg?.axes?.[ax.id]?.score || 0,
-  }));
-
-  const missingExternalAxes = PORTFOLIO_AXIS_LIST.filter(
-    (ax) => diag?.axes?.[ax.id]?.evidence_status === "missing"
-  );
+  const level = mastery?.level || {
+    code: "Lv.1",
+    name: "Seed",
+    color: "slate",
+    description: "첫 대표 프로젝트의 STAR-L 경험 채굴을 시작한 단계",
+  };
+  const totalXp = mastery?.total_xp ?? 0;
+  const maxTotalXp = mastery?.max_total_xp ?? 600;
+  const xpPct = mastery?.xp_pct ?? 0;
+  const selectedProjects = mastery?.selected_projects || [];
+  const allProjects = mastery?.all_projects || [];
+  const starAvg = mastery?.star_averages || {};
+  const weakestCheckpoints = mastery?.weakest_checkpoints || [];
+  const heatmap = mastery?.checkpoint_heatmap || [];
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div
           onClick={() => setExpanded((v) => !v)}
           className="cursor-pointer select-none min-w-0 flex-1"
         >
           <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
-            <Compass className="w-4 h-4" />
-            <span>포트폴리오 캐릭터 &amp; 이중 역량 레이더 진단</span>
-            {diag && !expanded && (
+            <Award className="w-4 h-4" />
+            <span>STAR-L 누적 포트폴리오 마스터리 ({mastery?.rubric_version || "v2.0"})</span>
+            {mastery && !expanded && (
               <span className="ml-1 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800">
-                {diag.character_archetype} · 종합 {diag.overall_score}점 (내적 {diag.internal_score} / 외적 {diag.external_score})
+                {level.code} {level.name} · {totalXp} / {maxTotalXp} XP
               </span>
             )}
           </div>
           <h3 className="text-lg font-bold text-slate-900 mt-0.5">
-            내 포트폴리오 종합 점수 (내적 3축 × 외적 3축) &amp; 평균 STAR-L
+            대표 4개 프로젝트 누적 XP (프로젝트당 최대 150 XP · 만점 600 XP)
           </h3>
           {expanded && (
             <p className="text-xs text-slate-500 mt-0.5">
-              KFLA · Google 4대 채용 기준 · Spencer 빙산 모델로 반복 패턴, 강점과 약점(50:50)을 냉정하게 진단합니다.
+              21개 Atomic 체크포인트 하이브리드 채점(LLM 근거 판별 + Python 원문 대조·하드캡)으로 단일 프로젝트 고득점 착시를 차단하고 정직하게 누적합니다.
             </p>
           )}
         </div>
@@ -194,35 +181,19 @@ export default function PortfolioDiagnosisPanel({ projectCount = 0 }) {
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
                 <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-                <span>평가 기준 레퍼런스</span>
+                <span>21지표 평가 기준</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setShowExternalForm((v) => !v)}
-                className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100"
-              >
-                <span>외적 역량 보충 메모</span>
-                {showExternalForm ? (
-                  <ChevronUp className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                disabled={running || projectCount === 0}
-                onClick={handleRunDiagnosis}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                {running ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                <span>{running ? "AI 캐릭터 분석 중..." : diag ? "캐릭터 재진단" : "포트폴리오 캐릭터 진단"}</span>
-              </button>
+              {allProjects.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowSelector((v) => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>대표 프로젝트 선택 ({draftSelectedIds.length}/4)</span>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -230,383 +201,466 @@ export default function PortfolioDiagnosisPanel({ projectCount = 0 }) {
 
       {expanded && (
         <>
-
-      {/* Optional External Competency Context Drawer */}
-      {showExternalForm && (
-        <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-3">
-          <div className="text-xs text-violet-950">
-            <strong>외적 역량 보충 메모 (선택):</strong> 코드·기획서에는 잘 드러나지 않는{" "}
-            <strong>시간·일정 관리, 인적·협업 조율, 위기 대응 경험</strong>을 짧게 적어두면
-            근거 기반으로 정확히 반영됩니다.
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {EXTERNAL_NOTE_FIELDS.map((field) => (
-              <label key={field.key} className="block space-y-1">
-                <span className="text-[11px] font-semibold text-slate-700">
-                  {field.label}
-                </span>
-                <textarea
-                  rows={3}
-                  value={externalNotes[field.key] || ""}
-                  onChange={(e) =>
-                    setExternalNotes((prev) => ({
-                      ...prev,
-                      [field.key]: e.target.value,
-                    }))
-                  }
-                  placeholder={field.placeholder}
-                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs focus:outline-none focus:ring-2 focus:ring-violet-500/20"
-                />
-              </label>
-            ))}
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              disabled={running || projectCount === 0}
-              onClick={handleRunDiagnosis}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>보충 메모 반영해 진단 실행</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="py-8 flex items-center justify-center gap-2 text-xs text-slate-500">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>진단 결과 불러오는 중...</span>
-        </div>
-      ) : !diag ? (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center space-y-2.5">
-          <p className="text-sm font-semibold text-slate-800">
-            아직 포트폴리오 캐릭터 진단이 실행되지 않았습니다.
-          </p>
-          <p className="text-xs text-slate-500 max-w-xl mx-auto">
-            등록된 프로젝트·섹션·STAR·신념을 종합해 <strong>6축 육각형 점수(내적 3축 × 외적 3축)</strong>,{" "}
-            <strong>나의 포트폴리오 캐릭터</strong>, 그리고 <strong>강점 3가지 vs 약점·사각지대 3가지</strong>를
-            한눈에 정리해 드립니다.
-          </p>
-          <button
-            type="button"
-            disabled={running || projectCount === 0}
-            onClick={handleRunDiagnosis}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>
-              {projectCount === 0
-                ? "먼저 프로젝트를 1개 이상 등록하세요"
-                : "지금 포트폴리오 캐릭터 진단하기"}
-            </span>
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {/* Character Archetype Banner */}
-          <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-violet-950 p-5 text-white space-y-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300">
-                  나의 포트폴리오 캐릭터 아키타입 ({diag.analyzed_project_count || projectCount}개 프로젝트 종합)
-                </div>
-                <div className="text-xl font-extrabold mt-0.5">
-                  {diag.character_archetype}
-                </div>
-                <p className="text-xs text-slate-200 mt-1 leading-relaxed">
-                  {diag.one_line_identity}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="rounded-xl bg-white/10 px-3.5 py-2 text-center">
-                  <div className="text-[10px] text-indigo-200">포트폴리오 종합</div>
-                  <div className="text-lg font-extrabold">{diag.overall_score}점</div>
-                </div>
-                <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
-                  <div className="text-[10px] text-sky-200">내적 3축</div>
-                  <div className="text-sm font-bold">{diag.internal_score}</div>
-                </div>
-                <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
-                  <div className="text-[10px] text-violet-200">외적 3축</div>
-                  <div className="text-sm font-bold">{diag.external_score}</div>
-                </div>
-              </div>
-            </div>
-
-            {(diag.recurring_patterns || []).length > 0 && (
-              <div className="pt-2 border-t border-white/10 space-y-1.5">
-                <div className="text-[11px] font-semibold text-indigo-200">
-                  프로젝트 전반에서 반복 관찰되는 나의 패턴:
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {diag.recurring_patterns.map((pat, i) => (
-                    <span
-                      key={i}
-                      className="rounded-lg bg-white/10 px-2.5 py-1 text-[11px] text-slate-100"
-                    >
-                      • {pat}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Missing External Evidence Alert */}
-          {missingExternalAxes.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
-              <div className="flex items-start gap-2">
-                <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>외적 역량 사각지대 감지:</strong>{" "}
-                  {missingExternalAxes.map((a) => a.label).join(", ")} 축은 현재 포트폴리오에
-                  근거가 부족해 <strong>미검증(보수 평가)</strong> 상태입니다. 실제 협업·일정 관리
-                  경험이 있다면 &apos;외적 역량 보충 메모&apos;에 추가 후 재진단해 보세요.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowExternalForm(true)}
-                className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-700 shrink-0"
-              >
-                보충 메모 입력
-              </button>
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+              {error}
             </div>
           )}
 
-          {/* Dual Radar Graphs: 6-Axis Portfolio Hexagon + 5-Axis Average STAR-L Pentagon */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Left: 6-Axis Portfolio Character Hexagon */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-bold text-slate-900">
-                    ① 6축 포트폴리오 종합 레이더 (내적 3 × 외적 3)
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    남색: 내적(산출물) · 보라: 외적(시간·인적·적응) · 빨강: 미검증
-                  </div>
+          {/* Representative 4-Project Selector Drawer */}
+          {showSelector && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-indigo-950">
+                  <strong>대표 프로젝트 최대 4개 선택:</strong> 포트폴리오 600 XP 점수에 반영할 핵심 프로젝트 4개를 고르세요. (4개 미만 선택 시 남은 슬롯은 XP 상위 프로젝트로 자동 채워집니다.)
                 </div>
-                <span className="text-sm font-extrabold text-indigo-700">
-                  {diag.overall_score} / 100
+                <span className="text-xs font-bold text-indigo-800">
+                  선택됨: {draftSelectedIds.length} / 4
                 </span>
               </div>
 
-              <RadarChart
-                items={portfolioRadarItems}
-                size={275}
-                strokeColor="#4f46e5"
-                fillColor="rgba(79, 70, 229, 0.16)"
-              />
-
-              <div className="space-y-2 pt-1">
-                {PORTFOLIO_AXIS_LIST.map((ax) => {
-                  const entry = diag?.axes?.[ax.id] || {};
-                  const statusLabel =
-                    entry.evidence_status === "verified"
-                      ? "검증됨"
-                      : entry.evidence_status === "partial"
-                        ? "부분 근거"
-                        : "근거 부족";
-                  const statusClass =
-                    entry.evidence_status === "verified"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : entry.evidence_status === "partial"
-                        ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : "bg-rose-50 text-rose-700 border-rose-200";
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {allProjects.map((proj) => {
+                  const checked = draftSelectedIds.includes(proj.project_id);
+                  const disabled = !checked && draftSelectedIds.length >= 4;
                   return (
-                    <div
-                      key={ax.id}
-                      className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-[11px] space-y-0.5"
+                    <button
+                      key={proj.project_id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => toggleProjectSelection(proj.project_id)}
+                      className={`text-left rounded-xl border p-3 flex items-center justify-between gap-2 transition ${
+                        checked
+                          ? "border-indigo-500 bg-white ring-2 ring-indigo-500/15"
+                          : "border-slate-200 bg-white/80 hover:border-slate-300 disabled:opacity-45"
+                      }`}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-800">
-                          {ax.label}{" "}
-                          <span className="text-[10px] font-medium text-slate-400">
-                            ({ax.domain === "external" ? "외적" : "내적"})
-                          </span>
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${statusClass}`}>
-                            {statusLabel}
-                          </span>
-                          <span className="font-extrabold text-slate-900">
-                            {entry.score || 0}점
-                          </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate">
+                          {proj.name}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          경험 {proj.experience_count}건 · {proj.capped_xp} / {proj.cap} XP
                         </div>
                       </div>
-                      {entry.evidence && (
-                        <p className="text-slate-600 leading-snug">{entry.evidence}</p>
-                      )}
-                      {entry.improvement_tip && (
-                        <p className="text-indigo-700 leading-snug">
-                          → {entry.improvement_tip}
-                        </p>
-                      )}
-                    </div>
+                      <span
+                        className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                          checked
+                            ? "bg-indigo-600 border-indigo-600 text-white"
+                            : "border-slate-300 bg-white"
+                        }`}
+                      >
+                        {checked && <Check className="w-3.5 h-3.5" />}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
-            </div>
 
-            {/* Right: 5-Axis Overall STAR-L Pentagon + Growth Roadmap */}
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs font-bold text-slate-900">
-                      ② 전체 평균 5축 STAR-L 레이더 (BARS 기준)
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftSelectedIds([])}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  자동 상위 4개로 초기화
+                </button>
+                <button
+                  type="button"
+                  disabled={savingSelection}
+                  onClick={handleSaveSelection}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {savingSelection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>대표 프로젝트 저장</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="py-8 flex items-center justify-center gap-2 text-xs text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>누적 STAR-L 마스터리 계산 중...</span>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {/* Cumulative 600 XP Hero Banner */}
+              <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 text-white space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+                          LEVEL_BADGE_CLASSES[level.color] || LEVEL_BADGE_CLASSES.slate
+                        }`}
+                      >
+                        {level.code} · {level.name}
+                      </span>
+                      <span className="text-[11px] text-indigo-200">
+                        대표 {selectedProjects.length} / {mastery?.max_selected_projects || 4}개 프로젝트 반영 중
+                      </span>
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      평가된 STAR {starAvg.evaluated_count || 0} / {starAvg.total_count || 0}건 평균
+                    <p className="text-xs text-slate-300 mt-1">{level.description}</p>
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
+                      <div className="text-[10px] text-indigo-200">누적 포트폴리오 XP</div>
+                      <div className="text-xl font-extrabold">
+                        {totalXp} <span className="text-xs font-normal text-slate-300">/ {maxTotalXp}</span>
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-white/10 px-3.5 py-2 text-center">
+                      <div className="text-[10px] text-emerald-200">평균 STAR-L</div>
+                      <div className="text-lg font-extrabold">
+                        {starAvg?.evaluated_count > 0 ? `${starAvg.weighted_score}점` : "-"}
+                      </div>
                     </div>
                   </div>
-                  <span className="text-sm font-extrabold text-emerald-700">
-                    {starAvg.evaluated_count > 0 ? `${starAvg.weighted_score} / 100` : "미채점"}
-                  </span>
                 </div>
 
-                <RadarChart
-                  items={starRadarItems}
-                  size={250}
-                  strokeColor="#059669"
-                  fillColor="rgba(5, 150, 105, 0.16)"
-                />
-
-                {starAvg.evaluated_count === 0 && (
-                  <p className="text-[11px] text-slate-500 text-center">
-                    각 프로젝트 워크스페이스의 <strong>연결된 STAR 경험</strong> 탭에서{" "}
-                    <strong>5축 BARS 재채점</strong>을 누르면 이 그래프가 채워집니다.
-                  </p>
-                )}
+                {/* Global 600 XP Progress Bar with 150 / 300 / 480 milestones */}
+                <div className="space-y-1.5">
+                  <div className="h-3 w-full rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-indigo-400 via-violet-400 to-emerald-400 transition-all duration-500"
+                      style={{ width: `${xpPct}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-300">
+                    <span>Lv.1 Seed (0)</span>
+                    <span>Lv.2 Builder (150)</span>
+                    <span>Lv.3 Proven (300)</span>
+                    <span>Lv.4 Bar Raiser (480~600)</span>
+                  </div>
+                  {mastery?.next_level && (
+                    <div className="text-[11px] text-indigo-200">
+                      다음 단계 <strong>{mastery.next_level.code} {mastery.next_level.name}</strong>까지{" "}
+                      <strong>{mastery.xp_to_next_level} XP</strong> 남았습니다.
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Next Growth Actions */}
-              {(diag.growth_actions || []).length > 0 && (
-                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-2.5">
-                  <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                    <Target className="w-4 h-4 text-indigo-600" />
-                    <span>약점 보완 우선 성장 액션 (3가지)</span>
+              {/* Representative 4 Project Slots (150 XP Cap Each) */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-indigo-600" />
+                    <span>대표 4개 프로젝트 슬롯 (프로젝트당 최대 150 XP 캡)</span>
+                  </div>
+                  {mastery?.unlinked_experience_count > 0 && (
+                    <span className="text-[11px] text-amber-700">
+                      * 프로젝트 미연결 경험 {mastery.unlinked_experience_count}건은 프로젝트 XP에 미합산
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[0, 1, 2, 3].map((slotIdx) => {
+                    const proj = selectedProjects[slotIdx];
+                    if (!proj) {
+                      return (
+                        <div
+                          key={`empty-${slotIdx}`}
+                          className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-3.5 flex flex-col justify-between min-h-[126px]"
+                        >
+                          <div className="text-[11px] font-semibold text-slate-400">
+                            슬롯 #{slotIdx + 1} (비어 있음)
+                          </div>
+                          <p className="text-[11px] text-slate-400">
+                            프로젝트를 추가하고 경험을 채굴하면 최대 150 XP가 누적됩니다.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={proj.project_id}
+                        className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 flex flex-col justify-between gap-2.5"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                proj.selection_mode === "manual"
+                                  ? "bg-indigo-100 text-indigo-800"
+                                  : "bg-slate-200 text-slate-700"
+                              }`}
+                            >
+                              {proj.selection_mode === "manual" ? "직접 선택" : "자동 배정"}
+                            </span>
+                            {proj.cap_reached && (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                150 CAP 달성
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onOpenProject && onOpenProject(proj.project_id)}
+                            className="text-left text-xs font-bold text-slate-900 hover:text-indigo-700 line-clamp-1"
+                          >
+                            {proj.name}
+                          </button>
+                          <div className="text-[11px] text-slate-500">
+                            채굴 경험 {proj.experience_count}건 · 최고 {proj.best_score}점
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-semibold text-slate-600">누적 XP</span>
+                            <span className="font-extrabold text-indigo-700">
+                              {proj.capped_xp} / {proj.cap}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                proj.cap_reached ? "bg-emerald-500" : "bg-indigo-600"
+                              }`}
+                              style={{ width: `${proj.progress_pct}%` }}
+                            />
+                          </div>
+                          {onJumpToMiner && (
+                            <button
+                              type="button"
+                              onClick={() => onJumpToMiner(proj.project_id, "")}
+                              className="w-full mt-1 inline-flex items-center justify-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>이 프로젝트 경험 채굴</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 5-Axis STAR-L Average + Top 3 Weakest Checkpoints Action Board */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-slate-800">
+                      5축 STAR-L 누적 달성도 (대표 프로젝트 기준)
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      평가된 경험 {starAvg?.evaluated_count || 0}건
+                    </span>
                   </div>
                   <div className="space-y-2">
-                    {diag.growth_actions.map((g, i) => (
-                      <div
-                        key={i}
-                        className="rounded-lg bg-white border border-indigo-100 p-3 text-xs space-y-1"
-                      >
-                        <div className="text-[11px] font-bold text-rose-700">
-                          대상 약점: {g.target_weakness}
+                    {STAR_AXIS_META.map((m) => {
+                      const entry = starAvg?.axes?.[m.id] || {};
+                      const pct = entry.score || 0;
+                      const earned = entry.earned ?? Math.round((pct / 100) * m.maxPoints);
+                      const color =
+                        pct >= 75
+                          ? "bg-emerald-500"
+                          : pct >= 50
+                            ? "bg-indigo-500"
+                            : pct >= 25
+                              ? "bg-amber-500"
+                              : "bg-rose-400";
+                      return (
+                        <div key={m.id} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-700">
+                              <span className="font-bold text-indigo-700 mr-1">{m.code}</span>
+                              {m.label}
+                            </span>
+                            <span className="font-bold text-slate-800">
+                              {earned} / {m.maxPoints}점 <span className="text-slate-400 font-normal">({pct}%)</span>
+                            </span>
+                          </div>
+                          <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${color}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="font-semibold text-slate-900">
-                          {i + 1}. {g.action}
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 space-y-2.5">
+                  <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Target className="w-4 h-4 text-amber-600" />
+                    <span>지금 가장 먼저 채굴할 약점 체크포인트 TOP 3</span>
+                  </div>
+                  {weakestCheckpoints.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      경험을 1건 이상 채굴하면 가장 점수가 낮은 체크포인트 TOP 3를 자동으로 짚어드립니다.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {weakestCheckpoints.map((cp) => (
+                        <div
+                          key={cp.id}
+                          className="rounded-lg border border-amber-200/80 bg-white p-2.5 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-900">
+                                {cp.id} · {cp.weight}점
+                              </span>
+                              <span className="truncate">{cp.label}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              달성률 {cp.mastery_pct}% · 입증 {cp.passed_count} / 부분 {cp.partial_count} / 미충족 {cp.missed_count}
+                            </div>
+                          </div>
+                          {onJumpToMiner && cp.suggested_project_id && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onJumpToMiner(
+                                  cp.suggested_project_id,
+                                  `[${cp.id} ${cp.label}] 항목을 집중 보강하고 싶습니다.`
+                                )
+                              }
+                              className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-amber-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700"
+                            >
+                              <span>채굴</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
-                        <div className="text-[11px] text-emerald-700">
-                          기대 효과: {g.expected_impact}
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Collapsible 21-Checkpoint Mastery Heatmap */}
+              <div className="rounded-xl border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setShowHeatmap((v) => !v)}
+                  className="w-full px-4 py-3 flex items-center justify-between text-xs font-bold text-slate-800 hover:bg-slate-50 rounded-xl"
+                >
+                  <span>21개 Atomic 체크포인트 전체 마스터리 히트맵 보기</span>
+                  {showHeatmap ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                {showHeatmap && (
+                  <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-3">
+                    {STAR_AXIS_META.map((ax) => {
+                      const items = heatmap.filter((c) => c.axis === ax.id);
+                      return (
+                        <div key={ax.id} className="space-y-1.5">
+                          <div className="text-[11px] font-bold text-slate-600">
+                            {ax.code} · {ax.label} ({ax.maxPoints}점)
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+                            {items.map((cp) => {
+                              const bg =
+                                cp.evaluated_count === 0
+                                  ? "bg-slate-50 border-slate-200 text-slate-500"
+                                  : cp.mastery_pct >= 75
+                                    ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                                    : cp.mastery_pct >= 40
+                                      ? "bg-amber-50 border-amber-200 text-amber-900"
+                                      : "bg-rose-50 border-rose-200 text-rose-900";
+                              return (
+                                <div
+                                  key={cp.id}
+                                  title={cp.probe_hint}
+                                  className={`rounded-lg border p-2 text-[11px] ${bg}`}
+                                >
+                                  <div className="flex items-center justify-between font-bold">
+                                    <span className="font-mono">{cp.id}</span>
+                                    <span>{cp.evaluated_count > 0 ? `${cp.mastery_pct}%` : "-"}</span>
+                                  </div>
+                                  <div className="text-[10px] truncate mt-0.5">{cp.label}</div>
+                                  <div className="text-[9px] opacity-75 mt-0.5">
+                                    배점 {cp.weight} · ✅{cp.passed_count} ◐{cp.partial_count} ○{cp.missed_count}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Rubric v2.0 Reference Modal */}
+      {showRubricModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-indigo-700">
+                  Locked Rubric {rubricRef?.rubric_version || "v2.0"}
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  STAR-L 21지표 3단계 하이브리드 평가 기준 &amp; 누적 XP 설계
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRubricModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {rubricRef ? (
+              <div className="space-y-4 text-xs">
+                <div className="rounded-xl bg-indigo-50/60 border border-indigo-200 p-3.5 space-y-1.5">
+                  <div className="font-bold text-indigo-950">학술·채용 레퍼런스 근거</div>
+                  {(rubricRef.star_rubric?.frameworks || []).map((fw, idx) => (
+                    <div key={idx} className="text-slate-700">
+                      <strong>• {fw.name}:</strong> {fw.role}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-1">
+                  <div className="font-bold text-slate-900">산출 공식 &amp; 누적 XP 규칙</div>
+                  <p className="text-slate-700">{rubricRef.star_rubric?.formula}</p>
+                  <p className="text-slate-600">
+                    • 경험 XP = STAR-L 점수 × 등급 배수 (S:1.5 / A:1.3 / B:1.0 / C:0.6 / D:0.25)
+                    <br />• 대표 4개 프로젝트 × 프로젝트당 상한 150 XP = 포트폴리오 만점 600 XP
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="font-bold text-slate-900">21개 Atomic 체크포인트 상세</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {(rubricRef.star_rubric?.checkpoints || []).map((cp) => (
+                      <div key={cp.id} className="rounded-lg border border-slate-200 p-2.5 space-y-0.5">
+                        <div className="flex items-center justify-between font-bold text-slate-900">
+                          <span>
+                            <span className="font-mono text-indigo-700 mr-1">{cp.id}</span>
+                            {cp.label}
+                          </span>
+                          <span className="text-slate-500">0 / {cp.weight / 2} / {cp.weight}점</span>
+                        </div>
+                        <div className="text-[11px] text-slate-600">2점 기준: {cp.anchor_2}</div>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* 50:50 Balanced Strengths vs Weaknesses & Blind Spots */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Left 50%: Strengths */}
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-emerald-950 flex items-center gap-1.5">
-                  <Award className="w-4 h-4 text-emerald-600" />
-                  <span>핵심 강점 &amp; 무기 (50%)</span>
-                </h4>
-                <span className="text-[11px] font-semibold text-emerald-700">
-                  {(diag.strengths || []).length}개
-                </span>
               </div>
-              <div className="space-y-2.5">
-                {(diag.strengths || []).map((st, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-xl bg-white border border-emerald-200/80 p-3.5 space-y-1.5 text-xs"
-                  >
-                    <div className="font-bold text-slate-900">
-                      {idx + 1}. {st.title}
-                    </div>
-                    <p className="text-slate-600 leading-relaxed">{st.detail}</p>
-                    {(st.evidence_projects || []).length > 0 && (
-                      <div className="flex flex-wrap gap-1 pt-0.5">
-                        {st.evidence_projects.map((p, i) => (
-                          <span
-                            key={i}
-                            className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800"
-                          >
-                            {p}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Right 50%: Weaknesses & Blind Spots (Equal Prominence!) */}
-            <div className="rounded-2xl border border-rose-200 bg-rose-50/30 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-rose-950 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-600" />
-                  <span>핵심 약점 &amp; 면접 사각지대 (동등 50%)</span>
-                </h4>
-                <span className="text-[11px] font-semibold text-rose-700">
-                  {(diag.weaknesses || []).length}개
-                </span>
-              </div>
-              <div className="space-y-2.5">
-                {(diag.weaknesses || []).map((wk, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-xl bg-white border border-rose-200/80 p-3.5 space-y-1.5 text-xs"
-                  >
-                    <div className="font-bold text-slate-900">
-                      {idx + 1}. {wk.title}
-                    </div>
-                    <p className="text-slate-600 leading-relaxed">{wk.detail}</p>
-                    {(wk.evidence_projects || []).length > 0 && (
-                      <div className="flex flex-wrap gap-1 pt-0.5">
-                        {wk.evidence_projects.map((p, i) => (
-                          <span
-                            key={i}
-                            className="rounded-md bg-rose-50 border border-rose-200 px-1.5 py-0.5 text-[10px] font-medium text-rose-800"
-                          >
-                            {p}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+            ) : (
+              <div className="py-8 text-center text-xs text-slate-500">불러오는 중...</div>
+            )}
           </div>
         </div>
       )}
-        </>
-      )}
-
-      <RubricReferenceModal
-        open={showRubricModal}
-        onClose={() => setShowRubricModal(false)}
-        reference={rubricRef}
-      />
     </section>
   );
 }
