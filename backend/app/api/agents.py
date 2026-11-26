@@ -23,6 +23,7 @@ from app.core.database import (
     ApplicationLog,
     CompanyProfile,
     Experience,
+    QuestionFeedbackLog,
     VectorDocument,
     get_db_session,
 )
@@ -773,6 +774,52 @@ async def get_copilot_memories() -> list[dict[str, Any]]:
 async def remove_copilot_memory(memory_key: str) -> None:
     """장기 기억 Store에서 특정 메모를 삭제한다."""
     await delete_career_memory(memory_key)
+
+
+@router.get("/agents/question-quality/stats")
+async def get_question_quality_stats(
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """루프 A(질문 퀄리티 상승 루프): 기법별·축별 ΔSTAR-L 효용 및 비평 통계를 집계한다."""
+    rows = (
+        (
+            await session.execute(
+                select(QuestionFeedbackLog)
+                .order_by(QuestionFeedbackLog.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_technique: dict[str, list[int]] = {}
+    by_axis: dict[str, list[int]] = {}
+    for r in rows:
+        by_technique.setdefault(r.technique, []).append(int(r.delta_score))
+        by_axis.setdefault(r.target_axis, []).append(int(r.delta_score))
+
+    def _agg(bucket: dict[str, list[int]]) -> dict[str, Any]:
+        return {
+            k: {
+                "count": len(vals),
+                "avg_delta_score": round(sum(vals) / max(1, len(vals)), 2),
+                "positive_rate": round(
+                    sum(1 for v in vals if v > 0) / max(1, len(vals)), 3
+                ),
+            }
+            for k, vals in bucket.items()
+        }
+
+    return {
+        "total_samples": len(rows),
+        "avg_delta_score": round(
+            sum(r.delta_score for r in rows) / max(1, len(rows)), 2
+        )
+        if rows
+        else 0.0,
+        "by_technique": _agg(by_technique),
+        "by_axis": _agg(by_axis),
+    }
 
 
 @router.get("/applications", response_model=list[ApplicationLogResponse])

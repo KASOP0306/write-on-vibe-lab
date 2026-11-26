@@ -19,6 +19,10 @@ from app.core.project_templates import (
     infer_track_for_section_type,
     normalize_project_types,
 )
+from app.core.question_critic import (
+    MAX_QUESTION_REVISIONS,
+    critique_and_refine_questions,
+)
 from app.core.star_rubric import (
     PORTFOLIO_AXES,
     PORTFOLIO_AXIS_ORDER,
@@ -26,6 +30,12 @@ from app.core.star_rubric import (
     STAR_AXIS_ORDER,
     compute_portfolio_overall_score,
     evaluate_star_experience_rubric,
+)
+from app.core.summary_verifier import (
+    MAX_SUMMARY_REVISIONS,
+    extract_evidence_map,
+    format_evidence_map_block,
+    verify_and_repair_sections,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,11 +167,26 @@ async def analyze_document_to_portfolio(
     role_hint: str = "",
     extra_context: str = "",
     profile_context: str = "",
+    enable_quality_loop: bool = True,
 ) -> dict[str, Any]:
-    """업로드된 기획서·발표자료·보고서·노트에서 선택한 복수 유형(트랙)의 포트폴리오 초안을 자동 생성한다."""
+    """업로드된 기획서·발표자료·보고서·노트에서 멀티트랙 포트폴리오 초안을 생성한다.
+
+    루프 B(enable_quality_loop=True):
+    1) Evidence Map(검증 팩트 카드 추출) -> 2) 트랙별 섹션 합성(Reduce) -> 3) 3축 Critic-Repair(최대 2회)
+    """
     normalized_types = normalize_project_types(project_types)
     target_sections = compose_sections_for_types(normalized_types)
     guidance = get_combined_ai_guidance(normalized_types)
+
+    evidence_facts: list[dict[str, Any]] = []
+    evidence_block = ""
+    if enable_quality_loop:
+        evidence_facts = await extract_evidence_map(doc_text, filename=filename)
+        if evidence_facts:
+            evidence_block = (
+                f"\n\n[Stage 1 Evidence Map (반드시 반영할 원문 검증 팩트 카드)]\n"
+                f"{format_evidence_map_block(evidence_facts)}"
+            )
 
     section_spec_lines = "\n".join(
         f"- `{s['section_type']}` ({s['title']}): {s['placeholder']}"
@@ -171,19 +196,20 @@ async def analyze_document_to_portfolio(
     system_prompt = (
         f"당신은 {guidance['persona']}입니다.\n"
         f"사용자가 업로드한 문서({filename})만을 근거로 [{guidance['labels']}] 성격의 "
-        "체계적인 멀티트랙 포트폴리오 프로젝트 초안과 STAR 경험 1~3건을 한국어로 구조화하세요.\n\n"
+        "체계적인 멀티트랙 포트폴리오 프로젝트 초안과 STAR-L 경험 1~3건을 한국어로 구조화하세요.\n\n"
         f"[작성할 목표 섹션 목록]\n{section_spec_lines}\n\n"
         "엄격한 규칙:\n"
         "1. 문서에 없는 수치, 지표, 도구명, 성과는 절대 지어내지 마세요. 정량 수치가 없으면 `quantified_metrics`는 빈 문자열로 두세요.\n"
         "2. 각 섹션의 `section_type`은 위 목록의 키를 정확히 사용하고, 내용이 확인되는 섹션만 충실히 채우세요.\n"
-        "3. 각 섹션 `content`는 불릿 포인트와 굵은 키워드 중심의 깔끔한 한국어 Markdown으로 작성하세요."
+        "3. 서로 다른 섹션에 같은 배경 설명을 반복하지 말고, 각 섹션의 고유 책임 범위만 불릿과 굵은 키워드 중심으로 작성하세요."
     )
 
     user_prompt = (
         f"[선택된 프로젝트 유형] {guidance['labels']}\n"
         f"[사용자 역할 힌트] {role_hint or '(미입력 — 문서 내용으로 추정)'}\n"
         f"[사용자 추가 메모] {extra_context or '(없음)'}\n"
-        f"[지원자 커리어 신념/비전]\n{profile_context or '(미설정)'}\n\n"
+        f"[지원자 커리어 신념/비전]\n{profile_context or '(미설정)'}"
+        f"{evidence_block}\n\n"
         f"[문서 파일명: {filename}]\n{doc_text[:19000]}"
     )
 
@@ -193,6 +219,7 @@ async def analyze_document_to_portfolio(
         DocumentToPortfolioSchema,
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
         max_retries=2,
+        caller="doc_to_portfolio:synthesize",
     )
 
     gen_by_type = {s.section_type.strip(): s for s in synthesized.sections if s.content.strip()}
@@ -209,6 +236,18 @@ async def analyze_document_to_portfolio(
                 "display_order": tpl["display_order"],
             }
         )
+
+    quality_report: dict[str, Any] = {}
+    if enable_quality_loop:
+        verified = await verify_and_repair_sections(
+            normalized_sections,
+            source_text=doc_text,
+            evidence_facts=evidence_facts,
+            max_revisions=MAX_SUMMARY_REVISIONS,
+            flow_name="doc_to_portfolio",
+        )
+        normalized_sections = verified["sections"]
+        quality_report = verified["quality_report"]
 
     project_dict = {
         "name": synthesized.name.strip() or filename.rsplit(".", 1)[0],
@@ -231,6 +270,7 @@ async def analyze_document_to_portfolio(
         "suggested_experiences": [
             e.model_dump() for e in synthesized.suggested_experiences if e.title.strip()
         ],
+        "quality_report": quality_report,
     }
 
 
@@ -371,6 +411,30 @@ async def propose_document_updates(
             }
         )
 
+    quality_report: dict[str, Any] = {}
+    if enriched_updates:
+        verify_input = [
+            {
+                "section_type": u["section_type"],
+                "title": u["title"],
+                "content": u["proposed_content"],
+            }
+            for u in enriched_updates
+        ]
+        combined_source = doc_text[:18000] + "\n\n" + "\n\n".join(ordered_blocks)
+        verified = await verify_and_repair_sections(
+            verify_input,
+            source_text=combined_source,
+            max_revisions=MAX_SUMMARY_REVISIONS,
+            flow_name="doc_update_diff",
+        )
+        rep_by_type = {s["section_type"]: s for s in verified["sections"]}
+        for u in enriched_updates:
+            rep = rep_by_type.get(u["section_type"])
+            if rep and rep.get("content"):
+                u["proposed_content"] = rep["content"]
+        quality_report = verified["quality_report"]
+
     existing_stack_lower = {t.lower() for t in (project.get("tech_stack") or [])}
     new_stack = [
         t.strip()
@@ -386,6 +450,7 @@ async def propose_document_updates(
         "suggested_experiences": [
             e.model_dump() for e in proposal.suggested_experiences if e.title.strip()
         ],
+        "quality_report": quality_report,
     }
 
 
@@ -666,10 +731,22 @@ async def generate_star_onboarding_questions(
         max_retries=2,
     )
 
+    raw_questions = [q.model_dump() for q in result.questions[:4]]
+    weak_axes = [a for a in result.weak_axes if a in STAR_AXES]
+    critic_out = await critique_and_refine_questions(
+        raw_questions,
+        context_text=f"{section_dump[:4000]}\n{exp_dump[:2000]}",
+        weakest_axes=weak_axes,
+        max_revisions=MAX_QUESTION_REVISIONS,
+        flow_name="star_onboarding",
+    )
+
     return {
         "diagnosis_summary": result.diagnosis_summary.strip(),
-        "weak_axes": [a for a in result.weak_axes if a in STAR_AXES],
-        "questions": [q.model_dump() for q in result.questions[:4]],
+        "weak_axes": weak_axes,
+        "questions": critic_out.get("questions") or raw_questions,
+        "question_critic_score": critic_out.get("critic_score", 0),
+        "question_critic_revisions": critic_out.get("revisions", 0),
     }
 
 
@@ -1047,10 +1124,19 @@ async def generate_project_retro_questions(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
         max_retries=2,
     )
+    raw_qs = [q.model_dump() for q in res.questions[:4]]
+    critic_out = await critique_and_refine_questions(
+        raw_qs,
+        context_text=f"{sec_dump[:4000]}\n{exp_dump[:1500]}",
+        max_revisions=MAX_QUESTION_REVISIONS,
+        flow_name="project_retro",
+    )
     return {
         "framework": fw_key,
         "opening_note": res.opening_note.strip(),
-        "questions": [q.model_dump() for q in res.questions[:4]],
+        "questions": critic_out.get("questions") or raw_qs,
+        "question_critic_score": critic_out.get("critic_score", 0),
+        "question_critic_revisions": critic_out.get("revisions", 0),
     }
 
 

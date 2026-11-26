@@ -1,0 +1,86 @@
+{
+  "version": "question_golden_v1",
+  "description": "질문 퀄리티 상승 루프(루프 A) 정량 평가용 빈약 메모 10종 골든 데이터셋",
+  "cases": [
+    {
+      "id": "qc01",
+      "scenario": "성능 최적화인데 전후 수치와 원인 부재",
+      "raw_notes": "쇼핑몰 백엔드 프로젝트에서 검색 API가 느려서 Redis 캐시를 붙였더니 훨씬 빨라졌습니다. 팀원 3명이서 같이 진행했습니다.",
+      "already_known_facts": ["Redis 캐시 도입", "검색 API 속도 개선", "팀원 3명"],
+      "expected_weak_axes": ["result", "action"],
+      "ideal_probe_focus": "본인 고유 구현 범위(I Rule), 캐시 전략/무효화 선택 근거, 도입 전후 정량 응답시간·부하 수치"
+    },
+    {
+      "id": "qc02",
+      "scenario": "팀 갈등 해결인데 구체 행동과 재발 방지 원칙 부재",
+      "raw_notes": "졸업 프로젝트 도중 프론트엔드와 API 스펙 때문에 의견 충돌이 있었는데, 회의를 열어 잘 조율해서 마감 안에 끝냈습니다.",
+      "already_known_facts": ["API 스펙 의견 충돌", "회의로 조율", "마감 준수"],
+      "expected_weak_axes": ["action", "learning"],
+      "ideal_probe_focus": "구체적인 갈등 쟁점과 본인이 제안한 절충안/문서화 방식, 이후 재발 방지 프로세스"
+    },
+    {
+      "id": "qc03",
+      "scenario": "RAG 챗봇 구현인데 실패 사례·정량 평가 부재",
+      "raw_notes": "LangChain과 pgvector로 사내 문서 챗봇을 만들었습니다. 프롬프트를 여러 번 고쳐서 답변 품질을 높였습니다.",
+      "already_known_facts": ["LangChain 사용", "pgvector 사용", "프롬프트 개선"],
+      "expected_weak_axes": ["result", "action"],
+      "ideal_probe_focus": "어떤 실패 유형(검색 누락/환각)을 발견했는지, 청킹·검색 전략 트레이드오프, 전후 정확도 수치"
+    },
+    {
+      "id": "qc04",
+      "scenario": "기획/PM 프로젝트인데 사용자 검증 근거와 우선순위 절단 부재",
+      "raw_notes": "대학생 중고거래 앱을 기획해서 Figma로 와이어프레임을 만들고 출시했습니다. 반응이 좋았습니다.",
+      "already_known_facts": ["중고거래 앱 기획", "Figma 와이어프레임", "출시"],
+      "expected_weak_axes": ["result", "task"],
+      "ideal_probe_focus": "사용자 이탈/불편 가설 근거, 포기한 기능과 우선순위 기준, 출시 후 가입자·전환율 등 검증 지표"
+    },
+    {
+      "id": "qc05",
+      "scenario": "데이터 분석 프로젝트인데 모델/피처 선택 근거와 비즈니스 임팩트 부재",
+      "raw_notes": "이커머스 이탈 예측 모델을 XGBoost로 학습해 정확도를 높였습니다. Python과 pandas를 사용했습니다.",
+      "already_known_facts": ["XGBoost 사용", "이탈 예측", "Python/pandas"],
+      "expected_weak_axes": ["action", "result"],
+      "ideal_probe_focus": "다른 모델 대비 XGBoost 선택 이유 및 핵심 피처 엔지니어링, 실제 지표(AUC/F1)와 비즈니스 활용 결과"
+    },
+    {
+      "id": "qc06",
+      "scenario": "장애 대응인데 근본 원인(RCA)과 재발 방지 설계 부재",
+      "raw_notes": "배포 직후 서버가 죽어서 로그를 보고 급하게 롤백한 뒤 버그를 고쳐 다시 배포했습니다.",
+      "already_known_facts": ["배포 직후 서버 장애", "롤백 후 버그 수정 재배포"],
+      "expected_weak_axes": ["action", "learning"],
+      "ideal_probe_focus": "장애 근본 원인과 복구 소요 시간(MTTR), 같은 배포 장애를 막기 위해 추가한 테스트·모니터링·체크리스트"
+    },
+    {
+      "id": "qc07",
+      "scenario": "동시성 처리인데 대안 비교(Counter-Factual) 부재",
+      "raw_notes": "선착순 쿠폰 발급에서 중복 발급 문제가 생겨서 DB 락을 걸어 해결했습니다. 100명 테스트에서 통과했습니다.",
+      "already_known_facts": ["선착순 쿠폰 중복 발급", "DB 락 적용", "100명 테스트 통과"],
+      "expected_weak_axes": ["action", "learning"],
+      "ideal_probe_focus": "비관적 락/낙관적 락/Redis 분산 락 중 현재 방식을 택한 트레이드오프, 더 큰 트래픽에서의 한계와 보완 교훈"
+    },
+    {
+      "id": "qc08",
+      "scenario": "운영/리더십 프로젝트인데 일정·리스크 관리 행동 부재",
+      "raw_notes": "해커톤 팀장을 맡아 48시간 동안 서비스를 완성해 장려상을 받았습니다. 팀원들이 지치지 않게 분위기 메이킹을 했습니다.",
+      "already_known_facts": ["해커톤 팀장", "48시간 완성", "장려상"],
+      "expected_weak_axes": ["action", "task"],
+      "ideal_probe_focus": "48시간 내 스코프 절단·작업 분배 기준, 중간 블로커 발생 시 본인이 내린 구체적 의사결정"
+    },
+    {
+      "id": "qc09",
+      "scenario": "프론트엔드 최적화인데 체감 성능 지표와 원인 분석 부재",
+      "raw_notes": "React 대시보드 페이지가 버벅거려서 useMemo랑 코드 스플리팅을 적용해 부드럽게 만들었습니다.",
+      "already_known_facts": ["React 대시보드", "useMemo 적용", "코드 스플리팅"],
+      "expected_weak_axes": ["result", "action"],
+      "ideal_probe_focus": "프로파일러/Lighthouse로 확인한 병목 원인과 적용 전후 LCP·번들 크기·렌더링 시간 수치"
+    },
+    {
+      "id": "qc10",
+      "scenario": "CI/CD 자동화인데 이전 병목과 팀 생산성 변화 부재",
+      "raw_notes": "GitHub Actions로 Docker 빌드와 EC2 배포를 자동화했습니다. 수동 배포보다 훨씬 편해졌습니다.",
+      "already_known_facts": ["GitHub Actions", "Docker 빌드", "EC2 배포 자동화"],
+      "expected_weak_axes": ["result", "learning"],
+      "ideal_probe_focus": "자동화 전후 배포 소요 시간·실패율 변화, 무중단/롤백 설계에서 배운 운영 원칙"
+    }
+  ]
+}

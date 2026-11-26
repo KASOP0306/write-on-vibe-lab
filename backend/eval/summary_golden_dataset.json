@@ -1,0 +1,60 @@
+{
+  "version": "summary_golden_v1",
+  "description": "프로젝트 정리·요약 퀄리티 상승 루프(루프 B) 정량 평가용 원문 6종 골든 데이터셋",
+  "cases": [
+    {
+      "id": "sc01",
+      "filename": "payguard_architecture.md",
+      "project_types": ["engineering"],
+      "role_hint": "백엔드 리드",
+      "doc_text": "# PayGuard 실시간 정산 엔진\n\n## 배경\n소상공인 정산 배치가 새벽 1회만 돌아 오전 정산 지연 CS가 월 310건 발생했다. 3명 팀에서 백엔드 리드로 이벤트 기반 실시간 정산 파이프라인을 단독 설계·구현했다.\n\n## 기술 선택\nRabbitMQ 대신 장애 시 특정 시점 재처리(Replay)와 가맹점 ID 파티션 순서 보장을 위해 Apache Kafka를 선택했다. 저장소는 PostgreSQL 16 + Redis Cluster 조합이다.\n\n## 트러블슈팅\n프로모션 당일 1,800 TPS에서 동일 결제 중복 정산 Race Condition 발생. SELECT FOR UPDATE는 락 경합으로 P99 1,420ms까지 악화되어, idempotency_key DB 유니크 제약 + Outbox 패턴 + Redis Lua 분산 락(TTL 3초)으로 전환했다.\n\n## 성과\nk6 2,000 VU 부하 테스트 및 3주 운영 결과 P99 지연 1,420ms -> 185ms(87% 단축), 중복 정산 오류율 0.42% -> 0.00%, 가맹점 CS 월 310건 -> 42건(86.5% 감소). 외부 PG API는 트랜잭션 밖으로 분리하는 재발 방지 체크리스트를 정착시켰다.",
+      "must_include_facts": ["Apache Kafka", "Replay", "idempotency_key", "Outbox", "1,420ms", "185ms", "0.00%", "42건"],
+      "allowed_metrics": ["310건", "3명", "1,800", "1,420ms", "3초", "2,000", "3주", "185ms", "87%", "0.42%", "0.00%", "42건", "86.5%"]
+    },
+    {
+      "id": "sc02",
+      "filename": "edupilot_prd.md",
+      "project_types": ["product_planning", "engineering"],
+      "role_hint": "PM 겸 AI 백엔드",
+      "doc_text": "# EduPilot 부트캠프 AI 튜터 기획 및 구현\n\n## 문제 정의\n수강생 45명 심층 인터뷰 결과 질문의 68%가 이미 강의자료에 있는 내용이었으나 검색이 어려워 멘토 평균 대기 시간이 38분에 달했다.\n\n## 범위 절단\n6주 일정 내 출시를 위해 실시간 음성 튜터링과 개인화 커리큘럼 추천은 v2로 미루고, 강의자료 기반 출처 인용 Q&A와 질문 로그 대시보드 2개 핵심 기능만 MVP로 확정했다.\n\n## 구현 및 검증\n500자/겹침 100자 마크다운 청킹 + 한국어 2-gram BM25·pgvector RRF 하이브리드 검색을 적용해 Hit@3를 64%에서 92%로 높이고 환각 응답률을 19%에서 3% 이하로 줄였다. 멘토 일일 반복 답변은 42건에서 14건으로 66.7% 감소했고, 디자이너 1명·프론트엔드 1명과 주 2회 리뷰로 마감 3일 전 조기 출시했다.",
+      "must_include_facts": ["45명", "68%", "38분", "음성 튜터링", "RRF", "92%", "3%", "14건"],
+      "allowed_metrics": ["45명", "68%", "38분", "6주", "500자", "100자", "64%", "92%", "19%", "3%", "42건", "14건", "66.7%", "3일"]
+    },
+    {
+      "id": "sc03",
+      "filename": "churn_experiment_report.md",
+      "project_types": ["data_research"],
+      "role_hint": "데이터 분석가",
+      "doc_text": "# 구독 서비스 이탈 예측 및 리텐션 실험 보고서\n\n## 데이터 및 전처리\n12개월 결제·활동 로그 180,000건에서 환불 누수 피처(refund_flag)를 제거해 Data Leakage를 차단하고, 최근 14일 접속 빈도 감소율 등 행동 파생변수 18개를 생성했다.\n\n## 모델 비교\nLogistic Regression(PR-AUC 0.61), Random Forest(0.72), LightGBM(0.81)을 5-fold 시계열 교차검증으로 비교해 LightGBM을 채택하고 SHAP으로 상위 이탈 요인 3가지를 도출했다.\n\n## A/B 테스트 결과\n상위 15% 고위험군 4,200명을 대상으로 맞춤형 온보딩 알림 실험(2주)을 진행한 결과, 대조군 대비 30일 리텐션이 54.2%에서 61.8%로 7.6%p 상승했다(p < 0.01).",
+      "must_include_facts": ["180,000건", "Data Leakage", "LightGBM", "0.81", "SHAP", "61.8%", "7.6%p"],
+      "allowed_metrics": ["12개월", "180,000건", "14일", "18개", "0.61", "0.72", "0.81", "15%", "4,200명", "2주", "30일", "54.2%", "61.8%", "7.6%p"]
+    },
+    {
+      "id": "sc04",
+      "filename": "campus_fest_ops.md",
+      "project_types": ["operations_leadership"],
+      "role_hint": "총괄 운영 팀장",
+      "doc_text": "# 대학 IT 컨퍼런스 운영 총괄\n\n## 배경 및 목표\n참가자 650명 규모 학생 IT 컨퍼런스 총괄 팀장으로 스태프 18명(기획·홍보·현장·후원 4개 파트)을 8주간 리드했다.\n\n## 리스크 관리\n행사 5일 전 메인 연사 1명이 급병으로 불참을 통보하자, 사전 확보해 둔 예비 연사 풀과 패널 토크 전환 시나리오를 즉시 가동해 6시간 만에 시간표를 재확정하고 참가자 전원에게 사전 안내했다.\n\n## 성과\nQR 사전 체크인 동선 분리로 입장 대기 시간을 전년 25분에서 4분으로 84% 단축했고, 후원사 5곳 유치를 통해 예산 1,200만 원 내 집행률 97%로 마감했으며, 참가자 만족도 4.7/5.0(응답 412명)을 기록했다.",
+      "must_include_facts": ["650명", "18명", "예비 연사", "25분", "4분", "84%", "4.7"],
+      "allowed_metrics": ["650명", "18명", "4개", "8주", "5일", "6시간", "25분", "4분", "84%", "5곳", "97%", "4.7", "412명"]
+    },
+    {
+      "id": "sc05",
+      "filename": "flashdeal_cache_readme.md",
+      "project_types": ["engineering"],
+      "role_hint": "백엔드 개발자",
+      "doc_text": "# FlashDeal 특가 커머스 캐시 최적화\n\n매일 정오 타임특가 오픈 직후 트래픽이 18배 급증해 MySQL 읽기 복제본 CPU가 98%에 도달하고 502 장애가 났다. 원인은 캐시 만료 시점의 Cache Stampede였다.\n\n고정 TTL(300초)을 ±45초 TTL Jitter와 Singleflight 패턴으로 교체하고, 재고 차감은 Redis DECR + SQS 비동기 영속화로 분리했다. 직렬화도 JSON에서 MessagePack으로 바꿨다.\n\n동시 접속자 12,000명 테스트에서 MySQL CPU 98% -> 31%, 평균 응답시간 890ms -> 48ms, Redis 메모리 4.8GB -> 2.9GB(39.6% 절감)를 달성했다.",
+      "must_include_facts": ["Cache Stampede", "TTL Jitter", "Singleflight", "MessagePack", "31%", "48ms", "2.9GB"],
+      "allowed_metrics": ["18배", "98%", "300초", "45초", "12,000명", "31%", "890ms", "48ms", "4.8GB", "2.9GB", "39.6%"]
+    },
+    {
+      "id": "sc06",
+      "filename": "no_metrics_side_project.md",
+      "project_types": ["engineering"],
+      "role_hint": "풀스택 개발자",
+      "doc_text": "# 동네 독서 모임 기록 웹앱 (초기 MVP)\n\nReact와 FastAPI, SQLite로 개인 독서 노트와 모임 일정을 관리하는 웹앱을 만들었다. 아직 정식 배포 전이며 실사용자나 부하 테스트 수치는 측정하지 못했다. 책 ISBN 검색 API 연동과 마크다운 에디터, 모임별 댓글 기능을 구현했다.",
+      "must_include_facts": ["React", "FastAPI", "SQLite", "ISBN", "마크다운"],
+      "allowed_metrics": []
+    }
+  ]
+}

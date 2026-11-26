@@ -226,6 +226,26 @@ class ApplicationLog(Base):
     )
 
 
+class QuestionFeedbackLog(Base):
+    """루프 A(질문 퀄리티 상승 루프): 역질문 기법·축별 실제 ΔSTAR-L 효용 누적 로그."""
+
+    __tablename__ = "question_feedback_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_flow: Mapped[str] = mapped_column(String(50), default="interview", nullable=False, index=True)
+    technique: Mapped[str] = mapped_column(String(50), default="micro_behavioral", nullable=False, index=True)
+    target_axis: Mapped[str] = mapped_column(String(30), default="action", nullable=False, index=True)
+    question_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    score_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    score_after: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    delta_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    critic_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    critic_revisions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class VectorDocument(Base):
     __tablename__ = "vector_documents"
     __table_args__ = (

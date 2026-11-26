@@ -10,7 +10,16 @@ from psycopg import AsyncConnection
 from pydantic import BaseModel, Field
 
 from app.core.bedrock import ainvoke_structured, get_fast_llm
-from app.core.database import Experience, get_psycopg_conninfo, get_session_factory
+from app.core.database import (
+    Experience,
+    QuestionFeedbackLog,
+    get_psycopg_conninfo,
+    get_session_factory,
+)
+from app.core.question_critic import (
+    MAX_QUESTION_REVISIONS,
+    critique_and_refine_questions,
+)
 from app.core.star_rubric import (
     PROBING_TECHNIQUES,
     STAR_AXIS_ORDER,
@@ -90,6 +99,11 @@ class InterviewState(TypedDict, total=False):
     missing_points: list[str]
     questions: list[str]
     structured_questions: list[dict[str, str]]
+    prev_completeness_score: int | None
+    prev_structured_questions: list[dict[str, str]]
+    question_critic_score: int
+    question_critic_revisions: int
+    enable_question_critic: bool
     saved_experience_id: int | None
     vector_synced: bool
 
@@ -120,6 +134,9 @@ async def prepare_turn(state: InterviewState) -> dict[str, Any]:
     qa_history = list(state.get("qa_history") or [])
     latest_reply = (state.get("latest_reply") or "").strip()
 
+    prev_score = state.get("completeness_score") if latest_reply else None
+    prev_qs = list(state.get("structured_questions") or []) if latest_reply else []
+
     if latest_reply:
         qa_history.append(
             {
@@ -135,6 +152,8 @@ async def prepare_turn(state: InterviewState) -> dict[str, Any]:
         "qa_history": qa_history,
         "latest_reply": "",
         "skip_extraction": skip_extraction,
+        "prev_completeness_score": prev_score,
+        "prev_structured_questions": prev_qs,
     }
 
 
@@ -165,10 +184,36 @@ async def extract_star(state: InterviewState) -> dict[str, Any]:
 
 
 async def grade_gaps(state: InterviewState) -> dict[str, Any]:
-    """추출된 STAR 경험을 DDI BARS × Amazon Bar Raiser × Google XYZ 5축 루브릭으로 객관 채점한다."""
+    """추출된 STAR-L 경험을 5축 루브릭으로 객관 채점하고, 직전 역질문의 ΔSTAR-L 효용을 로그한다."""
     star = state.get("star") or {}
     context_text = _build_context_text(state)
     result = await evaluate_star_experience_rubric(star, context_text=context_text)
+
+    prev_score = state.get("prev_completeness_score")
+    prev_qs = state.get("prev_structured_questions") or []
+    if prev_score is not None and prev_qs:
+        new_score = int(result["completeness_score"])
+        delta = new_score - int(prev_score)
+        try:
+            async with get_session_factory()() as session:
+                for q_item in prev_qs:
+                    session.add(
+                        QuestionFeedbackLog(
+                            source_flow="interview",
+                            technique=str(q_item.get("technique") or "micro_behavioral")[:50],
+                            target_axis=str(q_item.get("target_axis") or "action")[:30],
+                            question_text=str(q_item.get("question") or ""),
+                            score_before=int(prev_score),
+                            score_after=new_score,
+                            delta_score=delta,
+                            critic_score=int(state.get("question_critic_score") or 0),
+                            critic_revisions=int(state.get("question_critic_revisions") or 0),
+                        )
+                    )
+                await session.commit()
+        except Exception as exc:
+            logger.debug("Skipping ΔSTAR-L feedback log write: %s", exc)
+
     return {
         "completeness_score": result["completeness_score"],
         "star_scores": result["star_scores"],
@@ -270,9 +315,47 @@ async def generate_questions(state: InterviewState) -> dict[str, Any]:
             }
         ]
 
+    critic_score = 100
+    critic_revisions = 0
+    if state.get("enable_question_critic", True):
+        critic_out = await critique_and_refine_questions(
+            structured,
+            context_text=_build_context_text(state),
+            weakest_axes=sorted_axes[:2],
+            prev_questions=prev_qs,
+            max_revisions=MAX_QUESTION_REVISIONS,
+            flow_name="interview",
+        )
+        refined_qs = critic_out.get("questions") or structured
+        # 기법 라벨 보정 유지
+        normalized_refined: list[dict[str, str]] = []
+        for item in refined_qs[:2]:
+            tech_key = (
+                item.get("technique")
+                if item.get("technique") in PROBING_TECHNIQUES
+                else "micro_behavioral"
+            )
+            tech_meta = PROBING_TECHNIQUES[tech_key]
+            normalized_refined.append(
+                {
+                    "technique": tech_key,
+                    "technique_label": tech_meta["label"],
+                    "target_axis": str(item.get("target_axis") or sorted_axes[0]),
+                    "question": str(item.get("question") or "").strip(),
+                    "interviewer_intent": str(item.get("interviewer_intent") or "").strip()
+                    or tech_meta["purpose"],
+                }
+            )
+        if normalized_refined:
+            structured = normalized_refined
+        critic_score = int(critic_out.get("critic_score") or 0)
+        critic_revisions = int(critic_out.get("revisions") or 0)
+
     return {
         "questions": [s["question"] for s in structured],
         "structured_questions": structured,
+        "question_critic_score": critic_score,
+        "question_critic_revisions": critic_revisions,
     }
 
 
