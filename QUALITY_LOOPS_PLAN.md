@@ -128,8 +128,28 @@ flowchart LR
 
 ---
 
-## 6. 다음 결정 사항
+## 6. 구현 완료 현황 (`commit 17fc15b` 기준)
 
-1. 두 루프 중 **루프 A(질문 퀄리티)**와 **루프 B(프로젝트 정리/요약 퀄리티)** 어느 쪽부터 먼저 착수할까요? (또는 Step 1 골든 평가셋을 둘 다 한꺼번에 만든 뒤 A → B 순서로 진행할까요?)
-2. 각 루프의 최대 재시도 횟수는 **응답 속도·비용 균형을 위해 1회**로 설계했는데, 더 엄격한 품질이 필요하면 2회까지 확장할 수 있습니다.
-3. EC2 새 퍼블릭 IP를 알려주시면, 앞서 완료한 **LangChain/LangGraph 고도화(`5d70c84`) 배포 및 RAG 정량 평가**를 먼저 마무리한 뒤 이 설계서대로 바로 이어서 진행하겠습니다!
+> 사용자 결정 사항(**Step 1 골든셋 → Step 2 루프 A → Step 3 루프 B**, 각 루프 **최대 재시도 2회**)을 모두 반영해 백엔드 구현·구문 검증·단위 테스트 작성을 완료했습니다.
+
+| 구분 | 구현 산출물 | 주요 동작 |
+| :--- | :--- | :--- |
+| **Step 1: 골든 평가셋 & 러너** | `backend/eval/question_golden_dataset.json` (10종)<br>`backend/eval/summary_golden_dataset.json` (6종)<br>`backend/eval/run_quality_eval.py` | Baseline(`loop=False`) vs Quality Loop(`loop=True, max 2`) 동일 시험지 전후 비교 + Nova Pro LLM-as-a-Judge 채점 |
+| **Step 2: 루프 A (최대 2회)** | `backend/app/core/question_critic.py`<br>`backend/app/prompts/question_critic.txt`, `question_refiner.txt`<br>`backend/app/core/database.py` (`question_feedback_logs`)<br>`backend/app/graphs/interview_graph.py`<br>`backend/app/tools/portfolio_manager.py`<br>`backend/app/api/agents.py` (`GET /api/agents/question-quality/stats`) | 코드 린터(폐쇄형·복합·135자 초과·2-gram 중복·약한 축 미적중) + Fast LLM 4축 비평/리라이트(최대 2회) + 답변 후 `ΔSTAR-L` DB 누적 및 통계 API |
+| **Step 3: 루프 B (최대 2회)** | `backend/app/core/summary_verifier.py`<br>`backend/app/prompts/evidence_extract.txt`, `summary_verifier.txt`, `summary_repair.txt`<br>`backend/app/tools/portfolio_manager.py` | Evidence Map(청크별 검증 팩트 카드 추출) → 트랙별 합성(Reduce) → 3축 Critic-Repair(최대 2회, 코드 미확인 수치 탐지 + 섹션 간 2-gram 중복률 `< 0.42`) |
+| **단위 테스트** | `backend/tests/test_quality_loops.py` | `MAX_QUESTION_REVISIONS == 2`, `MAX_SUMMARY_REVISIONS == 2`, 프롬프트 5종, 골든셋 2종, 코드 린터, 환각 수치/중복률 검사 검증 |
+
+### EC2 준비 시 실행할 전/후 실측 벤치마크 명령어
+```bash
+# 1. 배포 및 전체 단위 테스트
+bash scripts/deploy_ec2.sh
+docker compose exec -T backend python -m unittest discover -s tests -v
+
+# 2. 기존 벡터 Parent/Child 재색인
+docker compose exec -T backend python -m app.scripts.reindex_vectors
+
+# 3. RAG 검색/생성 전후 비교 + 루프 A/B 전후 비교 실측
+docker compose exec -T backend python -m eval.run_eval --mode retrieval
+docker compose exec -T backend python -m eval.run_eval --mode judge
+docker compose exec -T backend python -m eval.run_quality_eval --mode all
+```
