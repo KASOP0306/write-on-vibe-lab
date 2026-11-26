@@ -26,10 +26,14 @@ import StepIndicator from "../components/StepIndicator.jsx";
 import { TRACK_SHORT_LABELS, getTrackBadgeClass } from "../utils/projectTracks.js";
 
 const PILLAR_CAT_LABELS = {
-  work_principle: "일하는 원칙",
-  problem_lens: "문제 정의",
-  collaboration: "협업·소통",
-  career_direction: "커리어 방향",
+  human_value: "인간·인문학 가치",
+  social_impact: "사회적 문제의식",
+  career_calling: "커리어 지향",
+  tech_and_people: "기술과 사람의 관계",
+  work_principle: "커리어 지향",
+  problem_lens: "사회적 문제의식",
+  collaboration: "인간·인문학 가치",
+  career_direction: "커리어 지향",
 };
 
 export default function CoverLetterStudioPage({
@@ -813,7 +817,7 @@ export default function CoverLetterStudioPage({
                           </div>
                           {pillar.tradeoff_rule && (
                             <p className="text-[11px] text-slate-600 line-clamp-2">
-                              기준: {pillar.tradeoff_rule}
+                              지향: {pillar.tradeoff_rule}
                             </p>
                           )}
                           {rec && (

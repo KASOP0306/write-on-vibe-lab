@@ -1,4 +1,4 @@
-"""개인 신념 카드(BeliefPillar) · 자소서 1급 신념 연동 · 코파일럿 STAR-L 마스터리 동기화 단위 테스트."""
+"""개인 신념 카드(인간·사회·인문학적 커리어 가치관) · 자소서 1급 신념 연동 · 코파일럿 STAR-L 마스터리 동기화 단위 테스트."""
 
 import unittest
 
@@ -11,11 +11,11 @@ from app.tools.copilot_tools import format_star_mastery_summary
 
 class TestBeliefAndCopilotV3(unittest.TestCase):
     def test_belief_pillar_quality_diagnostics(self) -> None:
-        # 1) Proven belief: crisp trade-off + linked proof
+        # 1) Proven humanistic/social belief: clear human/social direction + linked project/experience
         proven = evaluate_belief_pillar_quality(
-            title="감에 의존하는 튜닝보다 측정 가능한 검증 루프를 먼저 만든다",
-            tradeoff_rule="출시 속도와 채점 신뢰성이 충돌할 때 결정론적 검증 게이트를 우선한다",
-            origin_story="LLM 평가 관대화 편향을 잡으며 골든셋 검증 체계를 도입했다.",
+            title="기술은 사람을 대체하는 도구가 아니라 개인의 주체성을 확장해야 한다",
+            tradeoff_rule="정보 격차로 기회를 놓치는 사람들이 스스로 결정할 수 있는 서비스를 만들고 싶다",
+            origin_story="독서와 사용자 인터뷰를 통해 기술 접근성이 삶의 기회를 바꾼다는 확신을 얻었다.",
             linked_project_ids=[1],
             linked_experience_ids=[10],
         )
@@ -23,19 +23,20 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
         self.assertGreaterEqual(proven["strength_score"], 85)
         self.assertEqual(proven["proof_count"], 2)
 
-        # 2) Needs proof: good trade-off, no linked project/experience
+        # 2) Needs proof: strong social calling, no linked project/experience yet
         needs_proof = evaluate_belief_pillar_quality(
-            title="복잡한 추상화보다 팀이 바로 디버깅할 수 있는 단순한 구조를 우선한다",
-            tradeoff_rule="코드 재사용성보다 장애 대응 속도를 우선한다",
+            title="AI 시대일수록 고립된 개인을 공동체와 따뜻하게 연결하는 일을 하고 싶다",
+            tradeoff_rule="단기 체류시간보다 사람 간의 신뢰와 회복을 돕는 제품을 지향한다",
             linked_project_ids=[],
             linked_experience_ids=[],
+            linked_note_ids=[3],
         )
         self.assertEqual(needs_proof["proof_status"], "needs_proof")
-        self.assertEqual(needs_proof["proof_count"], 0)
+        self.assertEqual(needs_proof["proof_count"], 1)
 
-        # 3) Cliche risk: generic slogan with no trade-off rule
+        # 3) Cliche risk: generic slogan with no human/social direction
         cliche = evaluate_belief_pillar_quality(
-            title="끊임없이 성장하며 최선을 다하는 개발자",
+            title="끊임없이 성장하며 최선을 다하는 인재",
             tradeoff_rule="",
             linked_project_ids=[],
             linked_experience_ids=[],
@@ -46,7 +47,7 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
     def test_cover_letter_schemas_and_refiner_preserves_belief_and_company(self) -> None:
         gen_req = CoverLetterGenerateRequest(
             company_name="토스",
-            question="가장 도전적이었던 문제 해결 경험을 작성해 주세요.",
+            question="본인의 가치관이 실제 프로젝트에 반영된 경험을 작성해 주세요.",
             selected_project_ids=[1],
             selected_belief_ids=[2, 3],
             selected_belief_note_ids=[5],
@@ -56,28 +57,27 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
 
         save_req = CoverLetterSaveRequest(
             company_name="토스",
-            question="문제 해결 경험",
+            question="가치관 경험",
             final_text="테스트 본문입니다.",
-            used_beliefs=[{"kind": "pillar", "id": 2, "title": "측정 가능한 검증 우선"}],
+            used_beliefs=[{"kind": "pillar", "id": 2, "title": "기술은 개인의 주체성을 확장해야 한다"}],
         )
         self.assertEqual(len(save_req.used_beliefs), 1)
 
-        # Verify refiner bug fix: both identity_docs and company_docs are passed to refiner prompt
         msgs = build_refiner_messages(
             {
-                "question": "문제 해결 경험",
+                "question": "가치관 경험",
                 "char_limit": 800,
                 "draft": "초안 본문",
                 "critic_score": 76,
                 "critic_feedback": "신념 연결을 보강하세요",
-                "identity_docs": ["[선택 핵심 신념 카드 #2] 측정 가능한 검증 루프 우선"],
-                "company_docs": ["[저장된 기업 리서치] 토스 — 데이터 기반 의사결정"],
+                "identity_docs": ["[선택 핵심 신념 카드 #2] 기술은 개인의 주체성을 확장해야 한다"],
+                "company_docs": ["[저장된 기업 리서치] 토스 — 금융의 기회 평등"],
                 "experience_docs": ["[선택 핵심 프로젝트 #1] write-on-vibe-lab"],
             }
         )
         joined = "\n".join(str(m.content) for m in msgs)
-        self.assertIn("측정 가능한 검증 루프 우선", joined)
-        self.assertIn("데이터 기반 의사결정", joined)
+        self.assertIn("기술은 개인의 주체성을 확장해야 한다", joined)
+        self.assertIn("금융의 기회 평등", joined)
         self.assertIn("write-on-vibe-lab", joined)
 
     def test_copilot_star_mastery_summary_replaces_legacy_character(self) -> None:
@@ -88,7 +88,7 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
             {
                 "id": 10,
                 "project_id": 1,
-                "title": "STAR-L 엄격 하이브리드 평가",
+                "title": "비전공자 커리어 접근성 개선",
                 "completeness_score": 82,
                 "star_scores": {},
             }
@@ -96,9 +96,9 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
         pillars = [
             {
                 "id": 1,
-                "title": "장애 복구 기준을 코드로 고정한다",
-                "category": "work_principle",
-                "tradeoff_rule": "속도보다 복구 가능성 우선",
+                "title": "정보 격차로 기회를 놓치는 사람을 돕고 싶다",
+                "category": "social_impact",
+                "tradeoff_rule": "누구나 스스로 판단할 수 있는 투명한 도구를 만든다",
                 "linked_project_ids": [],
                 "linked_experience_ids": [],
             }
@@ -111,8 +111,8 @@ class TestBeliefAndCopilotV3(unittest.TestCase):
         self.assertIn("빈 대표 프로젝트 슬롯 3개", summary)
         self.assertIn("21지표 취약 체크포인트 TOP 5", summary)
         self.assertIn("[R1]", summary)
-        self.assertIn("미증명 신념", summary)
-        self.assertIn("장애 복구 기준을 코드로 고정한다", summary)
+        self.assertIn("미실천 신념", summary)
+        self.assertIn("정보 격차로 기회를 놓치는 사람을 돕고 싶다", summary)
         self.assertNotIn("6축 포트폴리오 캐릭터", summary)
 
 

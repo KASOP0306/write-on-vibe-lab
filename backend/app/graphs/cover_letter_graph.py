@@ -51,10 +51,14 @@ _METRIC_TOKEN_RE = re.compile(
 )
 
 PILLAR_CAT_LABELS = {
-    "work_principle": "일하는 원칙",
-    "problem_lens": "문제 정의 관점",
-    "collaboration": "협업·소통 철학",
-    "career_direction": "커리어 방향성",
+    "human_value": "인간·인문학 가치",
+    "social_impact": "사회적 문제의식",
+    "career_calling": "커리어 지향",
+    "tech_and_people": "기술과 사람의 관계",
+    "work_principle": "커리어 지향",
+    "problem_lens": "사회적 문제의식",
+    "collaboration": "인간·인문학 가치",
+    "career_direction": "커리어 지향",
 }
 
 
@@ -357,8 +361,8 @@ async def recommend_cover_letter_materials(
 
     pillar_catalog_blocks = [
         f"  [belief_id={b.id}] ({PILLAR_CAT_LABELS.get(b.category, b.category)}) {b.title}\n"
-        f"    · 트레이드오프 기준: {b.tradeoff_rule or '(미입력)'}\n"
-        f"    · 연결 증명 프로젝트 ID: {list(b.linked_project_ids or [])} / 연결 STAR ID: {list(b.linked_experience_ids or [])}"
+        f"    · 커리어 지향·가치: {b.tradeoff_rule or '(미입력)'}\n"
+        f"    · 연결 프로젝트 ID: {list(b.linked_project_ids or [])} / 연결 STAR ID: {list(b.linked_experience_ids or [])}"
         for b in all_pillars
     ]
     note_catalog_blocks = [
@@ -627,8 +631,8 @@ async def multi_source_retriever(state: CoverLetterState) -> dict[str, Any]:
             )
             direct_identity_docs.append(
                 f"[선택 핵심 신념 카드 #{b.id} | {cat_label}] {b.title}\n"
-                f"- 트레이드오프 판단 기준: {b.tradeoff_rule or '(미입력)'}\n"
-                f"- 형성 계기·스토리: {b.origin_story or '(미입력)'}"
+                f"- 커리어 지향 · 지키는 가치: {b.tradeoff_rule or '(미입력)'}\n"
+                f"- 형성 계기 · 사유: {b.origin_story or '(미입력)'}"
             )
 
         if sel_note_ids:

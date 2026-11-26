@@ -1,4 +1,4 @@
-"""나의 신념 카드(Belief Pillars) & 책/강의 구절·일상 생각 회고 저널(Belief Notes) API 라우터."""
+"""나의 신념 카드(인간·사회·인문학적 커리어 가치관) & 책/강의 구절·일상 회고 저널 API 라우터."""
 
 from __future__ import annotations
 
@@ -37,27 +37,42 @@ SOURCE_TYPE_LABELS = {
 }
 
 PILLAR_CATEGORY_LABELS = {
-    "work_principle": "일하는 원칙",
-    "problem_lens": "문제 정의 관점",
-    "collaboration": "협업 · 소통 철학",
-    "career_direction": "커리어 방향성",
+    "human_value": "인간 · 인문학 가치",
+    "social_impact": "사회적 문제의식",
+    "career_calling": "커리어 지향 · 하고 싶은 일",
+    "tech_and_people": "기술과 사람의 관계",
+    # 레거시 하위 호환 라벨
+    "work_principle": "커리어 지향 · 하고 싶은 일",
+    "problem_lens": "사회적 문제의식",
+    "collaboration": "인간 · 인문학 가치",
+    "career_direction": "커리어 지향 · 하고 싶은 일",
 }
+
+ALLOWED_PILLAR_CATEGORIES = Literal[
+    "human_value",
+    "social_impact",
+    "career_calling",
+    "tech_and_people",
+    "work_principle",
+    "problem_lens",
+    "collaboration",
+    "career_direction",
+]
 
 _BELIEF_CLICHE_PATTERNS = (
     "끊임없이 성장",
     "열정적인",
     "최선을 다하",
-    "사용자 중심",
-    "소통을 중시",
     "도전정신",
     "책임감을 가지",
-    "협업을 중요",
     "더 나은 세상",
     "혁신적인 가치",
+    "글로벌 인재",
 )
 
-_TRADEOFF_SIGNAL_RE = re.compile(
-    r"(보다|대신|우선|먼저|포기|트레이드오프|vs|충돌|기준|않는다|안\s*한다|거부|차라리|먼저\s*검증|최소|절단|타협)",
+_DIRECTION_SIGNAL_RE = re.compile(
+    r"(사람|인간|사회|공동체|격차|주체|존엄|관계|연결|신뢰|기회|삶|경험|감정|공감|소외|접근성|"
+    r"보다|대신|지키|바꾸|돕|해결|위해|하고\s*싶|만들고\s*싶|기여|지향|본질|의미|가치|포기|않는다|안\s*한다)",
     re.IGNORECASE,
 )
 
@@ -69,50 +84,56 @@ def evaluate_belief_pillar_quality(
     origin_story: str = "",
     linked_project_ids: list[int] | None = None,
     linked_experience_ids: list[int] | None = None,
+    linked_note_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    """신념 카드의 자소서 실전성(트레이드오프 구체성 · 클리셰 여부 · 경험 증명 연결)을 결정론적으로 진단한다."""
+    """신념 카드의 선명도(인간·사회적 지향성 · 클리셰 여부 · 계기/실천 경험 연결)를 결정론적으로 진단한다."""
     title_clean = (title or "").strip()
-    rule_clean = (tradeoff_rule or "").strip()
+    direction_clean = (tradeoff_rule or "").strip()
     origin_clean = (origin_story or "").strip()
-    combined = f"{title_clean} {rule_clean} {origin_clean}"
+    combined = f"{title_clean} {direction_clean} {origin_clean}"
 
     cliche_hits = [c for c in _BELIEF_CLICHE_PATTERNS if c in combined]
-    has_tradeoff = len(rule_clean) >= 12 or bool(_TRADEOFF_SIGNAL_RE.search(title_clean + " " + rule_clean))
-    has_origin = len(origin_clean) >= 15
-    proof_count = len(linked_project_ids or []) + len(linked_experience_ids or [])
-    has_proof = proof_count > 0
+    has_direction = len(direction_clean) >= 12 or bool(
+        _DIRECTION_SIGNAL_RE.search(title_clean + " " + direction_clean)
+    )
+    has_origin = len(origin_clean) >= 12 or len(linked_note_ids or []) > 0
+    action_proof_count = len(linked_project_ids or []) + len(linked_experience_ids or [])
+    note_count = len(linked_note_ids or [])
+    proof_count = action_proof_count + note_count
+    has_action_proof = action_proof_count > 0
 
     score = 0
     if len(title_clean) >= 10:
         score += 20
-    if has_tradeoff:
+    if has_direction:
         score += 30
     if has_origin:
+        score += 20
+    if has_action_proof:
+        score += min(30, 22 + (action_proof_count - 1) * 4)
+    elif note_count > 0:
         score += 15
-    if has_proof:
-        score += min(35, 25 + (proof_count - 1) * 5)
-    if cliche_hits and not has_tradeoff:
+    if cliche_hits and not has_direction:
         score = max(10, score - 20)
     score = max(0, min(100, score))
 
-    if cliche_hits and not has_tradeoff:
+    if cliche_hits and not has_direction:
         proof_status = "cliche_risk"
         tip = (
-            f"추상 표현({', '.join(cliche_hits[:2])})이 감지되었습니다. "
-            "'A보다 B를 우선한다' 형태의 구체적 트레이드오프 판단 기준으로 다듬어 보세요."
+            f"추상 표현({', '.join(cliche_hits[:2])})이 포함되어 있습니다. "
+            "'어떤 사람·사회 문제에 주목하며 어떤 변화를 만들고 싶은지' 구체적인 지향으로 다듬어 보세요."
         )
-    elif not has_proof:
+    elif not has_direction:
+        proof_status = "needs_direction"
+        tip = "이 신념을 통해 커리어에서 이루고 싶은 방향이나 포기하지 않는 기준을 한 줄 덧붙이면 훨씬 선명해집니다."
+    elif not has_action_proof:
         proof_status = "needs_proof"
         tip = (
-            "아직 이 신념을 증명하는 프로젝트·STAR 경험이 연결되지 않았습니다. "
-            "기존 경험을 연결하거나 코파일럿에서 증명용 새 프로젝트를 설계해 보세요."
+            "사유·가치관은 선명합니다. 이 신념을 탐구하거나 실천해 본 프로젝트·경험을 연결하면 자소서·면접 설득력이 크게 올라갑니다."
         )
-    elif not has_tradeoff:
-        proof_status = "needs_tradeoff"
-        tip = "경험은 연결되었지만 '충돌 시 무엇을 포기하고 무엇을 택하는지' 트레이드오프 기준을 한 줄 보강하면 자소서가 훨씬 날카로워집니다."
     else:
         proof_status = "proven"
-        tip = "트레이드오프 판단 기준과 실제 증명 경험이 모두 연결된 자소서 즉시 투입 가능 신념입니다."
+        tip = "인간·사회적 지향과 실제 실천 경험이 함께 연결된 나만의 핵심 신념입니다."
 
     return {
         "proof_status": proof_status,
@@ -138,17 +159,15 @@ def _clean_int_ids(ids: list[Any] | None) -> list[int]:
 
 
 # ==============================================================================
-# 1. 구조화된 핵심 신념 카드 (Belief Pillars) 스키마 & CRUD + AI 발굴/다듬기
+# 1. 핵심 신념 카드 (인간·사회·인문학적 커리어 가치관) CRUD + AI 발굴/다듬기
 # ==============================================================================
 class BeliefPillarCreateRequest(BaseModel):
-    title: str = Field(..., min_length=3, max_length=300, description="핵심 신념 한 줄 선언")
-    category: Literal[
-        "work_principle", "problem_lens", "collaboration", "career_direction"
-    ] = Field(default="work_principle")
+    title: str = Field(..., min_length=3, max_length=300, description="나의 신념 한 줄 선언")
+    category: ALLOWED_PILLAR_CATEGORIES = Field(default="human_value")
     tradeoff_rule: str = Field(
-        default="", description="충돌/트레이드오프 시 판단 기준 (A보다 B를 우선하는 이유)"
+        default="", description="커리어에서 이루고 싶은 방향 / 포기하지 않는 가치 기준"
     )
-    origin_story: str = Field(default="", description="이 신념이 형성된 결정적 계기·회고 요약")
+    origin_story: str = Field(default="", description="이 신념이 생긴 계기 · 영향을 준 책/경험")
     linked_project_ids: list[int] = Field(default_factory=list)
     linked_experience_ids: list[int] = Field(default_factory=list)
     linked_note_ids: list[int] = Field(default_factory=list)
@@ -156,9 +175,7 @@ class BeliefPillarCreateRequest(BaseModel):
 
 class BeliefPillarUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=3, max_length=300)
-    category: Literal[
-        "work_principle", "problem_lens", "collaboration", "career_direction"
-    ] | None = None
+    category: ALLOWED_PILLAR_CATEGORIES | None = None
     tradeoff_rule: str | None = None
     origin_story: str | None = None
     linked_project_ids: list[int] | None = None
@@ -189,52 +206,54 @@ class BeliefPillarResponse(BaseModel):
 
 class BeliefPillarSharpenRequest(BaseModel):
     context_hint: str = Field(
-        default="", description="트레이드오프·실제 겪은 갈등 상황 한 줄 힌트 (선택)"
+        default="", description="이 신념을 품게 된 계기나 관심 있는 사람·사회 문제 한 줄 힌트 (선택)"
     )
 
 
 class SharpenedPillarSchema(BaseModel):
     sharpened_title: str = Field(
-        description="클리셰를 제거하고 지원자만의 행동 기준이 선명하게 드러나는 한 줄 신념 선언"
+        description="업무 방식이 아니라 인간·사회·인문학적 관점과 커리어에서 이루고 싶은 가치가 또렷이 드러나는 한 줄 신념 선언"
     )
     sharpened_tradeoff_rule: str = Field(
-        description="'A vs B 충돌 시 무엇을 우선하고 무엇을 포기/유보하는지' 구체적 판단 기준 (1~2문장)"
+        description="커리어를 통해 어떤 사람·사회적 변화를 만들고 싶으며 무엇을 타협하지 않는지 구체적 지향 (1~2문장)"
     )
     sharpened_origin_story: str = Field(
-        description="기존 계기와 연결 프로젝트/경험 맥락을 살려 다듬은 형성 계기 요약 (1~2문장)"
+        description="기존 계기·독서/회고·프로젝트 맥락을 살려 다듬은 형성 스토리 (1~2문장)"
     )
-    why_better: str = Field(description="기존 문장 대비 자소서·면접에서 왜 더 설득력이 높은지 1문장")
+    why_better: str = Field(description="기존 문장 대비 인간적 진정성과 차별성이 왜 높아졌는지 1문장")
 
 
 class DiscoveredPillarCandidate(BaseModel):
-    title: str = Field(description="실제 프로젝트·STAR 행동 패턴에서 도출된 차별화된 한 줄 신념 선언")
+    title: str = Field(
+        description="업무 습관이 아니라, 인간·사회·인문학적 관점 및 커리어에서 이루고 싶은 방향을 담은 한 줄 신념 선언"
+    )
     category: Literal[
-        "work_principle", "problem_lens", "collaboration", "career_direction"
-    ] = Field(default="work_principle")
+        "human_value", "social_impact", "career_calling", "tech_and_people"
+    ] = Field(default="human_value")
     tradeoff_rule: str = Field(
-        description="실제 선택에서 드러난 'A보다 B를 우선하는' 트레이드오프 판단 기준 (1~2문장)"
+        description="커리어에서 어떤 사람·사회적 가치를 실현하고 싶고 무엇을 포기하지 않는지 (1~2문장)"
     )
     origin_story: str = Field(
-        description="어떤 프로젝트·경험·회고에서 이 신념이 드러났는지 근거 요약 (1~2문장)"
+        description="어떤 독서·회고·프로젝트 문제의식에서 이 신념이 드러났는지 근거 요약 (1~2문장)"
     )
     linked_project_ids: list[int] = Field(
-        default_factory=list, description="이 신념을 직접 증명하는 등록 프로젝트 ID 목록"
+        default_factory=list, description="이 신념을 탐구·실천한 등록 프로젝트 ID 목록"
     )
     linked_experience_ids: list[int] = Field(
-        default_factory=list, description="이 신념을 직접 증명하는 등록 STAR 경험 ID 목록"
+        default_factory=list, description="이 신념과 맞닿은 등록 STAR 경험 ID 목록"
     )
     linked_note_ids: list[int] = Field(
-        default_factory=list, description="관련 일상 회고 노트 ID 목록"
+        default_factory=list, description="이 신념이 담긴 일상 회고·독서 노트 ID 목록"
     )
-    evidence_summary: str = Field(description="자소서에서 이 신념을 어떻게 증명할 수 있는지 1문장")
+    evidence_summary: str = Field(description="자소서·지원동기에서 이 신념을 어떻게 풀어낼 수 있는지 1문장")
 
 
 class PortfolioBeliefDiscoverySchema(BaseModel):
     overall_observation: str = Field(
-        description="지원자의 프로젝트·경험·노트 전반을 관통하는 일하는 방식의 핵심 패턴 요약 (2문장)"
+        description="지원자의 회고 노트와 프로젝트 문제의식 전반을 관통하는 인간적·사회적 관심사와 커리어 지향 요약 (2문장)"
     )
     candidates: list[DiscoveredPillarCandidate] = Field(
-        default_factory=list, description="실제 근거 기반 핵심 신념 카드 후보 3~4개"
+        default_factory=list, description="인간·사회·커리어 지향 기반 핵심 신념 카드 후보 3~4개"
     )
 
 
@@ -245,6 +264,7 @@ def _serialize_pillar(pillar: BeliefPillar, *, vector_synced: bool | None = None
         origin_story=pillar.origin_story,
         linked_project_ids=list(pillar.linked_project_ids or []),
         linked_experience_ids=list(pillar.linked_experience_ids or []),
+        linked_note_ids=list(pillar.linked_note_ids or []),
     )
     resp = BeliefPillarResponse.model_validate(pillar)
     resp.proof_status = qual["proof_status"]
@@ -260,9 +280,9 @@ async def _sync_belief_pillar_vector(session: AsyncSession, pillar: BeliefPillar
     cat_label = PILLAR_CATEGORY_LABELS.get(pillar.category, pillar.category)
     parts = [f"[핵심 신념 카드 | {cat_label}] {pillar.title}"]
     if pillar.tradeoff_rule.strip():
-        parts.append(f"[트레이드오프 판단 기준] {pillar.tradeoff_rule.strip()}")
+        parts.append(f"[커리어 지향 · 지키는 가치] {pillar.tradeoff_rule.strip()}")
     if pillar.origin_story.strip():
-        parts.append(f"[형성 계기·회고] {pillar.origin_story.strip()}")
+        parts.append(f"[형성 계기 · 사유] {pillar.origin_story.strip()}")
     content = "\n".join(parts)
     return await try_upsert_document(
         session,
@@ -277,15 +297,6 @@ async def _sync_belief_pillar_vector(session: AsyncSession, pillar: BeliefPillar
             "linked_experience_ids": list(pillar.linked_experience_ids or []),
         },
     )
-
-
-@router.get("/pillars", response_model=list[BeliefPillarResponse])
-async def list_belief_pillars(
-    session: AsyncSession = Depends(get_db_session),
-) -> list[BeliefPillarResponse]:
-    stmt = select(BeliefPillar).order_by(BeliefPillar.created_at.desc(), BeliefPillar.id.desc())
-    rows = (await session.execute(stmt)).scalars().all()
-    return [_serialize_pillar(r) for r in rows]
 
 
 async def _auto_sync_pillars_to_profile(session: AsyncSession) -> None:
@@ -304,10 +315,19 @@ async def _auto_sync_pillars_to_profile(session: AsyncSession) -> None:
         cat = PILLAR_CATEGORY_LABELS.get(p.category, p.category)
         line = f"{idx}. [{cat}] {p.title}"
         if p.tradeoff_rule.strip():
-            line += f" (기준: {p.tradeoff_rule.strip()})"
+            line += f" — {p.tradeoff_rule.strip()}"
         lines.append(line)
     profile.core_beliefs = "\n".join(lines)
     await session.commit()
+
+
+@router.get("/pillars", response_model=list[BeliefPillarResponse])
+async def list_belief_pillars(
+    session: AsyncSession = Depends(get_db_session),
+) -> list[BeliefPillarResponse]:
+    stmt = select(BeliefPillar).order_by(BeliefPillar.created_at.desc(), BeliefPillar.id.desc())
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_serialize_pillar(r) for r in rows]
 
 
 @router.post(
@@ -395,7 +415,7 @@ async def sharpen_belief_pillar(
     payload: BeliefPillarSharpenRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
-    """추상적이거나 뻔한 신념 카드를 트레이드오프 판단 기준이 살아 있는 차별화 문장으로 다듬어 제안한다."""
+    """추상적인 신념 문장을 AI 시대에 사람·사회·인문학적 관점과 커리어 지향이 또렷이 드러나는 문장으로 다듬는다."""
     pillar = await session.get(BeliefPillar, pillar_id)
     if pillar is None:
         raise HTTPException(
@@ -429,29 +449,30 @@ async def sharpen_belief_pillar(
     proof_dump = "\n".join(
         [f"- [프로젝트] {p.name}: {p.summary[:220]}" for p in linked_projs]
         + [
-            f"- [STAR 경험] {e.title}: Action={(e.action or '')[:180]} | Learning={(e.learning or '')[:140]}"
+            f"- [경험] {e.title}: Situation={(e.situation or '')[:140]} | Learning={(e.learning or '')[:160]}"
             for e in linked_exps
         ]
-    ) or "(연결된 증명 경험 없음)"
+    ) or "(연결된 프로젝트·경험 없음)"
 
     system_prompt = (
-        "당신은 빅테크·대기업 서류 심사위원 출신 커리어 철학 에디터입니다.\n"
-        "지원자의 신념 문장에서 누구나 쓸 수 있는 뻔한 클리셰('끊임없이 성장', '사용자 중심', '소통 중시', '최선')를 모두 제거하고, "
-        "'A와 B가 충돌할 때 나는 왜 B를 선택하는가'가 또렷하게 드러나는 실전형 신념 선언과 트레이드오프 기준으로 날카롭게 다듬어 주세요.\n"
-        "규칙: 제공된 프로젝트·경험·힌트에 없는 사실이나 수치는 절대 지어내지 마세요."
+        "당신은 AI 시대의 인문학적·사회적 커리어 철학을 다듬는 에디터입니다.\n"
+        "중요: '어떻게 일할 것인가(코드 품질, 빠른 배포, 테스트 습관)' 같은 업무 프로세스 신념으로 바꾸지 마세요!\n"
+        "지원자가 커리어를 통해 **어떤 사람·사회적 문제에 기여하고 싶은지, 인간에게 지켜야 할 본질적 가치는 무엇인지, 기술과 사람이 어떤 관계여야 하는지**가 "
+        "뻔한 클리셰 없이 진정성 있고 선명하게 드러나도록 다듬어 주세요.\n"
+        "규칙: 제공된 기록과 힌트에 없는 사실이나 수치는 절대 지어내지 마세요."
     )
     user_prompt = (
         f"[현재 신념 카드]\n"
         f"- 카테고리: {PILLAR_CATEGORY_LABELS.get(pillar.category, pillar.category)}\n"
         f"- 선언문: {pillar.title}\n"
-        f"- 트레이드오프 기준: {pillar.tradeoff_rule or '(미입력)'}\n"
+        f"- 커리어 지향 / 지키는 가치: {pillar.tradeoff_rule or '(미입력)'}\n"
         f"- 형성 계기: {pillar.origin_story or '(미입력)'}\n\n"
-        f"[연결된 증명 프로젝트·STAR]\n{proof_dump}\n\n"
-        f"[사용자 추가 컨텍스트 힌트]\n{payload.context_hint.strip() or '(없음)'}"
+        f"[연결된 프로젝트·경험]\n{proof_dump}\n\n"
+        f"[사용자 추가 힌트]\n{payload.context_hint.strip() or '(없음)'}"
     )
 
     try:
-        llm = get_smart_llm(temperature=0.3, max_tokens=1800)
+        llm = get_smart_llm(temperature=0.35, max_tokens=1800)
         res = await ainvoke_structured(
             llm,
             SharpenedPillarSchema,
@@ -472,8 +493,17 @@ async def sharpen_belief_pillar(
 async def discover_beliefs_from_portfolio(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
-    """등록된 프로젝트·STAR-L 경험·일상 회고 노트에서 실제 행동 기반 핵심 신념 카드 후보 3~4개를 자동 역추출한다."""
+    """일상 회고·독서 노트와 프로젝트의 문제의식에서 인간·사회·인문학적 커리어 신념 후보 3~4개를 역추출한다."""
     profile = await session.get(UserProfile, 1)
+    notes = (
+        (
+            await session.execute(
+                select(BeliefNote).order_by(BeliefNote.created_at.desc()).limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
     projects = (
         (
             await session.execute(
@@ -491,16 +521,7 @@ async def discover_beliefs_from_portfolio(
             await session.execute(
                 select(Experience)
                 .order_by(Experience.completeness_score.desc(), Experience.created_at.desc())
-                .limit(15)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    notes = (
-        (
-            await session.execute(
-                select(BeliefNote).order_by(BeliefNote.created_at.desc()).limit(15)
+                .limit(12)
             )
         )
         .scalars()
@@ -515,55 +536,56 @@ async def discover_beliefs_from_portfolio(
     if not projects and not experiences and not notes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="신념을 역추출할 프로젝트, STAR-L 경험, 또는 회고 노트가 아직 없습니다. 하나 이상 등록한 뒤 시도해 주세요.",
+            detail="신념을 발굴할 회고 노트, 프로젝트, 또는 경험이 아직 없습니다. 하나 이상 기록한 뒤 시도해 주세요.",
         )
 
+    note_blocks = [
+        f"- [note_id={n.id}] [{SOURCE_TYPE_LABELS.get(n.source_type, n.source_type)}] {n.source_title or '무제'}\n"
+        f"  구절: {(n.quote_text or '')[:160]} | 생각: {n.my_reflection[:260]}"
+        for n in notes
+    ]
     proj_blocks = []
     for p in projects:
         sec_preview = " / ".join(
-            f"[{s.title}] {(s.content or '').strip()[:160]}"
+            f"[{s.title}] {(s.content or '').strip()[:150]}"
             for s in p.sections
             if (s.content or "").strip()
-        )[:500]
+        )[:450]
         proj_blocks.append(
-            f"- [project_id={p.id}] {p.name} (역할: {p.role or '미입력'}) | 요약: {p.summary[:220]}\n"
-            f"  섹션 발췌: {sec_preview or '(없음)'}"
+            f"- [project_id={p.id}] {p.name} | 문제의식·요약: {p.summary[:240]} | 목표 연결: {p.portfolio_goal_link[:160]}\n"
+            f"  발췌: {sec_preview or '(없음)'}"
         )
-
     exp_blocks = [
-        f"- [experience_id={e.id}, project_id={e.project_id}] {e.title} ({e.completeness_score}점)\n"
-        f"  Action: {(e.action or '')[:220]} | Result: {(e.result or '')[:140]} | Learning: {(e.learning or '')[:180]}"
+        f"- [experience_id={e.id}, project_id={e.project_id}] {e.title}\n"
+        f"  Situation: {(e.situation or '')[:140]} | Learning: {(e.learning or '')[:200]}"
         for e in experiences
-    ]
-    note_blocks = [
-        f"- [note_id={n.id}] [{SOURCE_TYPE_LABELS.get(n.source_type, n.source_type)}] {n.source_title or '무제'}\n"
-        f"  구절: {(n.quote_text or '')[:140]} | 생각: {n.my_reflection[:220]}"
-        for n in notes
     ]
     existing_dump = "\n".join(f"- {ep.title}" for ep in existing_pillars) or "(없음)"
 
     system_prompt = (
-        "당신은 지원자의 실제 프로젝트 결정, STAR-L 행동·회고(Action/Learning), 그리고 일상 회고 노트에서 "
-        "**말뿐인 구호가 아니라 이미 행동으로 증명된 핵심 신념 카드(`BeliefPillar`) 3~4개**를 역추출하는 커리어 철학 아키텍트입니다.\n\n"
-        "핵심 규칙:\n"
-        "1. '열정적인', '끊임없이 성장하는', '사용자 중심' 같은 뻔한 클리셰를 절대 쓰지 마세요.\n"
-        "2. 각 후보는 반드시 **'A보다 B를 우선한다' 형태의 구체적 트레이드오프 판단 기준(`tradeoff_rule`)**을 포함하세요.\n"
-        "3. `linked_project_ids`, `linked_experience_ids`, `linked_note_ids`에는 반드시 아래 목록에 실존하는 정수 ID만 넣으세요.\n"
-        "4. 이미 등록된 신념 카드와 겹치지 않는 새로운 관점을 우선 제안하세요."
+        "당신은 AI 시대의 인문학적·사회적 커리어 철학 파트너입니다.\n"
+        "지원자의 **일상 회고·독서/강의 노트(최우선 근거)**와 프로젝트·경험에서 드러나는 **'왜 이 문제를 풀려 했는가(Why)'**를 분석해, "
+        "**인간·사회·인문학적 가치와 커리어에서 궁극적으로 이루고 싶은 방향을 담은 핵심 신념 카드 3~4개**를 발굴하세요.\n\n"
+        "핵심 규칙 (필수 준수):\n"
+        "1. **업무 방식/개발 방법론 신념 절대 금지!** ('테스트를 먼저 작성한다', '빠르게 배포하고 측정한다', '성능을 최적화한다' 같은 How-to-work 원칙이 아니라, "
+        "**'사람에게 어떤 의미가 있어야 하는가', '사회·산업의 어떤 문제를 바꾸고 싶은가', 'AI 시대에 기술이 인간을 어떻게 도와야 하는가', '커리어를 통해 어떤 일을 하고 싶은가'**를 추출하세요!)\n"
+        "2. '열정적인', '끊임없이 성장하는', '더 나은 세상' 같은 뻔한 구호 대신 지원자 기록에서 우러나온 고유한 관점을 쓰세요.\n"
+        "3. `category`는 반드시 `human_value`, `social_impact`, `career_calling`, `tech_and_people` 중 하나를 고르세요.\n"
+        "4. `linked_note_ids`, `linked_project_ids`, `linked_experience_ids`에는 아래 목록에 실존하는 정수 ID만 넣으세요.\n"
+        "5. 이미 등록된 신념 카드와 겹치지 않는 새로운 관점을 제안하세요."
     )
     user_prompt = (
         f"[현재 프로필]\n"
         f"비전: {profile.career_vision if profile else '(미설정)'}\n"
-        f"기존 신념 메모: {profile.core_beliefs if profile else '(미설정)'}\n"
         f"희망 직무: {profile.target_roles if profile else '(미설정)'}\n\n"
         f"[이미 등록된 신념 카드 (중복 방지)]\n{existing_dump}\n\n"
-        f"[보유 프로젝트 ({len(projects)}건)]\n" + ("\n".join(proj_blocks)[:5000] or "(없음)") + "\n\n"
-        f"[채굴된 STAR-L 경험 ({len(experiences)}건)]\n" + ("\n".join(exp_blocks)[:4500] or "(없음)") + "\n\n"
-        f"[일상 회고 저널 ({len(notes)}건)]\n" + ("\n".join(note_blocks)[:3000] or "(없음)")
+        f"[1순위 근거: 일상 회고 · 독서/강의 저널 ({len(notes)}건)]\n" + ("\n".join(note_blocks)[:5000] or "(없음)") + "\n\n"
+        f"[2순위 근거: 보유 프로젝트의 문제의식 ({len(projects)}건)]\n" + ("\n".join(proj_blocks)[:4500] or "(없음)") + "\n\n"
+        f"[3순위 근거: STAR-L 경험 속 문제의식과 회고 ({len(experiences)}건)]\n" + ("\n".join(exp_blocks)[:3000] or "(없음)")
     )
 
     try:
-        llm = get_smart_llm(temperature=0.3, max_tokens=3200)
+        llm = get_smart_llm(temperature=0.35, max_tokens=3200)
         discovered = await ainvoke_structured(
             llm,
             PortfolioBeliefDiscoverySchema,
@@ -575,7 +597,7 @@ async def discover_beliefs_from_portfolio(
         logger.exception("Discover beliefs from portfolio failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"포트폴리오 기반 신념 역추출 실패: {exc}",
+            detail=f"신념 역추출 실패: {exc}",
         )
 
     valid_proj_ids = {p.id for p in projects}
@@ -594,6 +616,7 @@ async def discover_beliefs_from_portfolio(
             origin_story=d["origin_story"],
             linked_project_ids=d["linked_project_ids"],
             linked_experience_ids=d["linked_experience_ids"],
+            linked_note_ids=d["linked_note_ids"],
         )
         d.update(qual)
         cleaned_candidates.append(d)
@@ -625,30 +648,15 @@ async def sync_pillars_to_profile(
             detail="동기화할 신념 카드가 아직 없습니다.",
         )
 
+    await _auto_sync_pillars_to_profile(session)
     profile = await session.get(UserProfile, 1)
-    if profile is None:
-        profile = UserProfile(id=1)
-        session.add(profile)
-
-    summary_lines = []
-    for idx, p in enumerate(pillars, start=1):
-        cat = PILLAR_CATEGORY_LABELS.get(p.category, p.category)
-        line = f"{idx}. [{cat}] {p.title}"
-        if p.tradeoff_rule.strip():
-            line += f" (기준: {p.tradeoff_rule.strip()})"
-        summary_lines.append(line)
-
-    profile.core_beliefs = "\n".join(summary_lines)
-    await session.commit()
-    await session.refresh(profile)
-
     identity_text = "\n\n".join(
         part
         for part in [
-            f"희망 직무: {profile.target_roles}" if profile.target_roles else "",
-            f"커리어 비전: {profile.career_vision}" if profile.career_vision else "",
-            f"핵심 신념 및 철학:\n{profile.core_beliefs}" if profile.core_beliefs else "",
-            f"선호 문체: {profile.preferred_tone}" if profile.preferred_tone else "",
+            f"희망 직무: {profile.target_roles}" if profile and profile.target_roles else "",
+            f"커리어 비전: {profile.career_vision}" if profile and profile.career_vision else "",
+            f"핵심 신념 및 철학:\n{profile.core_beliefs}" if profile and profile.core_beliefs else "",
+            f"선호 문체: {profile.preferred_tone}" if profile and profile.preferred_tone else "",
         ]
         if part
     )
@@ -657,10 +665,10 @@ async def sync_pillars_to_profile(
         doc_type=DocType.CAREER_IDENTITY,
         ref_id="profile-1",
         content=identity_text,
-        metadata={"target_roles": profile.target_roles, "pillar_count": len(pillars)},
+        metadata={"target_roles": profile.target_roles if profile else "", "pillar_count": len(pillars)},
     )
     return {
-        "core_beliefs": profile.core_beliefs,
+        "core_beliefs": profile.core_beliefs if profile else "",
         "pillar_count": len(pillars),
         "vector_synced": synced,
     }
@@ -706,16 +714,16 @@ class BeliefNoteResponse(BaseModel):
 
 class IdentitySynthesisSchema(BaseModel):
     suggested_career_vision: str = Field(
-        description="축적된 구절·생각 노트와 기존 프로필을 통합해 한층 선명하게 다듬은 커리어 비전 (2~3문장)"
+        description="축적된 신념 카드·독서/회고 노트를 통합해 AI 시대에 어떤 인간적·사회적 가치를 만드는 커리어를 지향하는지 정리한 커리어 비전 (2~3문장)"
     )
     suggested_core_beliefs: str = Field(
-        description="반복되는 가치관과 독서/강의 인사이트를 응축한 핵심 신념·일하는 원칙 (3~4문장)"
+        description="반복되는 인문학적·사회적 문제의식과 커리어 지향을 응축한 핵심 신념 요약 (3~4문장)"
     )
     key_themes: list[str] = Field(
         default_factory=list, description="노트 전반을 관통하는 핵심 가치관 키워드 3~5개"
     )
     synthesis_rationale: str = Field(
-        description="어떤 노트와 구절에서 이 정체성이 도출되었는지 설명 (2문장)"
+        description="어떤 노트와 신념에서 이 방향이 도출되었는지 설명 (2문장)"
     )
 
 
@@ -836,7 +844,7 @@ async def ai_reflect_belief_note(
     note_id: int,
     session: AsyncSession = Depends(get_db_session),
 ) -> BeliefNoteResponse:
-    """책/강의 구절·일상 생각을 나의 커리어 신념 및 프로젝트 경험과 연결해 심화 회고 코멘트를 생성한다."""
+    """책/강의 구절·일상 생각을 인간·사회적 커리어 신념 및 프로젝트 문제의식과 연결해 심화 회고 코멘트를 생성한다."""
     note = await session.get(BeliefNote, note_id)
     if note is None:
         raise HTTPException(
@@ -864,20 +872,20 @@ async def ai_reflect_belief_note(
         or "(등록된 신념 카드 없음)"
     )
     profile_summary = (
-        f"비전: {profile.career_vision}\n신념: {profile.core_beliefs}\n희망 직무: {profile.target_roles}"
+        f"비전: {profile.career_vision}\n희망 직무: {profile.target_roles}"
         if profile
         else "(미설정)"
     )
 
     label = SOURCE_TYPE_LABELS.get(note.source_type, note.source_type)
     system_prompt = (
-        "당신은 지원자의 독서·강의 구절과 일상 생각을 깊이 있는 커리어 철학으로 승화시켜 주는 사고 파트너입니다.\n"
-        "아래 4개 항목으로 간결하고 날카로운 한국어 Markdown 회고 코멘트를 작성하세요:\n"
-        "1. **핵심 통찰 정리** (이 구절·생각이 가리키는 본질 1~2문장)\n"
-        "2. **나의 신념 카드·프로젝트와의 연결점** (기존 신념 카드나 실제 프로젝트 경험과 어떻게 맞닿아 있는지)\n"
-        "3. **더 깊이 생각해볼 회고 질문 2개** (스스로의 트레이드오프 행동 원칙으로 구체화하도록 돕는 질문)\n"
-        "4. **자소서·면접 활용 팁** (지원동기나 가치관 문항에서 진정성 있게 녹이는 한 줄 팁)\n"
-        "과장된 칭찬은 피하고 담백하고 통찰력 있게 작성하세요."
+        "당신은 지원자의 독서·강의 구절과 일상 사유를 AI 시대의 깊이 있는 인간적·사회적 커리어 철학으로 확장해 주는 인문학 사고 파트너입니다.\n"
+        "아래 4개 항목으로 간결하고 통찰력 있는 한국어 Markdown 회고 코멘트를 작성하세요:\n"
+        "1. **핵심 인문·사회적 통찰** (이 구절·생각이 사람과 사회에 던지는 본질적 질문 1~2문장)\n"
+        "2. **나의 커리어 지향·프로젝트와의 연결점** (커리어에서 어떤 일을 하고 싶은지, 기존 프로젝트 문제의식과 어떻게 이어지는지)\n"
+        "3. **더 깊이 사유해볼 질문 2개** (업무 스킬이 아닌 인간·사회·가치관 차원의 질문)\n"
+        "4. **자소서·지원동기 활용 팁** (기업의 사회적 역할·미션과 자연스럽게 연결하는 한 줄 팁)\n"
+        "과장된 칭찬은 피하고 담백하고 사려 깊게 작성하세요."
     )
     user_prompt = (
         f"[노트 유형] {label}\n"
@@ -914,7 +922,7 @@ async def ai_reflect_belief_note(
 async def synthesize_identity_from_notes(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
-    """지금까지 기록한 신념 카드와 구절·생각 노트들을 종합해 더 선명한 커리어 비전·핵심 신념 초안을 제안한다."""
+    """신념 카드와 구절·생각 노트들을 종합해 인간·사회적 가치가 담긴 커리어 비전 초안을 제안한다."""
     profile = await session.get(UserProfile, 1)
     pillars = (
         (await session.execute(select(BeliefPillar).order_by(BeliefPillar.created_at.desc()).limit(10)))
@@ -933,11 +941,11 @@ async def synthesize_identity_from_notes(
     if not notes and not pillars:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="종합할 신념 카드나 구절·생각 노트가 아직 없습니다. 최소 1개 이상 기록한 뒤 시도해 주세요.",
+            detail="종합할 신념 카드나 회고 노트가 아직 없습니다. 최소 1개 이상 기록한 뒤 시도해 주세요.",
         )
 
     pillars_dump = "\n".join(
-        f"- [{PILLAR_CATEGORY_LABELS.get(p.category, p.category)}] {p.title} | 기준: {p.tradeoff_rule[:180]}"
+        f"- [{PILLAR_CATEGORY_LABELS.get(p.category, p.category)}] {p.title} | 지향: {p.tradeoff_rule[:180]}"
         for p in pillars
     ) or "(없음)"
     notes_dump = "\n\n".join(
@@ -947,15 +955,15 @@ async def synthesize_identity_from_notes(
         for n in notes
     ) or "(없음)"
     cur_profile = (
-        f"현재 비전: {profile.career_vision}\n현재 신념: {profile.core_beliefs}\n희망 직무: {profile.target_roles}"
+        f"현재 비전: {profile.career_vision}\n희망 직무: {profile.target_roles}"
         if profile
         else "(기존 프로필 없음)"
     )
 
     system_prompt = (
-        "당신은 지원자가 직접 모은 핵심 신념 카드와 책·강의 구절·일상 생각 기록에서 일관된 철학을 길어 올려 "
-        "진정성 있는 커리어 비전과 핵심 신념 문장으로 정제하는 에디터입니다.\n"
-        "뻔한 미사여구('열정적인', '끊임없이 성장하는')를 배제하고, 실제 기록에 담긴 지원자만의 관점과 언어를 살려 제안하세요."
+        "당신은 지원자의 신념 카드와 독서·강의·일상 회고에서 일관된 인문학적·사회적 문제의식을 길어 올려 "
+        "'커리어를 통해 어떤 사람·사회적 가치를 만들고 싶은지'가 선명한 커리어 비전으로 정제하는 에디터입니다.\n"
+        "업무 습관이나 뻔한 미사여구('열정적인', '끊임없이 성장하는')를 배제하고, 기록에 담긴 지원자만의 인간적 관점을 살려 제안하세요."
     )
     user_prompt = (
         f"[기존 프로필]\n{cur_profile}\n\n"
@@ -964,7 +972,7 @@ async def synthesize_identity_from_notes(
     )
 
     try:
-        llm = get_smart_llm(temperature=0.3, max_tokens=2500)
+        llm = get_smart_llm(temperature=0.35, max_tokens=2500)
         synthesized = await ainvoke_structured(
             llm,
             IdentitySynthesisSchema,
@@ -979,5 +987,5 @@ async def synthesize_identity_from_notes(
         logger.exception("Identity synthesis from belief notes failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"신념·비전 정제 중 오류가 발생했습니다: {exc}",
+            detail=f"비전 정제 중 오류가 발생했습니다: {exc}",
         )

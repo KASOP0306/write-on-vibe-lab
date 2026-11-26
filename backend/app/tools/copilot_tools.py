@@ -195,13 +195,13 @@ def format_star_mastery_summary(
             if (b.get("linked_project_ids") or b.get("linked_experience_ids"))
         ]
         pillar_lines = [
-            f"  - [미증명 신념 ⚠️] {b['title']} (기준: {b.get('tradeoff_rule') or '미입력'})"
+            f"  - [미실천 신념 ⚠️] {b['title']} (커리어 지향: {b.get('tradeoff_rule') or '미입력'})"
             for b in unproven
         ] + [
-            f"  - [증명됨 ✅] {b['title']} (기준: {b.get('tradeoff_rule') or '미입력'})"
+            f"  - [실천 연결됨 ✅] {b['title']} (커리어 지향: {b.get('tradeoff_rule') or '미입력'})"
             for b in proven[:4]
         ]
-        parts.append("[핵심 신념 카드 현황 (미증명 신념은 새 프로젝트 기획의 최우선 소재)]\n" + "\n".join(pillar_lines))
+        parts.append("[인간·사회적 커리어 신념 카드 현황 (미실천 신념은 새 프로젝트 기획의 최우선 주제)]\n" + "\n".join(pillar_lines))
 
     return "\n\n".join(parts)
 

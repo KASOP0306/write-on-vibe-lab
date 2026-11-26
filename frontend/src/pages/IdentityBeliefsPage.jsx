@@ -37,27 +37,38 @@ const SOURCE_TYPES = [
 const SOURCE_MAP = Object.fromEntries(SOURCE_TYPES.map((s) => [s.id, s]));
 
 const PILLAR_CATEGORIES = [
-  { id: "work_principle", label: "일하는 원칙", cls: "bg-indigo-50 text-indigo-800 border-indigo-200" },
-  { id: "problem_lens", label: "문제 정의 관점", cls: "bg-violet-50 text-violet-800 border-violet-200" },
-  { id: "collaboration", label: "협업 · 소통 철학", cls: "bg-emerald-50 text-emerald-800 border-emerald-200" },
-  { id: "career_direction", label: "커리어 방향성", cls: "bg-amber-50 text-amber-800 border-amber-200" },
+  { id: "human_value", label: "인간 · 인문학 가치", cls: "bg-indigo-50 text-indigo-800 border-indigo-200" },
+  { id: "social_impact", label: "사회적 문제의식", cls: "bg-violet-50 text-violet-800 border-violet-200" },
+  { id: "career_calling", label: "커리어 지향 · 하고 싶은 일", cls: "bg-emerald-50 text-emerald-800 border-emerald-200" },
+  { id: "tech_and_people", label: "기술과 사람의 관계", cls: "bg-amber-50 text-amber-800 border-amber-200" },
 ];
 
-const PILLAR_CAT_MAP = Object.fromEntries(PILLAR_CATEGORIES.map((c) => [c.id, c]));
+const PILLAR_CAT_MAP = {
+  ...Object.fromEntries(PILLAR_CATEGORIES.map((c) => [c.id, c])),
+  work_principle: PILLAR_CATEGORIES[2],
+  problem_lens: PILLAR_CATEGORIES[1],
+  collaboration: PILLAR_CATEGORIES[0],
+  career_direction: PILLAR_CATEGORIES[2],
+};
 
 const PROOF_STATUS_BADGES = {
   proven: {
-    label: "경험 증명됨",
+    label: "실천 연결됨",
     cls: "bg-emerald-50 text-emerald-800 border-emerald-200",
     icon: CheckCircle2,
   },
   needs_proof: {
-    label: "증명 경험 미연결",
+    label: "경험 연결 권장",
     cls: "bg-amber-50 text-amber-800 border-amber-200",
     icon: AlertTriangle,
   },
+  needs_direction: {
+    label: "지향 보강 권장",
+    cls: "bg-sky-50 text-sky-800 border-sky-200",
+    icon: Compass,
+  },
   needs_tradeoff: {
-    label: "트레이드오프 보강 권장",
+    label: "지향 보강 권장",
     cls: "bg-sky-50 text-sky-800 border-sky-200",
     icon: Compass,
   },
@@ -70,7 +81,7 @@ const PROOF_STATUS_BADGES = {
 
 const EMPTY_PILLAR = {
   title: "",
-  category: "work_principle",
+  category: "human_value",
   tradeoff_rule: "",
   origin_story: "",
   linked_project_ids: [],
@@ -372,8 +383,8 @@ export default function IdentityBeliefsPage({
 
   const handlePromoteNoteToPillar = (note) => {
     openNewPillar({
-      title: note.source_title ? `${note.source_title}에서 정립한 원칙` : "",
-      category: "work_principle",
+      title: note.source_title ? `${note.source_title}에서 정립한 가치관` : "",
+      category: "human_value",
       tradeoff_rule: "",
       origin_story: [note.quote_text ? `"${note.quote_text}"` : "", note.my_reflection]
         .filter(Boolean)
@@ -548,7 +559,7 @@ export default function IdentityBeliefsPage({
                         </div>
                         {cand.tradeoff_rule && (
                           <div className="rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-700">
-                            <strong>트레이드오프 기준:</strong> {cand.tradeoff_rule}
+                            <strong>커리어 지향:</strong> {cand.tradeoff_rule}
                           </div>
                         )}
                         {cand.origin_story && (
@@ -606,7 +617,7 @@ export default function IdentityBeliefsPage({
           >
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-bold text-slate-900">
-                {editingPillarId ? "핵심 신념 카드 수정" : "새 핵심 신념 카드 만들기"}
+                {editingPillarId ? "신념 카드 수정" : "새 신념 카드"}
               </h4>
               <button
                 type="button"
@@ -635,37 +646,37 @@ export default function IdentityBeliefsPage({
             </div>
 
             <label className="block space-y-1">
-              <span className="font-semibold text-slate-700">핵심 신념 한 줄 선언 *</span>
+              <span className="font-semibold text-slate-700">나의 신념 한 줄 *</span>
               <input
                 type="text"
                 required
                 value={pillarForm.title}
                 onChange={(e) => setPillarForm((p) => ({ ...p, title: e.target.value }))}
-                placeholder="예: 감에 의존하는 최적화보다 측정 가능한 작은 검증 루프를 먼저 만든다"
+                placeholder="예: 기술은 사람을 대체하는 도구가 아니라 개인이 자기 삶의 주체성을 되찾도록 도와야 한다"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
               />
             </label>
 
             <label className="block space-y-1">
               <span className="font-semibold text-slate-700">
-                트레이드오프 판단 기준 (A vs B 충돌 시 나는 무엇을 우선하는가?)
+                커리어에서 이루고 싶은 방향 · 지키는 가치
               </span>
               <textarea
                 rows={2}
                 value={pillarForm.tradeoff_rule}
                 onChange={(e) => setPillarForm((p) => ({ ...p, tradeoff_rule: e.target.value }))}
-                placeholder="예: 기능 출시 속도와 평가 신뢰성이 충돌할 때, 근거 없는 숫자 대신 결정론적 검증 게이트를 먼저 세워 신뢰를 확보한다."
+                placeholder="예: 정보 격차로 기회를 놓치는 사람이 없도록, 복잡한 지식을 누구나 이해하고 스스로 결정할 수 있게 연결하고 싶다."
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
               />
             </label>
 
             <label className="block space-y-1">
-              <span className="font-semibold text-slate-700">형성 계기 · 배경 스토리 (선택)</span>
+              <span className="font-semibold text-slate-700">형성 계기 · 영향을 준 책·경험</span>
               <textarea
                 rows={2}
                 value={pillarForm.origin_story}
                 onChange={(e) => setPillarForm((p) => ({ ...p, origin_story: e.target.value }))}
-                placeholder="어떤 프로젝트 시행착오나 독서·회고에서 이 원칙을 확신하게 되었나요?"
+                placeholder="어떤 책·강의·일상 경험에서 이 가치관과 문제의식을 품게 되었나요?"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
               />
             </label>
@@ -675,7 +686,7 @@ export default function IdentityBeliefsPage({
               <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5">
                 <div className="font-semibold text-slate-700 flex items-center gap-1">
                   <FolderKanban className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>이 신념을 증명하는 프로젝트 연결</span>
+                  <span>이 신념을 탐구·실천한 프로젝트</span>
                 </div>
                 {projects.length === 0 ? (
                   <p className="text-[11px] text-slate-400">등록된 프로젝트가 없습니다.</p>
@@ -699,7 +710,7 @@ export default function IdentityBeliefsPage({
               <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5">
                 <div className="font-semibold text-slate-700 flex items-center gap-1">
                   <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>이 신념을 증명하는 STAR-L 경험 연결</span>
+                  <span>연결할 STAR-L 경험</span>
                 </div>
                 {experiences.length === 0 ? (
                   <p className="text-[11px] text-slate-400">등록된 STAR 경험이 없습니다.</p>
@@ -737,7 +748,7 @@ export default function IdentityBeliefsPage({
                 className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>{savingPillar ? "저장 중..." : "신념 카드 저장"}</span>
+                <span>{savingPillar ? "저장 중..." : "신념 저장"}</span>
               </button>
             </div>
           </form>
@@ -745,12 +756,9 @@ export default function IdentityBeliefsPage({
 
         {/* Pillar Cards Grid */}
         {pillars.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center space-y-2.5">
-            <p className="text-sm font-semibold text-slate-700">
-              아직 구조화된 핵심 신념 카드가 없습니다.
-            </p>
-            <p className="text-xs text-slate-500">
-              <strong>[내 프로젝트·경험에서 신념 자동 발굴]</strong>을 누르면 이미 하신 프로젝트와 STAR-L 경험에서 증명 가능한 신념 카드 3~4개를 바로 찾아드립니다.
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center">
+            <p className="text-sm font-medium text-slate-600">
+              아직 등록된 신념 카드가 없습니다.
             </p>
           </div>
         ) : (
@@ -788,7 +796,7 @@ export default function IdentityBeliefsPage({
                           type="button"
                           onClick={() => openEditPillar(pillar)}
                           className="p-1 rounded text-slate-400 hover:bg-white hover:text-slate-700"
-                          title="신념 카드 수정"
+                          title="수정"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
@@ -796,7 +804,7 @@ export default function IdentityBeliefsPage({
                           type="button"
                           onClick={() => handleDeletePillar(pillar)}
                           className="p-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          title="신념 카드 삭제"
+                          title="삭제"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -809,7 +817,7 @@ export default function IdentityBeliefsPage({
 
                     {pillar.tradeoff_rule && (
                       <div className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs text-slate-700 leading-relaxed">
-                        <strong className="text-indigo-800">트레이드오프 기준:</strong>{" "}
+                        <strong className="text-indigo-800">커리어 지향:</strong>{" "}
                         {pillar.tradeoff_rule}
                       </div>
                     )}
@@ -824,7 +832,7 @@ export default function IdentityBeliefsPage({
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500">
                         <Link2 className="w-3 h-3" />
-                        증명 근거:
+                        실천·연결:
                       </span>
                       {(pillar.linked_project_ids || []).map((pid) => (
                         <span
@@ -845,16 +853,10 @@ export default function IdentityBeliefsPage({
                       {(pillar.linked_project_ids || []).length === 0 &&
                         (pillar.linked_experience_ids || []).length === 0 && (
                           <span className="text-[10px] font-semibold text-amber-700">
-                            미연결 — 수정해서 기존 경험을 붙이거나 새 프로젝트로 증명하세요
+                            경험 미연결
                           </span>
                         )}
                     </div>
-
-                    {pillar.diagnostic_tip && pillar.proof_status !== "proven" && (
-                      <div className="rounded-lg bg-amber-50/70 border border-amber-200 px-2.5 py-1.5 text-[11px] text-amber-900">
-                        {pillar.diagnostic_tip}
-                      </div>
-                    )}
 
                     {/* Sharpened Preview Box */}
                     {sharpened && (
@@ -862,7 +864,7 @@ export default function IdentityBeliefsPage({
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-violet-900 flex items-center gap-1">
                             <Wand2 className="w-3.5 h-3.5 text-violet-600" />
-                            <span>AI 트레이드오프 다듬기 제안</span>
+                            <span>AI 신념 다듬기 제안</span>
                           </span>
                           <button
                             type="button"
@@ -881,7 +883,7 @@ export default function IdentityBeliefsPage({
                         <div className="rounded-lg bg-white border border-violet-100 p-2.5 space-y-1">
                           <div className="font-bold text-slate-900">“{sharpened.sharpened_title}”</div>
                           <div className="text-[11px] text-slate-700">
-                            <strong>기준:</strong> {sharpened.sharpened_tradeoff_rule}
+                            <strong>지향:</strong> {sharpened.sharpened_tradeoff_rule}
                           </div>
                           {sharpened.why_better && (
                             <div className="text-[10px] text-violet-700">{sharpened.why_better}</div>
@@ -894,7 +896,7 @@ export default function IdentityBeliefsPage({
                             className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-violet-700"
                           >
                             <Check className="w-3 h-3" />
-                            <span>이 문장으로 업데이트</span>
+                            <span>적용</span>
                           </button>
                         </div>
                       </div>
@@ -909,7 +911,7 @@ export default function IdentityBeliefsPage({
                         onChange={(e) =>
                           setSharpenHints((prev) => ({ ...prev, [pillar.id]: e.target.value }))
                         }
-                        placeholder="다듬기 힌트 (선택: 겪은 갈등 한 줄)"
+                        placeholder="힌트 (관심 있는 사람·사회 문제)"
                         className="flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px]"
                       />
                       <button
@@ -923,7 +925,7 @@ export default function IdentityBeliefsPage({
                         ) : (
                           <Wand2 className="w-3 h-3" />
                         )}
-                        <span>날카롭게 다듬기</span>
+                        <span>다듬기</span>
                       </button>
                     </div>
 
@@ -931,12 +933,12 @@ export default function IdentityBeliefsPage({
                       <button
                         type="button"
                         onClick={() =>
-                          onJumpToCopilot(`'${pillar.title}' 신념을 실제로 증명할 수 있는 포트폴리오 프로젝트`)
+                          onJumpToCopilot(`'${pillar.title}' 신념을 실현·탐구해 볼 수 있는 프로젝트`)
                         }
                         className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
                       >
                         <ArrowUpRight className="w-3 h-3" />
-                        <span>코파일럿으로 증명 기획</span>
+                        <span>코파일럿 기획</span>
                       </button>
                     )}
                   </div>
