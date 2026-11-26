@@ -35,10 +35,11 @@ LangChain + LangGraph + AWS Bedrock + PostgreSQL(`pgvector`) 기반의 **1인용
 
 ## 문서 안내
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — 시스템 아키텍처 설계서 (인프라·DB ERD·API/SSE·프론트엔드·보안 경계)
+- **[EXPERIENCE_MINING_ARCHITECTURE.md](./EXPERIENCE_MINING_ARCHITECTURE.md)** — **★ 핵심 엔진: 경험 채굴(Active Interviewer) 작동 과정·LangGraph 아키텍처·STAR-L 채점 심층 설계서**
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — 시스템 아키텍처 & 서비스 전체 LLM·LangChain·LangGraph 인벤토리
 - [WORKFLOWS.md](./WORKFLOWS.md) — LangGraph AI 에이전트 워크플로우 & 평가 루브릭 상세 명세서
 - [LANGCHAIN_LANGGRAPH_UPGRADE.md](./LANGCHAIN_LANGGRAPH_UPGRADE.md) — LangChain · LangGraph · RAG 고도화 설계 및 정량 평가 기록
-- [QUALITY_LOOPS_PLAN.md](./QUALITY_LOOPS_PLAN.md) — 질문 · 프로젝트 정리/요약 2대 품질 상승 루프 설계서
+- [QUALITY_LOOPS_PLAN.md](./QUALITY_LOOPS_PLAN.md) — 질문 · 프로젝트 정리/요약 2대 품질 상승 루프 설계서 및 실측 결과
 - [DEPLOY_EC2.md](./DEPLOY_EC2.md) — AWS EC2 Docker 배포 & E2E/영속성 검증 매뉴얼
 - [SECRETS.md](./SECRETS.md) — 비밀번호·패스워드·AWS 키 보안 관리 가이드 (필독)
 - [ai.md](./ai.md) — 마스터 기획서 & Docker 아키텍처
