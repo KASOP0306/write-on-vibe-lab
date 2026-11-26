@@ -125,28 +125,38 @@ flowchart LR
 
 ---
 
-## 4. LangGraph 상태 머신, GitHub Diff 연동 & 닫힌 피드백 루프
+## 4. 대화형 멀티턴 LangGraph 상태 머신 (v3.0), GitHub Diff 앵커링 & 닫힌 피드백 루프
 
 ```mermaid
 flowchart TD
-    S((START)) --> LP["0. load_project_context<br/>· project_id 연결 시 프로젝트 요약·섹션·직무 트랙 로드<br/>· 최근 question_feedback_logs에서 동적 피드백 규칙 로드"]
-    LP --> P["1. prepare_turn<br/>· 답변 병합 · 직전 21지표/점수 스냅샷 · force_save 단축 경로"]
+    S((START)) --> LP["0. load_project_context<br/>· 프로젝트 요약·섹션·직무 트랙 로드<br/>· GitHub PR/커밋 Diff를 focus_context로 영속 승격<br/>· 최근 question_feedback_logs 동적 피드백 규칙 로드"]
+    LP --> P["1. prepare_turn (대화 의도 라우터 · Intent Router)<br/>· Turn 의도 분류: answer / replace_question / ask_coach / save<br/>· 누적 조건 추출: focus_instruction · excluded_checkpoints · question_count"]
 
-    P -->|"skip_extraction=true"| SAVE
-    P -->|"일반 실행"| EXT["2. extract_star<br/>· 프로젝트 요약 + GitHub PR/커밋 Diff + 누적 Q&A 통합 추출"]
+    P -->|"save / force_save"| SAVE
+    P -->|"ask_coach<br/>(부족한 점·방향 상담)"| COACH["4b. coach_reply<br/>· 21지표·GitHub Diff 기반 1:1 코치 답변<br/>· 강제 설문 없이 자연 대화 유지"]
+    P -->|"replace_question<br/>(질문 전체 / 단일 슬롯 교체)"| Q
+    P -->|"answer<br/>(일반 경험 답변)"| EXT["2. extract_star<br/>· 프로젝트 요약 + 영속 focus_context(GitHub Diff) + 누적 Q&A 통합 추출"]
 
     EXT --> GRADE["3. grade_gaps (3단계 엄격 하이브리드 평가 v2.1)<br/>· LLM 21지표 근거 판별 → Python 원문 대조·12종 하드캡·정수 합산<br/>· 직전 턴 존재 시 ΔSTAR-L + 해금 체크포인트 수 DB 기록"]
 
     GRADE -->|"force_save=true OR<br/>(score >= 80 AND is_sufficient)"| SAVE["5. save_experience<br/>· experiences 저장 (rubric_version + 21지표 스냅샷)<br/>· pgvector(doc_type='experience') 업서트"]
-    GRADE -->|"빈틈 존재 (< 80점)"| Q["4. generate_questions<br/>· 0점 고배점 체크포인트 TOP 2 정조준<br/>· user_feedback_rules 동적 반영<br/>· 보수적 루프 A (린트 결함 OR Critic < 70만 핀포인트 수정)"]
+    GRADE -->|"빈틈 존재 (< 80점)"| Q["4a. generate_questions<br/>· GitHub Diff 실제 파일/함수(code_anchor) 1순위 근거 + 0점 고배점 타겟<br/>· rejected_questions 회피 + interview_preferences(제외 지표·문항 수) 준수<br/>· 자연스러운 코치 메시지(assistant_message) + 질문 카드"]
 
-    Q --> INT(("END (SSE interrupt)<br/>AsyncPostgresSaver 영속화<br/>UI: 질문별 👍/👎 + 사유 칩 수집"))
+    Q --> INT(("END (SSE interrupt)<br/>AsyncPostgresSaver + chat_messages 영속화<br/>UI: 🔄 질문 교체 · 빠른 조향 칩 · 👍/👎"))
+    COACH --> INT
     SAVE --> DONE(("END (SSE done)<br/>UI: 만족도·점수체감 피드백<br/>+ 프로젝트 섹션 다시 정리(역반영)"))
 ```
 
-### 4.1 온디맨드 GitHub PR · Push 커밋 Diff 경험 채굴 (`github_analyzer.py`)
-- `POST /api/projects/{project_id}/github-activity`: 연결된 저장소의 최근 **Pull Request(Merged/Open/Closed)** 및 **Push 커밋** 목록을 온디맨드 조회(Public 무토큰 + Private/고한도용 1회용 PAT 지원).
-- `POST /api/projects/{project_id}/github-diff-context`: 사용자가 고른 PR(최대 3개)·커밋(최대 5개)의 실제 코드 Diff(`patch`)와 리뷰 코멘트를 노이즈 파일(`package-lock.json`, `dist/` 등) 제외 후 구조화해 경험 채굴 입력으로 자동 주입 → 코드에 드러나지 않는 **의사결정·대안·정량 성과·회고**만 정밀 역질문.
+### 4.1 온디맨드 GitHub PR · Push 커밋 Diff 앵커링 & 대화형 멀티턴 채굴
+- **온디맨드 PR/Diff 조회 (`github_analyzer.py`):**
+  - `POST /api/projects/{project_id}/github-activity`: 연결된 저장소의 최근 **Pull Request(Merged/Open/Closed)** 및 **Push 커밋** 목록을 온디맨드 조회(Public 무토큰 + Private/고한도용 1회용 PAT 지원).
+  - `POST /api/projects/{project_id}/github-diff-context`: 선택한 PR(최대 3개)·커밋(최대 5개)의 실제 코드 Diff(`patch`)와 리뷰 코멘트를 노이즈 파일(`package-lock.json`, `dist/` 등) 제외 후 구조화해 별도 영속 필드 **`focus_context`**로 주입.
+- **PR/Diff 1순위 앵커링 (`code_anchor`):**
+  - `focus_context`가 로드된 세션에서는 모든 역질문이 **실제 변경된 파일·함수·PR 변경점(`code_anchor`)을 직접 지목**해 질문하며, STAR-L 체크포인트는 추상적 교과서 질문이 아니라 해당 코드 변경의 **의사결정·대안·검증 수치·회고**를 끌어내는 렌즈로 작동합니다.
+- **멀티턴 채팅 · 의도 라우팅 · 질문 교체 & 컨텍스트 영속 복원:**
+  - `prepare_turn` 의도 라우터가 사용자 발화를 `answer`(경험 답변·재채점), `replace_question`(전체 또는 특정 슬롯 `replace_question_index` 즉시 교체 — `qa_history` 미오염), `ask_coach`(부족한 점·작성 팁 1:1 상담), `save`(즉시 저장) 4갈래로 분기합니다.
+  - 대화 중 *"1인 개발이라 협업(A6) 빼줘"*, *"X 파일 위주로 물어봐줘"*, *"질문 1개씩만"* 같은 요청은 `interview_preferences`에 누적 영속화됩니다.
+  - `AsyncPostgresSaver` + `chat_messages` + `GET /api/agents/interview/history/{thread_id}` + `sessionStorage` 연동으로 탭 이동·새로고침 시에도 진행 중인 대화와 Diff 컨텍스트를 그대로 복원합니다.
 
 ### 4.2 경험 CRUD & 프로젝트 역반영 순환
 - **직접 입력 & 수정·즉시 재채점:** `POST /api/experiences`, `PUT /api/experiences/{id}`로 경험 직접 작성·수정 시 즉시 `rubric_v2.1` 21지표 재채점 + `pgvector` 재동기화 + 1,000 XP 보드 자동 갱신.

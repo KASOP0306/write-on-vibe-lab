@@ -322,6 +322,8 @@ export const api = {
     streamSSE("/api/agents/interview/start", body, onEvent),
   replyInterview: (body, onEvent) =>
     streamSSE("/api/agents/interview/reply", body, onEvent),
+  getInterviewHistory: (threadId) =>
+    apiRequest(`/api/agents/interview/history/${encodeURIComponent(threadId)}`),
   submitQuestionFeedback: (data) =>
     apiRequest("/api/agents/question-feedback", {
       method: "POST",

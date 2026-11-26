@@ -52,7 +52,10 @@ from app.graphs.cover_letter_graph import (
     build_cover_letter_graph,
     recommend_cover_letter_materials,
 )
-from app.graphs.interview_graph import stream_interview_graph
+from app.graphs.interview_graph import (
+    get_interview_thread_state,
+    stream_interview_graph,
+)
 from app.tools.copilot_tools import delete_career_memory, list_career_memories
 from app.schemas.agents import (
     ApplicationLogResponse,
@@ -101,11 +104,11 @@ class InterestSummaryBatch(BaseModel):
 
 
 # ==============================================================================
-# 워크플로우 ①: 경험 채굴 & 연속 역질문 루프 (SSE)
+# 워크플로우 ①: 대화형 멀티턴 경험 채굴 (Conversational Active Interviewer v3.0)
 # ==============================================================================
 async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
     try:
-        yield sse_node_start("interview", "경험 메모를 분석하고 STAR 구조를 추출하는 중...")
+        yield sse_node_start("interview", "대화 의도와 컨텍스트(프로젝트·GitHub Diff)를 분석하는 중...")
         final_state: dict[str, Any] = {}
 
         async for chunk in stream_interview_graph(
@@ -117,18 +120,25 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
 
             for node_name, update in chunk.items():
                 if node_name == "load_project_context":
-                    if update.get("project_name"):
+                    if update.get("project_name") or update.get("focus_context"):
                         yield sse_node_end(
                             "load_project_context",
                             {
                                 "project_name": update.get("project_name", ""),
                                 "project_types": update.get("project_types", []),
                                 "project_context_preview": str(update.get("project_context", ""))[:420],
+                                "has_focus_context": bool(update.get("focus_context")),
                             },
                         )
+                elif node_name == "prepare_turn":
+                    intent = update.get("turn_intent") or "answer"
+                    if intent == "replace_question":
+                        yield sse_node_start("generate_questions", "요청하신 방향에 맞춰 새 역질문을 생성하는 중...")
+                    elif intent == "ask_coach":
+                        yield sse_node_start("coach_reply", "코치가 현재 컨텍스트와 21지표 기준으로 답변을 작성하는 중...")
                 elif node_name == "extract_star":
                     yield sse_node_end("extract_star", {"star": update.get("star", {})})
-                    yield sse_node_start("grade_gaps", "21개 Atomic 체크포인트로 하이브리드 채점 중...")
+                    yield sse_node_start("grade_gaps", "21개 Atomic 체크포인트로 엄격 하이브리드 채점 중...")
                 elif node_name == "grade_gaps":
                     yield sse_node_end(
                         "grade_gaps",
@@ -145,10 +155,18 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                     yield sse_node_end(
                         "generate_questions",
                         {
+                            "assistant_message": update.get("assistant_message", ""),
                             "questions": update.get("questions", []),
                             "structured_questions": update.get("structured_questions", []),
                             "question_critic_score": update.get("question_critic_score", 0),
                             "question_critic_revisions": update.get("question_critic_revisions", 0),
+                        },
+                    )
+                elif node_name == "coach_reply":
+                    yield sse_node_end(
+                        "coach_reply",
+                        {
+                            "assistant_message": update.get("assistant_message", ""),
                         },
                     )
                 elif node_name == "save_experience":
@@ -174,14 +192,19 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                     "turn_count": turn_count,
                     "star_scores": final_state.get("star_scores", {}),
                     "vector_synced": final_state.get("vector_synced", False),
+                    "chat_messages": final_state.get("chat_messages", []),
                 }
             )
         else:
+            turn_intent = final_state.get("turn_intent") or "answer"
+            is_coach_only = turn_intent == "ask_coach"
             yield sse_interrupt(
                 thread_id,
                 {
-                    "questions": final_state.get("questions", []),
-                    "structured_questions": final_state.get("structured_questions", []),
+                    "turn_intent": turn_intent,
+                    "assistant_message": final_state.get("assistant_message", ""),
+                    "questions": [] if is_coach_only else final_state.get("questions", []),
+                    "structured_questions": [] if is_coach_only else final_state.get("structured_questions", []),
                     "completeness_score": final_state.get("completeness_score", 0),
                     "initial_score": final_state.get("initial_score", 0),
                     "last_unlocked_checkpoints": final_state.get("last_unlocked_checkpoints", 0),
@@ -189,9 +212,13 @@ async def _stream_interview_sse(thread_id: str, input_state: dict[str, Any]):
                     "project_name": final_state.get("project_name", ""),
                     "project_types": final_state.get("project_types", []),
                     "project_context_preview": str(final_state.get("project_context", ""))[:420],
+                    "has_focus_context": bool((final_state.get("focus_context") or "").strip()),
+                    "focus_context_preview": str(final_state.get("focus_context") or "")[:360],
+                    "interview_preferences": final_state.get("interview_preferences") or {},
                     "star_scores": final_state.get("star_scores", {}),
                     "missing_points": final_state.get("missing_points", []),
                     "star": final_state.get("star", {}),
+                    "chat_messages": final_state.get("chat_messages", []),
                 },
             )
     except Exception as exc:
@@ -204,9 +231,15 @@ async def start_interview(payload: InterviewStartRequest):
     thread_id = payload.thread_id or f"exp-{uuid.uuid4().hex[:10]}"
     input_state: dict[str, Any] = {
         "raw_notes": payload.raw_notes.strip(),
+        "focus_context": payload.focus_context.strip(),
         "project_id": payload.project_id,
         "qa_history": [],
+        "chat_messages": [],
+        "rejected_questions": [],
+        "interview_preferences": {},
         "latest_reply": "",
+        "turn_action": "auto",
+        "replace_question_index": None,
         "force_save": payload.force_save,
         "questions": [],
         "saved_experience_id": None,
@@ -218,11 +251,29 @@ async def start_interview(payload: InterviewStartRequest):
 async def reply_interview(payload: InterviewReplyRequest):
     input_state: dict[str, Any] = {
         "latest_reply": payload.user_reply.strip(),
-        "force_save": payload.force_save,
+        "turn_action": payload.action,
+        "replace_question_index": payload.replace_question_index,
+        "force_save": payload.force_save or payload.action == "save",
     }
     if payload.project_id is not None:
         input_state["project_id"] = payload.project_id
     return create_sse_response(_stream_interview_sse(payload.thread_id, input_state))
+
+
+@router.get("/agents/interview/history/{thread_id}")
+async def get_interview_history(thread_id: str) -> dict[str, Any]:
+    """PostgreSQL Checkpointer에 영속 저장된 멀티턴 경험 채굴 대화 세션 및 컨텍스트를 복원한다."""
+    try:
+        state = await get_interview_thread_state(thread_id)
+    except Exception as exc:
+        logger.warning("Failed to load interview thread %s: %s", thread_id, exc)
+        state = None
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Interview thread '{thread_id}' not found.",
+        )
+    return state
 
 
 # ==============================================================================

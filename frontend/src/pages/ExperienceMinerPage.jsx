@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -8,16 +8,21 @@ import {
   Eye,
   FolderOpen,
   FolderSync,
+  GitBranch,
   Github,
   Loader2,
+  MessageSquare,
+  RefreshCw,
   RotateCcw,
   Save,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Star,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  X,
 } from "lucide-react";
 import { api } from "../api/client.js";
 import ExperienceDetailModal from "../components/ExperienceDetailModal.jsx";
@@ -25,6 +30,8 @@ import ExperienceProjectSyncModal from "../components/ExperienceProjectSyncModal
 import GitHubActivityPickerModal from "../components/GitHubActivityPickerModal.jsx";
 import StarMeter from "../components/StarMeter.jsx";
 import StepIndicator from "../components/StepIndicator.jsx";
+
+const ACTIVE_THREAD_STORAGE_KEY = "miner_active_thread_id";
 
 const NEGATIVE_REASONS = [
   { id: "already_answered", label: "이미 답한 내용" },
@@ -41,6 +48,33 @@ const PERCEPTION_OPTIONS = [
   { value: 1, label: "점수가 후함", cls: "border-amber-300 bg-amber-50 text-amber-800" },
 ];
 
+const QUICK_STEERING_CHIPS = [
+  {
+    id: "replace_all",
+    label: "🔄 질문 전체 바꾸기",
+    action: "replace_question",
+    text: "",
+  },
+  {
+    id: "solo_dev",
+    label: "👤 1인 개발(협업 제외)",
+    action: "auto",
+    text: "이 프로젝트는 1인 개발이라 협업(A6) 질문은 빼고 다른 질문으로 바꿔줘",
+  },
+  {
+    id: "ask_gaps",
+    label: "💡 부족한 점 알려줘",
+    action: "auto",
+    text: "지금 내 경험에서 21지표 기준으로 제일 부족한 점과 보강 팁을 알려줘",
+  },
+  {
+    id: "one_by_one",
+    label: "🎯 질문 1개씩만 짧게",
+    action: "auto",
+    text: "질문은 한 번에 1개씩만 짧게 물어봐줘",
+  },
+];
+
 export default function ExperienceMinerPage({
   projects,
   experiences,
@@ -50,6 +84,8 @@ export default function ExperienceMinerPage({
 }) {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [rawNotes, setRawNotes] = useState("");
+  const [focusContext, setFocusContext] = useState("");
+  const [showFocusPreview, setShowFocusPreview] = useState(false);
   const [threadId, setThreadId] = useState(null);
   const [replyText, setReplyText] = useState("");
 
@@ -60,11 +96,17 @@ export default function ExperienceMinerPage({
   const [lastUnlocked, setLastUnlocked] = useState(0);
   const [turnCount, setTurnCount] = useState(0);
   const [linkedProjectContext, setLinkedProjectContext] = useState(null);
+  const [hasFocusContext, setHasFocusContext] = useState(false);
+  const [focusContextPreview, setFocusContextPreview] = useState("");
+  const [interviewPreferences, setInterviewPreferences] = useState({});
   const [starScores, setStarScores] = useState(null);
   const [missingPoints, setMissingPoints] = useState([]);
   const [draftStar, setDraftStar] = useState(null);
   const [savedResult, setSavedResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [restoringSession, setRestoringSession] = useState(false);
+
+  const chatEndRef = useRef(null);
 
   // Per-question user feedback state: { [feedback_log_id]: { vote: 1|-1, reason: string, saved: bool } }
   const [qVotes, setQVotes] = useState({});
@@ -101,6 +143,107 @@ export default function ExperienceMinerPage({
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState("");
 
+  // Restore active multi-turn interview session from Postgres checkpointer on mount
+  useEffect(() => {
+    if (initialPrefill) return;
+    let savedId = "";
+    try {
+      savedId = sessionStorage.getItem(ACTIVE_THREAD_STORAGE_KEY) || "";
+    } catch {
+      savedId = "";
+    }
+    if (!savedId) return;
+
+    let cancelled = false;
+    setRestoringSession(true);
+    api
+      .getInterviewHistory(savedId)
+      .then((hist) => {
+        if (cancelled) return;
+        if (!hist || hist.saved_experience_id) {
+          try {
+            sessionStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+          } catch {
+            // ignore storage errors
+          }
+          return;
+        }
+        setThreadId(hist.thread_id || savedId);
+        if (hist.project_id) setSelectedProjectId(String(hist.project_id));
+        if (hist.project_name) {
+          setLinkedProjectContext({
+            name: hist.project_name,
+            types: [],
+            preview: "",
+          });
+        }
+        setHasFocusContext(Boolean(hist.has_focus_context));
+        setFocusContextPreview(hist.focus_context_preview || "");
+        setInterviewPreferences(hist.interview_preferences || {});
+        setMessages(hist.chat_messages || []);
+        setCompletenessScore(hist.completeness_score ?? 0);
+        setInitialScore(hist.initial_score ?? 0);
+        setTurnCount(hist.turn_count ?? 0);
+        if (hist.star_scores?.axes) setStarScores(hist.star_scores);
+        setMissingPoints(hist.missing_points || []);
+        if (hist.star && Object.keys(hist.star).length > 0) setDraftStar(hist.star);
+      })
+      .catch(() => {
+        try {
+          sessionStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRestoringSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Auto-scroll conversation viewport when messages or loading state changes
+  useEffect(() => {
+    if (messages.length > 0 && chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [messages, running]);
+
+  // Consume prefill coming from ProjectWorkspaceView (e.g. GitHub Diff -> Miner)
+  useEffect(() => {
+    if (initialPrefill) {
+      // Starting a targeted prefill resets any previous active session reference
+      try {
+        sessionStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+      setThreadId(null);
+      setMessages([]);
+      setSavedResult(null);
+      setInputMode("interview");
+      if (initialPrefill.projectId) {
+        setSelectedProjectId(String(initialPrefill.projectId));
+      }
+      if (initialPrefill.focusHint) {
+        const hint = String(initialPrefill.focusHint);
+        if (hint.includes("[GitHub") || hint.includes("Diff") || hint.length > 500) {
+          setFocusContext(hint);
+          setRawNotes("");
+          setLoadedGithubDiffStats({ prefilled: true });
+        } else {
+          setRawNotes(hint);
+          setFocusContext("");
+        }
+      }
+      if (onConsumeInitialPrefill) {
+        onConsumeInitialPrefill();
+      }
+    }
+  }, [initialPrefill]);
+
   const handleCreateManual = async (e) => {
     e.preventDefault();
     if (!manualForm.title.trim() || savingManual) return;
@@ -134,20 +277,6 @@ export default function ExperienceMinerPage({
       setSavingManual(false);
     }
   };
-
-  useEffect(() => {
-    if (initialPrefill) {
-      if (initialPrefill.projectId) {
-        setSelectedProjectId(String(initialPrefill.projectId));
-      }
-      if (initialPrefill.focusHint) {
-        setRawNotes(initialPrefill.focusHint);
-      }
-      if (onConsumeInitialPrefill) {
-        onConsumeInitialPrefill();
-      }
-    }
-  }, [initialPrefill]);
 
   const loadMetrics = async () => {
     setLoadingMetrics(true);
@@ -203,6 +332,9 @@ export default function ExperienceMinerPage({
           preview: ev.data.project_context_preview || "",
         });
       }
+      if (ev.data?.has_focus_context !== undefined) {
+        setHasFocusContext(Boolean(ev.data.has_focus_context));
+      }
       if (ev.data?.star) setDraftStar(ev.data.star);
       if (ev.data?.completeness_score !== undefined) {
         setCompletenessScore(ev.data.completeness_score);
@@ -217,6 +349,11 @@ export default function ExperienceMinerPage({
       if (ev.data?.missing_points) setMissingPoints(ev.data.missing_points);
     } else if (ev.event === "interrupt") {
       setThreadId(ev.thread_id);
+      try {
+        sessionStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, ev.thread_id);
+      } catch {
+        // ignore storage errors
+      }
       setCompletenessScore(ev.data?.completeness_score ?? 0);
       if (ev.data?.initial_score !== undefined) setInitialScore(ev.data.initial_score);
       if (ev.data?.last_unlocked_checkpoints !== undefined) {
@@ -230,26 +367,50 @@ export default function ExperienceMinerPage({
           preview: ev.data.project_context_preview || "",
         });
       }
+      if (ev.data?.has_focus_context !== undefined) {
+        setHasFocusContext(Boolean(ev.data.has_focus_context));
+      }
+      if (ev.data?.focus_context_preview) {
+        setFocusContextPreview(ev.data.focus_context_preview);
+      }
+      if (ev.data?.interview_preferences) {
+        setInterviewPreferences(ev.data.interview_preferences);
+      }
       if (ev.data?.star_scores?.axes) setStarScores(ev.data.star_scores);
       setMissingPoints(ev.data?.missing_points || []);
       if (ev.data?.star) setDraftStar(ev.data.star);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          questions: ev.data?.questions || [],
-          structured_questions: ev.data?.structured_questions || [],
-        },
-      ]);
+
+      if (Array.isArray(ev.data?.chat_messages) && ev.data.chat_messages.length > 0) {
+        setMessages(ev.data.chat_messages);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: ev.data?.assistant_message || "",
+            kind: ev.data?.turn_intent === "ask_coach" ? "coach_reply" : "probe",
+            questions: ev.data?.questions || [],
+            structured_questions: ev.data?.structured_questions || [],
+          },
+        ]);
+      }
     } else if (ev.event === "done") {
       setSavedResult(ev.data);
       setThreadId(null);
+      try {
+        sessionStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
       setCompletenessScore(ev.data?.completeness_score ?? 100);
       if (ev.data?.initial_score !== undefined) setInitialScore(ev.data.initial_score);
       if (ev.data?.turn_count !== undefined) setTurnCount(ev.data.turn_count);
       if (ev.data?.star_scores?.axes) setStarScores(ev.data.star_scores);
       setMissingPoints([]);
       if (ev.data?.star) setDraftStar(ev.data.star);
+      if (Array.isArray(ev.data?.chat_messages) && ev.data.chat_messages.length > 0) {
+        setMessages(ev.data.chat_messages);
+      }
       setExpFbSaved(false);
       onRefresh();
     } else if (ev.event === "error") {
@@ -264,7 +425,11 @@ export default function ExperienceMinerPage({
     (p) => String(p.id) === String(selectedProjectId)
   );
 
-  const canStart = !running && (Boolean(selectedProjectId) || rawNotes.trim().length >= 5);
+  const canStart =
+    !running &&
+    (Boolean(selectedProjectId) ||
+      rawNotes.trim().length >= 5 ||
+      focusContext.trim().length >= 5);
 
   const handleStart = async (e) => {
     e.preventDefault();
@@ -276,15 +441,24 @@ export default function ExperienceMinerPage({
     setLastUnlocked(0);
     setExpFbSaved(false);
     setQVotes({});
-    const userOpening = rawNotes.trim()
+    setInterviewPreferences({});
+
+    const hasDiff = focusContext.trim().length > 0;
+    setHasFocusContext(hasDiff);
+    const userOpening = hasDiff
       ? rawNotes.trim()
-      : `[프로젝트 '${selectedProjectObj?.name || ""}' 요약 기반 경험 채굴 시작]`;
-    setMessages([{ role: "user", content: userOpening }]);
+        ? `[GitHub PR·커밋 Diff 로드됨]\n${rawNotes.trim()}`
+        : `[GitHub PR·커밋 Diff 기반 경험 채굴 시작]`
+      : rawNotes.trim()
+        ? rawNotes.trim()
+        : `[프로젝트 '${selectedProjectObj?.name || ""}' 요약 기반 경험 채굴 시작]`;
+    setMessages([{ role: "user", content: userOpening, kind: "opening" }]);
 
     try {
       await api.startInterview(
         {
           raw_notes: rawNotes.trim(),
+          focus_context: focusContext.trim(),
           project_id: selectedProjectId ? Number(selectedProjectId) : null,
           force_save: false,
         },
@@ -300,25 +474,46 @@ export default function ExperienceMinerPage({
     }
   };
 
-  const handleReply = async (forceSave = false) => {
+  const handleSendChat = async (
+    overrideText = null,
+    { action = "auto", replaceIndex = null, forceSave = false } = {}
+  ) => {
     if (!threadId || running) return;
-    if (!forceSave && !replyText.trim()) return;
+    const text = overrideText !== null ? String(overrideText).trim() : replyText.trim();
+    if (!forceSave && action === "auto" && !text) return;
 
     setRunning(true);
     setSteps([]);
-    const userMsg = replyText.trim();
-    if (userMsg) {
-      setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+
+    if (overrideText === null && text) {
       setReplyText("");
+    }
+
+    // Optimistic user bubble so the chat feels immediate while streaming
+    if (text) {
+      setMessages((prev) => [...prev, { role: "user", content: text, kind: "user_turn" }]);
+    } else if (action === "replace_question") {
+      const label =
+        replaceIndex !== null
+          ? `🔄 Q${replaceIndex + 1}을 다른 각도의 질문으로 바꿔주세요.`
+          : "🔄 현재 질문들을 다른 각도의 질문으로 바꿔주세요.";
+      setMessages((prev) => [...prev, { role: "user", content: label, kind: "replace_request" }]);
+    } else if (forceSave || action === "save") {
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: "💾 현재 상태로 경험을 저장해주세요.", kind: "save_request" },
+      ]);
     }
 
     try {
       await api.replyInterview(
         {
           thread_id: threadId,
-          user_reply: userMsg,
+          user_reply: text,
           project_id: selectedProjectId ? Number(selectedProjectId) : null,
-          force_save: forceSave,
+          action: forceSave ? "save" : action,
+          replace_question_index: replaceIndex,
+          force_save: forceSave || action === "save",
         },
         handleEvent
       );
@@ -329,6 +524,15 @@ export default function ExperienceMinerPage({
       ]);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleReplyKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (replyText.trim() && !running) {
+        handleSendChat(null, { action: "auto" });
+      }
     }
   };
 
@@ -379,8 +583,19 @@ export default function ExperienceMinerPage({
   };
 
   const handleReset = () => {
+    try {
+      sessionStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     setThreadId(null);
     setRawNotes("");
+    setFocusContext("");
+    setShowFocusPreview(false);
+    setLoadedGithubDiffStats(null);
+    setHasFocusContext(false);
+    setFocusContextPreview("");
+    setInterviewPreferences({});
     setReplyText("");
     setMessages([]);
     setSteps([]);
@@ -410,6 +625,29 @@ export default function ExperienceMinerPage({
 
   const projectNameById = Object.fromEntries(projects.map((p) => [p.id, p.name]));
 
+  // Find index of the latest assistant probe turn (only that turn shows "🔄 이 질문 바꾸기")
+  let lastProbeMsgIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (
+      messages[i].role === "assistant" &&
+      (messages[i].structured_questions?.length > 0 || messages[i].questions?.length > 0)
+    ) {
+      lastProbeMsgIdx = i;
+      break;
+    }
+  }
+
+  const activePrefPills = [];
+  if (interviewPreferences?.focus_instruction) {
+    activePrefPills.push(`초점: ${interviewPreferences.focus_instruction}`);
+  }
+  if (Array.isArray(interviewPreferences?.excluded_checkpoints) && interviewPreferences.excluded_checkpoints.length > 0) {
+    activePrefPills.push(`제외 지표: ${interviewPreferences.excluded_checkpoints.join(", ")}`);
+  }
+  if (interviewPreferences?.question_count) {
+    activePrefPills.push(`${interviewPreferences.question_count}문항씩`);
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -417,11 +655,11 @@ export default function ExperienceMinerPage({
         <div>
           <div className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 mb-1">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>CORE ENGINE · LangGraph HITL × 21-Checkpoint Hybrid Evaluator (v2.0)</span>
+            <span>CORE ENGINE · LangGraph Conversational Active Interviewer v3.0 × 21-Checkpoint Evaluator (v2.1)</span>
           </div>
-          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (STAR-L Active Interviewer)</h2>
+          <h2 className="text-2xl font-bold text-slate-900">3. 경험 채굴 (멀티턴 대화형 AI 인터뷰어)</h2>
           <p className="text-sm text-slate-600 mt-1">
-            프로젝트 요약이나 거친 메모에서 <strong>21개 Atomic 체크포인트</strong>를 검증하고, 미충족 고배점 항목만 핀포인트 역질문으로 채굴합니다.
+            GitHub PR·커밋 Diff나 메모를 바탕으로 <strong>멀티턴 채팅</strong>을 진행합니다. 답변뿐 아니라 질문 교체·초점 변경·부족한 점 상담도 자유롭게 요청하세요.
           </p>
         </div>
 
@@ -456,7 +694,7 @@ export default function ExperienceMinerPage({
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-indigo-600" />
               <h3 className="text-sm font-bold text-slate-900">
-                경험 채굴 실시간 품질 · 점수축 캘리브레이션 &amp; 21지표 문항 분석 ({metricsData?.rubric_version || "v2.0"})
+                경험 채굴 실시간 품질 · 점수축 캘리브레이션 &amp; 21지표 문항 분석 ({metricsData?.rubric_version || "v2.1"})
               </h3>
             </div>
             <button
@@ -566,7 +804,7 @@ export default function ExperienceMinerPage({
                 </div>
               </div>
 
-              {/* 21-Checkpoint Item Analysis (for rubric_v2.0 -> v2.1 evolution) */}
+              {/* 21-Checkpoint Item Analysis */}
               <div className="space-y-1.5">
                 <div className="text-xs font-bold text-slate-800">
                   21개 체크포인트 문항 분석 (통과율 &amp; 버전 업그레이드 진단)
@@ -603,14 +841,21 @@ export default function ExperienceMinerPage({
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Input & Interview Chat */}
+        {/* Left: Input & Conversational Multi-Turn Chat */}
         <div className="lg:col-span-2 space-y-4">
+          {restoringSession && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-xs font-semibold text-indigo-800 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>진행 중이던 경험 채굴 대화 컨텍스트를 복원하는 중...</span>
+            </div>
+          )}
+
           {/* Linked Project Summary Context Banner (active during session) */}
           {linkedProjectContext && (
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 px-4 py-3 text-xs space-y-1">
               <div className="flex items-center gap-1.5 font-bold text-indigo-950">
                 <FolderOpen className="w-4 h-4 text-indigo-600" />
-                <span>연결된 프로젝트 요약 자동 로드됨: {linkedProjectContext.name}</span>
+                <span>연결된 프로젝트 컨텍스트 고정됨: {linkedProjectContext.name}</span>
               </div>
               {linkedProjectContext.preview && (
                 <p className="text-[11px] text-slate-600 line-clamp-2 whitespace-pre-wrap">
@@ -620,7 +865,7 @@ export default function ExperienceMinerPage({
             </div>
           )}
 
-          {!threadId && !savedResult && (
+          {!threadId && !savedResult && !restoringSession && (
             <div className="space-y-3">
               {/* Mode Switcher: AI Active Interviewer vs Direct STAR-L Entry */}
               <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs font-semibold">
@@ -633,7 +878,7 @@ export default function ExperienceMinerPage({
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  AI 역질문으로 경험 채굴
+                  AI 대화형 경험 채굴
                 </button>
                 <button
                   type="button"
@@ -734,153 +979,287 @@ export default function ExperienceMinerPage({
                   </div>
                 </form>
               ) : (
-            <form
-              onSubmit={handleStart}
-              className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
-            >
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-700">
-                  연결할 프로젝트 (선택 시 프로젝트 요약·섹션·직무 트랙 자동 연동)
-                </span>
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                <form
+                  onSubmit={handleStart}
+                  className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
                 >
-                  <option value="">프로젝트 미지정 (독립 경험 메모로 채굴)</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} {p.period ? `(${p.period})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {selectedProjectObj && (
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 text-xs space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-bold text-indigo-950">
-                      선택된 프로젝트 요약 미리보기 · {selectedProjectObj.name}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowGithubPicker(true)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-semibold text-slate-700">
+                      연결할 프로젝트 (선택 시 프로젝트 요약·섹션·직무 트랙 자동 연동)
+                    </span>
+                    <select
+                      value={selectedProjectId}
+                      onChange={(e) => setSelectedProjectId(e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
                     >
-                      <Github className="w-3.5 h-3.5 text-slate-900" />
-                      <span>GitHub 최근 PR · 커밋 Diff 불러오기</span>
-                    </button>
-                  </div>
-                  <p className="text-slate-600 line-clamp-2">
-                    {selectedProjectObj.summary || "요약 없음 — 작성된 프로젝트 섹션 내용을 자동으로 불러와 분석합니다."}
-                  </p>
-                  {loadedGithubDiffStats ? (
-                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">
-                      ✅ GitHub 변경 Diff 로드 완료 (PR {loadedGithubDiffStats.pr_count || 0}건 · 커밋{" "}
-                      {loadedGithubDiffStats.commit_count || 0}건 · 파일 {loadedGithubDiffStats.files_changed || 0}개 ·{" "}
-                      +{loadedGithubDiffStats.additions || 0}/-{loadedGithubDiffStats.deletions || 0}) — 바로{" "}
-                      <strong>[프로젝트 요약으로 경험 채굴 시작]</strong>을 누르세요!
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-indigo-700">
-                      메모 없이 바로 <strong>[경험 채굴 시작]</strong>을 누르거나, 우측{" "}
-                      <strong>[GitHub 최근 PR · 커밋 Diff 불러오기]</strong>로 실제 코드 변경점을 가져와 역질문을 시작할 수 있습니다.
+                      <option value="">프로젝트 미지정 (독립 경험 메모로 채굴)</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.period ? `(${p.period})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {selectedProjectObj && (
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-bold text-indigo-950">
+                          선택된 프로젝트 요약 미리보기 · {selectedProjectObj.name}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowGithubPicker(true)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
+                        >
+                          <Github className="w-3.5 h-3.5 text-slate-900" />
+                          <span>GitHub 최근 PR · 커밋 Diff 불러오기</span>
+                        </button>
+                      </div>
+                      <p className="text-slate-600 line-clamp-2">
+                        {selectedProjectObj.summary || "요약 없음 — 작성된 프로젝트 섹션 내용을 자동으로 불러와 분석합니다."}
+                      </p>
+
+                      {focusContext ? (
+                        <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 space-y-1.5 text-[11px] text-emerald-900">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-bold inline-flex items-center gap-1">
+                              <GitBranch className="w-3.5 h-3.5 text-emerald-700" />
+                              GitHub PR·커밋 Diff 집중 채굴 컨텍스트 고정됨
+                              {loadedGithubDiffStats && !loadedGithubDiffStats.prefilled && (
+                                <span className="font-normal">
+                                  (PR {loadedGithubDiffStats.pr_count || 0}건 · 커밋{" "}
+                                  {loadedGithubDiffStats.commit_count || 0}건 · 파일{" "}
+                                  {loadedGithubDiffStats.files_changed || 0}개 · +
+                                  {loadedGithubDiffStats.additions || 0}/-{loadedGithubDiffStats.deletions || 0})
+                                </span>
+                              )}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowFocusPreview((v) => !v)}
+                                className="text-emerald-800 underline font-semibold"
+                              >
+                                {showFocusPreview ? "미리보기 접기" : "Diff 미리보기"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFocusContext("");
+                                  setLoadedGithubDiffStats(null);
+                                  setShowFocusPreview(false);
+                                }}
+                                className="inline-flex items-center gap-0.5 text-slate-500 hover:text-rose-700"
+                                title="Diff 컨텍스트 해제"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>해제</span>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-[11px] text-emerald-800">
+                            모든 역질문이 이 PR·커밋의 실제 변경 파일과 코드 Diff를 1순위로 근거 삼아 생성됩니다.
+                          </div>
+                          {showFocusPreview && (
+                            <pre className="mt-1 max-h-40 overflow-y-auto rounded bg-white/90 border border-emerald-200 p-2 text-[10px] font-mono text-slate-700 whitespace-pre-wrap">
+                              {focusContext}
+                            </pre>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-indigo-700">
+                          메모 없이 바로 시작하거나, 우측 <strong>[GitHub 최근 PR · 커밋 Diff 불러오기]</strong>로 실제 코드 변경점을 고정해 PR 중심 역질문을 시작할 수 있습니다.
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
 
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-700">
-                  {selectedProjectObj
-                    ? "집중 채굴할 에피소드 / 추가 메모 (선택)"
-                    : "경험 메모 입력 (필수)"}
-                </span>
-                <textarea
-                  rows={5}
-                  required={!selectedProjectObj}
-                  value={rawNotes}
-                  onChange={(e) => setRawNotes(e.target.value)}
-                  placeholder={
-                    selectedProjectObj
-                      ? "비워두면 프로젝트 요약 전체에서 핵심 경험을 채굴합니다. 특정 트러블슈팅·의사결정·성과 에피소드만 파고들고 싶다면 2~3줄로 적어주세요."
-                      : "예: FastAPI 서버 응답이 느려서 인덱스를 걸고 비동기로 바꿨더니 빨라졌다. 정확한 수치나 어떤 쿼리가 문제였는지는 대충 기억남..."
-                  }
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/15"
-                />
-              </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-semibold text-slate-700">
+                      {focusContext
+                        ? "추가로 강조하고 싶은 초점이나 메모 (선택)"
+                        : selectedProjectObj
+                          ? "집중 채굴할 에피소드 / 추가 메모 (선택)"
+                          : "경험 메모 입력 (필수)"}
+                    </span>
+                    <textarea
+                      rows={focusContext ? 3 : 5}
+                      required={!selectedProjectObj && !focusContext}
+                      value={rawNotes}
+                      onChange={(e) => setRawNotes(e.target.value)}
+                      placeholder={
+                        focusContext
+                          ? "예: 이 PR에서 채점 로직 엄격화한 부분 위주로 질문해줘. 1인 개발이라 협업 질문은 빼줘."
+                          : selectedProjectObj
+                            ? "비워두면 프로젝트 요약 전체에서 핵심 경험을 채굴합니다. 특정 트러블슈팅·의사결정·성과 에피소드만 파고들고 싶다면 2~3줄로 적어주세요."
+                            : "예: FastAPI 서버 응답이 느려서 인덱스를 걸고 비동기로 바꿨더니 빨라졌다. 정확한 수치나 어떤 쿼리가 문제였는지는 대충 기억남..."
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/15"
+                    />
+                  </label>
 
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={!canStart}
-                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>
-                    {running
-                      ? "21지표 하이브리드 분석 중..."
-                      : selectedProjectObj
-                        ? "프로젝트 요약으로 경험 채굴 시작"
-                        : "경험 채굴 시작"}
-                  </span>
-                </button>
-              </div>
-            </form>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={!canStart}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>
+                        {running
+                          ? "컨텍스트 분석 및 질문 준비 중..."
+                          : focusContext
+                            ? "GitHub Diff 기반으로 대화형 채굴 시작"
+                            : selectedProjectObj
+                              ? "프로젝트 요약으로 경험 채굴 시작"
+                              : "경험 채굴 시작"}
+                      </span>
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
           )}
 
-          {/* Conversation History */}
+          {/* Conversational Multi-Turn Chat Thread */}
           {messages.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  역질문 인터뷰 진행 내역 {threadId && `(세션: ${threadId})`}
+              {/* Chat Header & Active Context Badges */}
+              <div className="space-y-2 border-b border-slate-100 pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <MessageSquare className="w-4 h-4 text-indigo-600" />
+                    <span>AI 경험 채굴 대화방</span>
+                    {threadId && (
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-500">
+                        컨텍스트 저장됨 · {threadId}
+                      </span>
+                    )}
+                  </div>
+                  {lastUnlocked > 0 && (
+                    <span className="rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                      🎉 직전 답변으로 +{lastUnlocked}개 체크포인트 해금!
+                    </span>
+                  )}
                 </div>
-                {lastUnlocked > 0 && (
-                  <span className="rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
-                    🎉 직전 답변으로 +{lastUnlocked}개 체크포인트 해금!
-                  </span>
+
+                {(hasFocusContext || activePrefPills.length > 0) && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    {hasFocusContext && (
+                      <span
+                        title={focusContextPreview || "불러온 GitHub PR·커밋 Diff를 1순위 근거로 유지합니다."}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 font-semibold text-emerald-800"
+                      >
+                        <GitBranch className="w-3 h-3" />
+                        <span>GitHub PR·커밋 Diff 컨텍스트 고정됨</span>
+                      </span>
+                    )}
+                    {activePrefPills.map((pill, pIdx) => (
+                      <span
+                        key={pIdx}
+                        className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 font-semibold text-indigo-800"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        <span>{pill}</span>
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+              {/* Scrollable Chat Messages */}
+              <div className="space-y-3.5 max-h-[540px] overflow-y-auto pr-1">
                 {messages.map((msg, idx) =>
                   msg.role === "user" ? (
                     <div key={idx} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-2xl bg-slate-900 text-white px-4 py-2.5 text-sm whitespace-pre-wrap">
+                      <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-slate-900 text-white px-4 py-2.5 text-sm whitespace-pre-wrap shadow-sm">
+                        {msg.content}
+                      </div>
+                    </div>
+                  ) : msg.kind === "coach_reply" ? (
+                    <div key={idx} className="flex justify-start">
+                      <div className="max-w-[92%] rounded-2xl rounded-tl-sm bg-emerald-50/70 border border-emerald-200 px-4 py-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>AI 커리어 코치 답변</span>
+                        </div>
+                        <div className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                          {msg.content}
+                        </div>
+                      </div>
+                    </div>
+                  ) : msg.kind === "saved" ? (
+                    <div key={idx} className="flex justify-start">
+                      <div className="max-w-[92%] rounded-2xl rounded-tl-sm bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-900 font-medium">
                         {msg.content}
                       </div>
                     </div>
                   ) : (
                     <div key={idx} className="flex justify-start">
-                      <div className="max-w-[94%] rounded-2xl bg-indigo-50/70 border border-indigo-200 px-4 py-3 space-y-2.5">
-                        <div className="text-xs font-bold text-indigo-950">
-                          AI 인터뷰어 핀포인트 역질문 (0점 고배점 체크포인트 공략)
-                        </div>
+                      <div className="w-full max-w-[96%] rounded-2xl rounded-tl-sm bg-indigo-50/60 border border-indigo-200 px-4 py-3.5 space-y-3">
+                        {/* Natural conversational coach intro bubble */}
+                        {msg.content ? (
+                          <div className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                            {msg.content}
+                          </div>
+                        ) : (
+                          <div className="text-xs font-bold text-indigo-950">
+                            AI 인터뷰어 핀포인트 역질문
+                          </div>
+                        )}
+
                         {(msg.structured_questions || []).length > 0 ? (
                           <div className="space-y-2.5">
                             {msg.structured_questions.map((sq, qIdx) => {
                               const logId = sq.feedback_log_id;
                               const voteEntry = logId ? qVotes[logId] : null;
+                              const canReplaceThis =
+                                Boolean(threadId) && idx === lastProbeMsgIdx && !savedResult;
                               return (
                                 <div
                                   key={qIdx}
-                                  className="rounded-xl bg-white border border-indigo-100 p-3 space-y-1.5"
+                                  className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-2 shadow-xs"
                                 >
-                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                    {sq.target_checkpoint_id && (
-                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-mono font-bold text-amber-900">
-                                        {sq.target_checkpoint_id} {sq.target_checkpoint_label}
-                                        {sq.target_checkpoint_weight ? ` (${sq.target_checkpoint_weight}점)` : ""}
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                      {sq.code_anchor && (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 font-mono font-semibold text-white">
+                                          <GitBranch className="w-2.5 h-2.5 text-emerald-300" />
+                                          <span>{sq.code_anchor}</span>
+                                        </span>
+                                      )}
+                                      {sq.target_checkpoint_id && (
+                                        <span className="rounded-full bg-amber-100 px-2 py-0.5 font-mono font-bold text-amber-900">
+                                          {sq.target_checkpoint_id} {sq.target_checkpoint_label}
+                                          {sq.target_checkpoint_weight ? ` (${sq.target_checkpoint_weight}점)` : ""}
+                                        </span>
+                                      )}
+                                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-bold text-indigo-800">
+                                        {sq.technique_label || sq.technique}
                                       </span>
+                                    </div>
+
+                                    {canReplaceThis && (
+                                      <button
+                                        type="button"
+                                        disabled={running}
+                                        onClick={() =>
+                                          handleSendChat("", {
+                                            action: "replace_question",
+                                            replaceIndex: qIdx,
+                                          })
+                                        }
+                                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-800 disabled:opacity-50"
+                                        title="이 질문만 다른 각도의 새 질문으로 즉시 교체"
+                                      >
+                                        <RefreshCw className="w-3 h-3" />
+                                        <span>이 질문 바꾸기</span>
+                                      </button>
                                     )}
-                                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-bold text-indigo-800">
-                                      {sq.technique_label || sq.technique}
-                                    </span>
                                   </div>
-                                  <div className="text-sm font-semibold text-slate-900">
+
+                                  <div className="text-sm font-semibold text-slate-900 leading-snug">
                                     Q{qIdx + 1}. {sq.question}
                                   </div>
                                   {sq.interviewer_intent && (
@@ -953,33 +1332,61 @@ export default function ExperienceMinerPage({
                               );
                             })}
                           </div>
-                        ) : (
+                        ) : (msg.questions || []).length > 0 ? (
                           <ul className="list-disc pl-4 space-y-1 text-sm text-slate-800">
                             {(msg.questions || []).map((q, qIdx) => (
                               <li key={qIdx}>{q}</li>
                             ))}
                           </ul>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   )
                 )}
+
+                {running && (
+                  <div className="flex justify-start">
+                    <div className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-3.5 py-2 text-xs text-slate-600">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                      <span>AI 인터뷰어가 대화 컨텍스트를 바탕으로 응답을 준비하고 있습니다...</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
               </div>
 
+              {/* Conversational Steering Chips + Chat Input */}
               {threadId && (
                 <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {QUICK_STEERING_CHIPS.map((chip) => (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        disabled={running}
+                        onClick={() =>
+                          handleSendChat(chip.text, { action: chip.action })
+                        }
+                        className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50 transition"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+
                   <textarea
                     rows={3}
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
-                    placeholder="역질문에 대한 답변을 입력하세요. (기억나는 수치, 전후 비교, 포기한 대안, 본인 기여 등)"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/15"
+                    onKeyDown={handleReplyKeyDown}
+                    placeholder="질문에 답하거나 원하는 요청을 편하게 입력하세요. (예: '이 PR의 채점 로직 위주로 물어봐줘', '질문 바꿔줘', '지금 부족한 점 알려줘') — Enter 전송 / Shift+Enter 줄바꿈"
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
                   />
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
                       disabled={running}
-                      onClick={() => handleReply(true)}
+                      onClick={() => handleSendChat("", { action: "save", forceSave: true })}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
                     >
                       <Save className="w-3.5 h-3.5" />
@@ -989,11 +1396,11 @@ export default function ExperienceMinerPage({
                     <button
                       type="button"
                       disabled={running || !replyText.trim()}
-                      onClick={() => handleReply(false)}
+                      onClick={() => handleSendChat(null, { action: "auto" })}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                     >
                       <Send className="w-3.5 h-3.5" />
-                      <span>{running ? "21지표 재채점 중..." : "답변 보내기"}</span>
+                      <span>{running ? "응답 처리 중..." : "메시지 보내기"}</span>
                     </button>
                   </div>
                 </div>
@@ -1296,7 +1703,7 @@ export default function ExperienceMinerPage({
         project={selectedProjectObj || null}
         onClose={() => setShowGithubPicker(false)}
         onDiffReady={(diffRes) => {
-          setRawNotes(diffRes.mining_prompt_notes || "");
+          setFocusContext(diffRes.mining_prompt_notes || "");
           setLoadedGithubDiffStats(diffRes.stats || null);
         }}
       />

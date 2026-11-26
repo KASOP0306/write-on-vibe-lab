@@ -6,24 +6,35 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-# --- 워크플로우 ①: 경험 채굴 (Active Interviewer) ---
+# --- 워크플로우 ①: 대화형 멀티턴 경험 채굴 (Active Interviewer v3.0) ---
 class InterviewStartRequest(BaseModel):
     raw_notes: str = Field(default="", description="경험 메모 원문 (프로젝트 연결 시 생략 또는 짧은 초점 메모 가능)")
+    focus_context: str = Field(default="", description="선택: GitHub PR·커밋 Diff 등 턴 전체에 영속 유지할 집중 컨텍스트")
     project_id: int | None = Field(default=None, description="연결할 프로젝트 ID (선택)")
     thread_id: str | None = Field(default=None, description="세션 식별자 (미지정 시 자동 생성)")
     force_save: bool = Field(default=False, description="즉시 저장 여부")
 
     @model_validator(mode="after")
     def _validate_notes_or_project(self) -> "InterviewStartRequest":
-        if self.project_id is None and len((self.raw_notes or "").strip()) < 5:
+        if self.project_id is None and len((self.raw_notes or "").strip()) < 5 and len((self.focus_context or "").strip()) < 5:
             raise ValueError("프로젝트를 선택하거나 5자 이상의 경험 메모를 입력해 주세요.")
         return self
 
 
 class InterviewReplyRequest(BaseModel):
     thread_id: str = Field(..., min_length=1, description="진행 중인 인터뷰 thread_id")
-    user_reply: str = Field(default="", description="역질문에 대한 사용자 답변")
+    user_reply: str = Field(default="", description="답변, 질문 교체 요청, 또는 코치에게 자유롭게 묻는 메시지")
     project_id: int | None = Field(default=None, description="프로젝트 매핑 변경/지정 (선택)")
+    action: Literal["auto", "replace_question", "save"] = Field(
+        default="auto",
+        description="auto(자동 의도 판별) | replace_question(질문 교체) | save(즉시 저장)",
+    )
+    replace_question_index: int | None = Field(
+        default=None,
+        ge=0,
+        le=3,
+        description="action=replace_question일 때 특정 질문 슬롯만 교체할 인덱스 (미지정 시 전체 교체)",
+    )
     force_save: bool = Field(
         default=False, description="true이면 완성도와 무관하게 즉시 저장 노드로 라우팅"
     )
