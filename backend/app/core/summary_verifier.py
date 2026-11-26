@@ -20,7 +20,7 @@ SUMMARY_PASS_THRESHOLD = 82
 MAX_CROSS_SECTION_OVERLAP = 0.42
 
 _METRIC_RE = re.compile(
-    r"\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%p|%|배|ms|초|분|시간|일|주|개월|년|만\s*명|만\s*건|만\s*원|억|건|명|개|곳|GB|MB|KB|TPS|VU)\b",
+    r"(?<!\d)\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%p|%|배|ms|초|분|시간|일|주|개월|년|만\s*명|만\s*건|만\s*원|억|건|명|개|곳|GB|MB|KB|TPS|VU)",
     re.IGNORECASE,
 )
 _NUM_ONLY_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")

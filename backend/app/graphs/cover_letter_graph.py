@@ -44,7 +44,9 @@ DE_AI_CLICHE_SUBSTRINGS = (
     "끊임없이 도전하는",
 )
 
-_METRIC_TOKEN_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:%|배|ms|초|분|시간|만\s*명|만\s*건|억|건|명)\b")
+_METRIC_TOKEN_RE = re.compile(
+    r"(?<!\d)\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%p|%|배|ms|초|분|시간|만\s*명|만\s*건|억|건|명)"
+)
 
 
 def validate_cover_letter_post_checks(
