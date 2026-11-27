@@ -149,7 +149,7 @@ flowchart TD
 
 ### 4.1 온디맨드 GitHub PR · Push 커밋 Diff 앵커링 & 대화형 멀티턴 채굴
 - **온디맨드 PR/Diff 조회 (`github_analyzer.py`):**
-  - `POST /api/projects/{project_id}/github-activity`: 연결된 저장소의 최근 **Pull Request(Merged/Open/Closed)** 및 **Push 커밋** 목록을 온디맨드 조회(Public 무토큰 + Private/고한도용 1회용 PAT 지원).
+  - `POST /api/projects/{project_id}/github-activity`: 연결된 저장소의 최근 **Pull Request(Merged/Open/Closed)** 및 **Push 커밋** 목록을 온디맨드 조회(UI에서 연결한 **암호화 저장 GitHub PAT 자동 사용**, 미연결 시 Public 무토큰 또는 1회용 PAT 지원).
   - `POST /api/projects/{project_id}/github-diff-context`: 선택한 PR(최대 3개)·커밋(최대 5개)의 실제 코드 Diff(`patch`)와 리뷰 코멘트를 노이즈 파일(`package-lock.json`, `dist/` 등) 제외 후 구조화해 별도 영속 필드 **`focus_context`**로 주입.
 - **PR/Diff 1순위 앵커링 (`code_anchor`):**
   - `focus_context`가 로드된 세션에서는 모든 역질문이 **실제 변경된 파일·함수·PR 변경점(`code_anchor`)을 직접 지목**해 질문하며, STAR-L 체크포인트는 추상적 교과서 질문이 아니라 해당 코드 변경의 **의사결정·대안·검증 수치·회고**를 끌어내는 렌즈로 작동합니다.

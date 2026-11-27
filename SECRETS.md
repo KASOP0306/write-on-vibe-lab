@@ -31,7 +31,9 @@
 | **AWS 리전** | `AWS_REGION` | 낮음 | `.env` (예: `us-east-1`) | EC2 `.env` | `.env.example` 가능 |
 | **Bedrock 모델** | `BEDROCK_FAST_MODEL_ID` / `BEDROCK_SMART_MODEL_ID` / `BEDROCK_EMBED_MODEL_ID` | 낮음 | `.env` | EC2 `.env` | `.env.example` 가능 |
 | **EC2 SSH 키** | `<keypair>.pem` | **최상** | 로컬 `~/.ssh/` 보관 (레포 외부) | AWS EC2 Key Pair | ❌ 절대 금지 |
-| **GitHub 인증** | `gh` CLI 세션 토큰 | **최상** | OS Keyring (`gh auth login`) | 필요 시 Deploy Key (읽기 전용) | ❌ 절대 금지 |
+| **GitHub PAT** | UI 암호화 저장 (`user_profile.github_token_encrypted`) 또는 `.env` `GITHUB_TOKEN` | **최상** | UI 입력 시 `SHA256-CTR + HMAC-SHA256` 암호화 저장 (API 평문 미노출) | UI 암호화 저장 또는 EC2 `.env` (`chmod 600`) | ❌ 절대 금지 |
+| **토큰 암호화 키** | `APP_SECRET_KEY` (선택) | **높음** | `.env` (미설정 시 `DATABASE_URL` 기반 키 파생) | EC2 `.env` (무작위 32자 이상 권장) | ❌ 절대 금지 |
+| **GitHub CLI** | `gh` CLI 세션 토큰 | **최상** | OS Keyring (`gh auth login`) | 필요 시 Deploy Key (읽기 전용) | ❌ 절대 금지 |
 
 ---
 
