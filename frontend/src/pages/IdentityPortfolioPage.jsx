@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api/client.js";
+import GitHubAccountBrowser from "../components/GitHubAccountBrowser.jsx";
 import PortfolioDiagnosisPanel from "../components/PortfolioDiagnosisPanel.jsx";
 import ProjectWorkspaceView from "../components/ProjectWorkspaceView.jsx";
 import StepIndicator from "../components/StepIndicator.jsx";
@@ -455,6 +456,22 @@ export default function IdentityPortfolioPage({
         onOpenProject={(pid) => setActiveProjectId(pid)}
       />
 
+      {/* GitHub Account Connection & Repo Browser */}
+      <GitHubAccountBrowser
+        projectCount={projects.length}
+        onOpenLinkedProject={(pid) => setActiveProjectId(pid)}
+        onSelectRepoForAnalysis={(repo) => {
+          setCreateTab("github");
+          setEditingProjectId(null);
+          setGhUrl(repo.html_url);
+          setTimeout(() => {
+            document
+              .getElementById("create-project-hub")
+              ?.scrollIntoView({ behavior: "smooth" });
+          }, 50);
+        }}
+      />
+
       {/* Registered Portfolio Projects Hub with Multi-Track Filter */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -595,7 +612,10 @@ export default function IdentityPortfolioPage({
       </div>
 
       {/* Unified Multi-Track Portfolio Creation Hub (3 Tabs) */}
-      <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50/35 p-6 space-y-5 shadow-sm">
+      <section
+        id="create-project-hub"
+        className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50/35 p-6 space-y-5 shadow-sm"
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-indigo-600" />

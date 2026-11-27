@@ -633,6 +633,8 @@ async def analyze_github_repo(
     session: AsyncSession = Depends(get_db_session),
 ) -> GitHubAnalyzeResponse:
     """GitHub 저장소 URL을 분석해 선택한 복수 유형의 모듈 섹션과 STAR 초안을 생성한다."""
+    from app.api.github import resolve_effective_github_token
+
     profile = await session.get(UserProfile, 1)
     profile_context = ""
     if profile:
@@ -642,11 +644,15 @@ async def analyze_github_repo(
             f"핵심 신념: {profile.core_beliefs}"
         ).strip()
 
+    effective_token, _ = await resolve_effective_github_token(
+        session, explicit_token=payload.github_token
+    )
+
     try:
         result = await analyze_github_to_portfolio(
             payload.repo_url,
             project_types=payload.project_types,
-            github_token=payload.github_token.strip() or None,
+            github_token=effective_token or None,
             role_hint=payload.role_hint.strip(),
             extra_context=payload.extra_context.strip(),
             profile_context=profile_context,
@@ -669,6 +675,8 @@ async def analyze_github_repo_stream(
     session: AsyncSession = Depends(get_db_session),
 ):
     """SSE 스트리밍으로 GitHub 저장소 트리 스캔 → 멀티트랙 섹션 구조화 단계를 실시간 전송한다."""
+    from app.api.github import resolve_effective_github_token
+
     profile = await session.get(UserProfile, 1)
     profile_context = ""
     if profile:
@@ -678,6 +686,9 @@ async def analyze_github_repo_stream(
             f"핵심 신념: {profile.core_beliefs}"
         ).strip()
 
+    effective_token, _ = await resolve_effective_github_token(
+        session, explicit_token=payload.github_token
+    )
     normalized_types = normalize_project_types(payload.project_types)
 
     async def event_stream():
@@ -688,7 +699,7 @@ async def analyze_github_repo_stream(
             )
             repo_ctx = await fetch_github_repo_context(
                 payload.repo_url,
-                github_token=payload.github_token.strip() or None,
+                github_token=effective_token or None,
             )
             analyzed_files = (
                 (["README.md"] if repo_ctx.get("readme_text") else [])
@@ -1266,9 +1277,15 @@ async def sync_project_github(
             detail="프로젝트에 연결된 GitHub 저장소 URL이 없습니다.",
         )
 
+    from app.api.github import resolve_effective_github_token
+
+    effective_token, _ = await resolve_effective_github_token(
+        session, explicit_token=payload.github_token
+    )
+
     try:
         repo_ctx = await fetch_github_repo_context(
-            repo_url, github_token=payload.github_token.strip() or None
+            repo_url, github_token=effective_token or None
         )
         repo_doc = format_repo_context_as_document(repo_ctx)
         proposal = await propose_document_updates(
@@ -1386,10 +1403,17 @@ async def get_project_github_activity(
             detail="프로젝트에 연결된 GitHub 저장소 URL이 없습니다. 프로젝트 정보에 repo_url을 등록해 주세요.",
         )
 
+    from app.api.github import resolve_effective_github_token
+
+    effective_token, _ = await resolve_effective_github_token(
+        session,
+        explicit_token=(payload.github_token if payload else None),
+    )
+
     try:
         res = await fetch_github_recent_activity(
             repo_url,
-            github_token=(payload.github_token.strip() if payload and payload.github_token else None),
+            github_token=effective_token or None,
             limit=(payload.limit if payload else 15),
         )
     except GitHubAnalyzerError as exc:
@@ -1414,6 +1438,8 @@ async def get_project_github_diff_context(
     session: AsyncSession = Depends(get_db_session),
 ) -> GitHubDiffContextResponse:
     """선택된 PR·커밋의 실제 변경 파일과 코드 Diff·리뷰 코멘트를 경험 채굴용 컨텍스트로 추출한다."""
+    from app.api.github import resolve_effective_github_token
+
     project = await _load_project_full(session, project_id)
     repo_url = payload.repo_url.strip() or (project.repo_url or "").strip()
     if not repo_url:
@@ -1422,12 +1448,16 @@ async def get_project_github_diff_context(
             detail="프로젝트에 연결된 GitHub 저장소 URL이 없습니다.",
         )
 
+    effective_token, _ = await resolve_effective_github_token(
+        session, explicit_token=payload.github_token
+    )
+
     try:
         res = await fetch_github_changes_diff(
             repo_url,
             pr_numbers=payload.pr_numbers,
             commit_shas=payload.commit_shas,
-            github_token=payload.github_token.strip() or None,
+            github_token=effective_token or None,
         )
     except GitHubAnalyzerError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))

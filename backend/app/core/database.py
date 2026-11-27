@@ -47,6 +47,9 @@ class UserProfile(Base):
     preferred_tone: Mapped[str] = mapped_column(Text, default="", nullable=False)
     portfolio_diagnosis: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     external_competency_notes: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    github_token_encrypted: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    github_username: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    github_avatar_url: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -512,6 +515,24 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE cover_letters "
                 "ADD COLUMN IF NOT EXISTS used_beliefs JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS github_token_encrypted TEXT NOT NULL DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS github_username VARCHAR(120) NOT NULL DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS github_avatar_url VARCHAR(500) NOT NULL DEFAULT ''"
             )
         )
         # Unit 5: pgvector HNSW 코사인 유사도 인덱스 (검색 속도·확장성 확보)

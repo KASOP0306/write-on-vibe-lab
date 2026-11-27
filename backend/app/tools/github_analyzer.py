@@ -898,3 +898,205 @@ async def fetch_github_changes_diff(
                 commit_details.append(resp.json())
 
     return format_github_changes_for_mining(owner, repo, pr_details, commit_details)
+
+
+
+# ==============================================================================
+# GitHub 계정 연동: 토큰 검증 · 내 레포지토리 목록 조회 · 새 레포지토리 자동 생성
+# ==============================================================================
+def slugify_repo_name(raw_name: str, fallback_prefix: str = "career-project") -> str:
+    """프로젝트 이름을 GitHub 저장소 이름으로 안전한 영문/숫자/하이픈 슬러그로 변환한다."""
+    import uuid as _uuid
+
+    text = (raw_name or "").strip().lower()
+    # 영문·숫자·하이픈·언더스코어·점만 남기고 공백/기타 문자는 하이픈 치환
+    slug = re.sub(r"[^a-z0-9._-]+", "-", text)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-._")
+    if len(slug) < 2:
+        slug = f"{fallback_prefix}-{_uuid.uuid4().hex[:6]}"
+    return slug[:90]
+
+
+async def verify_github_token(token: str) -> dict[str, Any]:
+    """GitHub PAT 유효성을 /user API로 검증하고 계정 정보와 스코프·잔여 한도를 반환한다."""
+    clean = (token or "").strip()
+    if not clean:
+        raise GitHubAnalyzerError("GitHub 토큰을 입력해 주세요.", status_code=400)
+
+    headers = _build_github_headers(token=clean)
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        resp = await client.get(f"{GITHUB_API_BASE}/user", headers=headers)
+        if resp.status_code == 401:
+            raise GitHubAnalyzerError(
+                "GitHub 토큰 인증에 실패했습니다. 만료되었거나 잘못된 토큰인지 확인해 주세요.",
+                status_code=401,
+            )
+        if resp.status_code >= 400:
+            _raise_github_http_error(resp, "GitHub 계정 인증")
+        data = resp.json()
+
+    raw_scopes = resp.headers.get("X-OAuth-Scopes") or ""
+    scopes = [s.strip() for s in raw_scopes.split(",") if s.strip()]
+    rate_rem = resp.headers.get("X-RateLimit-Remaining")
+    return {
+        "login": str(data.get("login") or ""),
+        "name": str(data.get("name") or data.get("login") or ""),
+        "avatar_url": str(data.get("avatar_url") or ""),
+        "html_url": str(data.get("html_url") or ""),
+        "scopes": scopes if scopes else ["fine-grained"],
+        "rate_remaining": int(rate_rem) if (rate_rem and rate_rem.isdigit()) else None,
+    }
+
+
+async def list_authenticated_github_repos(
+    token: str,
+    *,
+    include_forks: bool = False,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """연결된 GitHub 계정의 Public/Private 저장소 목록을 최근 푸시순으로 조회한다."""
+    clean = (token or "").strip()
+    if not clean:
+        raise GitHubAnalyzerError("먼저 GitHub 계정을 연결해 주세요.", status_code=401)
+
+    headers = _build_github_headers(token=clean)
+    per_page = max(1, min(100, int(limit or 50)))
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{GITHUB_API_BASE}/user/repos",
+            params={
+                "sort": "pushed",
+                "direction": "desc",
+                "per_page": per_page,
+                "affiliation": "owner,collaborator,organization_member",
+            },
+            headers=headers,
+        )
+        if resp.status_code == 401:
+            raise GitHubAnalyzerError(
+                "연결된 GitHub 토큰이 만료되었거나 유효하지 않습니다. 다시 연결해 주세요.",
+                status_code=401,
+            )
+        if resp.status_code >= 400:
+            _raise_github_http_error(resp, "내 GitHub 저장소 목록")
+        rows = resp.json() if isinstance(resp.json(), list) else []
+
+    repos: list[dict[str, Any]] = []
+    for r in rows:
+        is_fork = bool(r.get("fork"))
+        if is_fork and not include_forks:
+            continue
+        owner_obj = r.get("owner") or {}
+        repos.append(
+            {
+                "id": r.get("id"),
+                "name": str(r.get("name") or ""),
+                "full_name": str(r.get("full_name") or ""),
+                "owner": str(owner_obj.get("login") or ""),
+                "html_url": str(r.get("html_url") or ""),
+                "description": str(r.get("description") or ""),
+                "private": bool(r.get("private")),
+                "fork": is_fork,
+                "language": str(r.get("language") or ""),
+                "stargazers_count": int(r.get("stargazers_count") or 0),
+                "default_branch": str(r.get("default_branch") or "main"),
+                "pushed_at": str(r.get("pushed_at") or ""),
+                "updated_at": str(r.get("updated_at") or ""),
+                "topics": list(r.get("topics") or [])[:6],
+            }
+        )
+    return repos
+
+
+async def create_github_repository(
+    token: str,
+    *,
+    name: str,
+    description: str = "",
+    private: bool = True,
+    readme_content: str = "",
+) -> dict[str, Any]:
+    """GitHub에 새 저장소를 생성하고, 선택적으로 초기 README.md(로드맵·증거 계획)를 커밋한다."""
+    import base64
+
+    clean = (token or "").strip()
+    if not clean:
+        raise GitHubAnalyzerError("먼저 GitHub 계정을 연결해 주세요.", status_code=401)
+
+    repo_slug = slugify_repo_name(name)
+    headers = _build_github_headers(token=clean)
+    payload = {
+        "name": repo_slug,
+        "description": (description or "").strip()[:320],
+        "private": bool(private),
+        "auto_init": True,
+    }
+
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        resp = await client.post(
+            f"{GITHUB_API_BASE}/user/repos",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code == 401:
+            raise GitHubAnalyzerError(
+                "GitHub 토큰이 유효하지 않습니다. 다시 연결해 주세요.", status_code=401
+            )
+        if resp.status_code == 403:
+            raise GitHubAnalyzerError(
+                "GitHub 저장소 생성 권한이 부족합니다. 토큰에 'Administration: Read and write'(Fine-grained) 또는 'repo'(Classic) 권한을 부여해 주세요.",
+                status_code=403,
+            )
+        if resp.status_code == 422:
+            detail = ""
+            try:
+                errs = resp.json().get("errors") or []
+                detail = "; ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
+            except Exception:
+                detail = ""
+            raise GitHubAnalyzerError(
+                f"GitHub 저장소 '{repo_slug}'를 생성할 수 없습니다(이미 동일한 이름이 존재할 수 있습니다). {detail}".strip(),
+                status_code=422,
+            )
+        if resp.status_code >= 400:
+            _raise_github_http_error(resp, f"새 저장소 '{repo_slug}' 생성")
+
+        created = resp.json()
+        full_name = str(created.get("full_name") or "")
+        html_url = str(created.get("html_url") or "")
+        default_branch = str(created.get("default_branch") or "main")
+        readme_committed = False
+
+        if readme_content.strip() and full_name:
+            try:
+                # auto_init으로 생성된 README.md의 sha 조회 후 업데이트
+                get_readme = await client.get(
+                    f"{GITHUB_API_BASE}/repos/{full_name}/contents/README.md",
+                    headers=headers,
+                )
+                put_body: dict[str, Any] = {
+                    "message": "docs: initialize project roadmap and STAR-L evidence plan",
+                    "content": base64.b64encode(readme_content.strip().encode("utf-8")).decode("ascii"),
+                    "branch": default_branch,
+                }
+                if get_readme.status_code == 200:
+                    sha = get_readme.json().get("sha")
+                    if sha:
+                        put_body["sha"] = sha
+                put_resp = await client.put(
+                    f"{GITHUB_API_BASE}/repos/{full_name}/contents/README.md",
+                    json=put_body,
+                    headers=headers,
+                )
+                readme_committed = put_resp.status_code in (200, 201)
+            except Exception as exc:
+                logger.warning("Failed to commit initial README to %s: %s", full_name, exc)
+
+    return {
+        "name": repo_slug,
+        "full_name": full_name,
+        "html_url": html_url,
+        "private": bool(created.get("private", private)),
+        "default_branch": default_branch,
+        "readme_committed": readme_committed,
+    }

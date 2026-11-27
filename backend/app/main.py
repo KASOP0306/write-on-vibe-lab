@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import agents, beliefs, profile, projects, samples
+from app.api import agents, beliefs, github, profile, projects, samples
 from app.core.database import close_db, get_db_session, init_db
 from app.seeds.seed_jasoseo import seed_jasoseo_samples
 
@@ -41,6 +41,7 @@ app.add_middleware(
 
 app.include_router(profile.router)
 app.include_router(beliefs.router)
+app.include_router(github.router)
 app.include_router(projects.router)
 app.include_router(samples.router)
 app.include_router(agents.router)

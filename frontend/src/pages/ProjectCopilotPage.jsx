@@ -7,6 +7,7 @@ import {
   Building2,
   CheckCircle2,
   ExternalLink,
+  Github,
   Globe,
   Loader2,
   MessageSquare,
@@ -74,6 +75,9 @@ export default function ProjectCopilotPage({
   const [blueprintResult, setBlueprintResult] = useState(null);
   const [blueprintError, setBlueprintError] = useState("");
   const [creatingIdx, setCreatingIdx] = useState(null);
+  const [githubStatus, setGithubStatus] = useState({ connected: false });
+  const [autoCreateRepo, setAutoCreateRepo] = useState(false);
+  const [newRepoPrivate, setNewRepoPrivate] = useState(true);
 
   // New-Project Agentic Chat State (Short-term thread_id + Long-term Store memories)
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -110,13 +114,14 @@ export default function ProjectCopilotPage({
   useEffect(() => {
     const loadContext = async () => {
       try {
-        const [mastery, comps, loop, hist, mems, pillars] = await Promise.all([
+        const [mastery, comps, loop, hist, mems, pillars, ghSt] = await Promise.all([
           api.getPortfolioMastery().catch(() => null),
           api.listCompanies().catch(() => []),
           api.getProjectsLearningLoop().catch(() => null),
           api.getCopilotHistory(threadId).catch(() => null),
           api.listCopilotMemories().catch(() => []),
           api.listBeliefPillars().catch(() => []),
+          api.getGithubStatus().catch(() => ({ connected: false })),
         ]);
         setMasteryData(mastery);
         setCompanies(comps || []);
@@ -126,6 +131,7 @@ export default function ProjectCopilotPage({
         }
         setMemories(mems || []);
         if (pillars?.length) setBeliefPillars(pillars);
+        setGithubStatus(ghSt || { connected: false });
       } catch (err) {
         console.warn(err);
       }
@@ -210,27 +216,55 @@ export default function ProjectCopilotPage({
         portfolio_goal_link: bp.company_alignment || "",
       });
 
+      const roadmapMd = (bp.execution_roadmap || [])
+        .map((r, i) => `${i + 1}. ${r}`)
+        .join("\n");
+      const evidenceMd = (bp.evidence_plan || [])
+        .map((ev) => `- ${ev}`)
+        .join("\n");
+      const weaknessMd = (bp.target_weaknesses || [])
+        .map((w) => `- ${w}`)
+        .join("\n");
+
       const detail = await api.getProject(created.id);
       const overviewSec = (detail.sections || []).find(
         (s) => s.section_type === "overview"
       );
       if (overviewSec) {
-        const roadmapMd = (bp.execution_roadmap || [])
-          .map((r, i) => `${i + 1}. ${r}`)
-          .join("\n");
-        const evidenceMd = (bp.evidence_plan || [])
-          .map((ev) => `- ${ev}`)
-          .join("\n");
         await api.updateSection(created.id, overviewSec.id, {
           content:
             `### 문제 정의 & 솔루션\n${bp.problem_and_solution}\n\n` +
-            `### 보완 대상 STAR-L 취약 지표 · 신념\n${(bp.target_weaknesses || []).map((w) => `- ${w}`).join("\n")}\n\n` +
+            `### 보완 대상 STAR-L 취약 지표 · 신념\n${weaknessMd}\n\n` +
             `### 실행 로드맵\n${roadmapMd}\n\n` +
             `### STAR-L 21지표 통과용 객관적 증거 계획\n${evidenceMd}`,
         });
       }
 
-      alert(`'${bp.name}' 프로젝트 초안이 포트폴리오에 생성되었습니다!`);
+      let repoNotice = "";
+      if (githubStatus?.connected && autoCreateRepo) {
+        const stackLine = (bp.recommended_stack_and_tools || []).join(", ");
+        const readmeMd =
+          `# ${bp.name}\n\n` +
+          `${bp.tagline || ""}\n\n` +
+          `## 문제 정의 & 솔루션\n${bp.problem_and_solution || ""}\n\n` +
+          (stackLine ? `## 기술 스택\n${stackLine}\n\n` : "") +
+          (roadmapMd ? `## 실행 로드맵\n${roadmapMd}\n\n` : "") +
+          (evidenceMd ? `## STAR-L 검증 계획\n${evidenceMd}\n` : "");
+        try {
+          const repoRes = await api.createGithubRepo({
+            name: bp.name,
+            description: (bp.tagline || "").slice(0, 200),
+            private: newRepoPrivate,
+            readme_content: readmeMd,
+            project_id: created.id,
+          });
+          repoNotice = `\nGitHub 레포 자동 생성 완료: ${repoRes.html_url}`;
+        } catch (ghErr) {
+          repoNotice = `\n(포트폴리오 초안은 생성되었으나 GitHub 레포 생성 실패: ${ghErr.message})`;
+        }
+      }
+
+      alert(`'${bp.name}' 프로젝트 초안이 포트폴리오에 생성되었습니다!${repoNotice}`);
       onProjectCreated?.();
     } catch (err) {
       alert(`프로젝트 생성 실패: ${err.message}`);
@@ -575,6 +609,53 @@ export default function ProjectCopilotPage({
                 </div>
               )}
 
+              {githubStatus?.connected && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs">
+                  <label className="inline-flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoCreateRepo}
+                      onChange={(e) => setAutoCreateRepo(e.target.checked)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <Github className="w-4 h-4 text-slate-900" />
+                    <span>초안 생성 시 GitHub 새 레포 자동 생성 · 연결</span>
+                    {githubStatus.username && (
+                      <span className="font-mono text-[11px] text-slate-500">
+                        @{githubStatus.username}
+                      </span>
+                    )}
+                  </label>
+
+                  {autoCreateRepo && (
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setNewRepoPrivate(true)}
+                        className={`rounded-md px-2.5 py-1 ${
+                          newRepoPrivate
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Private
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewRepoPrivate(false)}
+                        className={`rounded-md px-2.5 py-1 ${
+                          !newRepoPrivate
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600"
+                        }`}
+                      >
+                        Public
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-5">
                 {(blueprintResult.blueprints || []).map((bp, idx) => (
                   <div
@@ -626,10 +707,16 @@ export default function ProjectCopilotPage({
                         >
                           {creatingIdx === idx ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : githubStatus?.connected && autoCreateRepo ? (
+                            <Github className="w-3.5 h-3.5" />
                           ) : (
                             <PlusCircle className="w-3.5 h-3.5" />
                           )}
-                          <span>포트폴리오 초안으로 바로 생성</span>
+                          <span>
+                            {githubStatus?.connected && autoCreateRepo
+                              ? "포트폴리오 + GitHub 레포 생성"
+                              : "포트폴리오 초안으로 바로 생성"}
+                          </span>
                         </button>
                       </div>
                     </div>

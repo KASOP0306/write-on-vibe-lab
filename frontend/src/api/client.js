@@ -139,6 +139,25 @@ export const api = {
   synthesizeIdentityFromNotes: () =>
     apiRequest("/api/beliefs/synthesize-identity", { method: "POST" }),
 
+  // GitHub Account Integration (Encrypted PAT, Repo Browser & Auto Repo Creation)
+  getGithubStatus: () => apiRequest("/api/github/status"),
+  saveGithubToken: (token) =>
+    apiRequest("/api/github/token", {
+      method: "PUT",
+      body: JSON.stringify({ token }),
+    }),
+  deleteGithubToken: () =>
+    apiRequest("/api/github/token", { method: "DELETE" }),
+  listGithubRepos: ({ includeForks = false, limit = 50 } = {}) =>
+    apiRequest(
+      `/api/github/repos?include_forks=${includeForks ? "true" : "false"}&limit=${limit}`
+    ),
+  createGithubRepo: (data) =>
+    apiRequest("/api/github/repos", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   // Projects, Modular Sections, Documents, Rubrics, STAR Onboarding & Diagnosis
   getProjectTemplates: () => apiRequest("/api/projects/templates"),
   getRubricReference: () => apiRequest("/api/projects/rubric-reference"),
